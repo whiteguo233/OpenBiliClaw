@@ -86,7 +86,7 @@ export function initAuthControl(els = {}, opts = {}) {
     } else if (current.enabled) {
       setHint("已开启：局域网 / 远程设备访问需要登录密码（本机与插件免登录）。");
     } else {
-      setHint("已关闭：局域网访问无需密码。");
+      setHint("已关闭：仅允许本机访问，远程设备需先启用密码。");
     }
   }
 

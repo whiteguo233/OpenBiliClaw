@@ -345,3 +345,34 @@ async def test_qr_login_pending_writes_no_cookie(client, tmp_path, monkeypatch) 
 
     assert response.json()["status"] == "pending"
     assert not (tmp_path / "data" / "fish" / "bilibili_cookie.json").exists()
+
+
+async def test_qr_login_accepts_response_cookies(client, tmp_path, monkeypatch) -> None:
+    """Exercise the real poll decoder when credentials arrive in Set-Cookie."""
+    from openbiliclaw.bilibili.api import BilibiliAPIClient
+
+    real_poll = BilibiliAPIClient.poll_qrcode
+    _patch_qr(monkeypatch)
+    monkeypatch.setattr(BilibiliAPIClient, "poll_qrcode", real_poll)
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"code": 0, "url": "https://www.bilibili.com/"}},
+            headers=[
+                ("set-cookie", "SESSDATA=fish-session; Path=/; Secure"),
+                ("set-cookie", "bili_jct=csrf; Path=/; Secure"),
+                ("set-cookie", "DedeUserID=222; Path=/; Secure"),
+            ],
+        )
+
+    original_init = BilibiliAPIClient.__init__
+
+    def init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._client = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+
+    monkeypatch.setattr(BilibiliAPIClient, "__init__", init)
+    response = await client.get("/api/fish/account/qrcode/poll", params={"qrcode_key": "key-1"})
+    assert response.json()["status"] == "logged_in", response.json()
+    assert "fish-session" in (tmp_path / "data/fish/bilibili_cookie.json").read_text()

@@ -23,6 +23,7 @@ from openbiliclaw.llm.service import LLMServiceError, is_llm_rate_limit_error
 from openbiliclaw.llm.task_options import call_accepts_keyword, without_core_memory_kwargs
 from openbiliclaw.soul.event_filters import filter_events_by_satisfaction
 from openbiliclaw.soul.event_prompt_views import normalize_cognition_input_view
+from openbiliclaw.soul.meta_usage import is_dialogue_source, looks_like_product_ops_topic
 from openbiliclaw.soul.taxonomy import SupportsEmbed, resolve_category
 
 if TYPE_CHECKING:
@@ -1312,11 +1313,13 @@ class PreferenceAnalyzer:
             context_raw=context_raw,
             openness_raw=raw_preference.get("exploration_openness", 0.5),
         )
-        normalized["interests"] = [
-            self._normalize_interest(item)
-            for item in self._as_list(raw_preference.get("interests", []))
-            if isinstance(item, dict)
-        ]
+        normalized["interests"] = self._filter_meta_usage_interests(
+            [
+                self._normalize_interest(item)
+                for item in self._as_list(raw_preference.get("interests", []))
+                if isinstance(item, dict)
+            ]
+        )
         normalized["style"] = style
         normalized["context"] = context
         normalized["exploration_openness"] = exploration_openness
@@ -1351,6 +1354,33 @@ class PreferenceAnalyzer:
                         self.embedding_service,
                     )
         return normalized
+
+    @staticmethod
+    def _filter_meta_usage_interests(
+        interests: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Drop dialogue-derived topics that are about running this product.
+
+        Chat turns are also stored as ``dialogue`` events, so the event-based
+        preference path re-mints "系统配置与测试"-style interests even though
+        the dialogue-insight path refuses them. A real rebuild produced nine
+        compound operational topics this way, one of them at weight 0.8. The
+        filter only fires when the interest is dialogue-sourced *and* its name
+        is a compound operational phrase, so a genuine 「软件测试」 interest
+        (one word) survives.
+        """
+        kept = [
+            interest
+            for interest in interests
+            if not (
+                is_dialogue_source(str(interest.get("source", "")))
+                and looks_like_product_ops_topic(str(interest.get("name", "")))
+            )
+        ]
+        dropped = len(interests) - len(kept)
+        if dropped:
+            logger.info("preference analysis: dropped %d dialogue meta-usage interest(s)", dropped)
+        return kept
 
     def _normalize_interest(self, raw_item: dict[str, object]) -> dict[str, object]:
         name = str(raw_item.get("name", "")).strip()

@@ -181,6 +181,8 @@ def test_build_openclaw_skills_returns_expected_names() -> None:
         "openbiliclaw_recommend",
         "openbiliclaw_reshuffle",
         "openbiliclaw_append_recommendations",
+        "openbiliclaw_restore_recommendations",
+        "openbiliclaw_present_recommendations",
         "openbiliclaw_submit_feedback",
         "openbiliclaw_get_delight",
         "openbiliclaw_respond_delight",

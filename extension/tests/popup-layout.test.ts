@@ -240,7 +240,7 @@ test("settings tabs use stable compact panels", () => {
     popupHtml.match(/\.settings-panel\[hidden\]\s*\{[\s\S]*?\}/)?.[0] ?? "";
 
   assert.match(tabsBlock, /display:\s*grid;/);
-  assert.match(tabsBlock, /grid-template-columns:\s*repeat\(6,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(tabsBlock, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
   // The overlay is a scrolling flex column. Without this, a long settings form
   // collapses the tab strip and lets the following panel cover its buttons.
   assert.match(tabsBlock, /flex-shrink:\s*0;/);
@@ -248,7 +248,7 @@ test("settings tabs use stable compact panels", () => {
   assert.match(settingsOverlayBlock, /overflow-x:\s*hidden;/);
   assert.match(
     popupHtml,
-    /@media \(max-width: 430px\) \{[\s\S]*?\.settings-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(6,\s*minmax\(92px,\s*1fr\)\);/,
+    /@media \(max-width: 360px\) \{[\s\S]*?\.settings-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/,
   );
   assert.match(tabBlock, /min-height:\s*36px;/);
   assert.match(tabBlock, /cursor:\s*pointer;/);

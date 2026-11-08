@@ -79,7 +79,7 @@
         "description": "纯本地、私有、开源的自进化跨平台内容发现 Agent，覆盖 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与开放 Web。",
         "url": "https://whiteguo233.github.io/OpenBiliClaw/",
         "downloadUrl": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest",
-        "softwareVersion": "0.3.231",
+        "softwareVersion": "0.3.234",
         "license": "https://github.com/whiteguo233/OpenBiliClaw/blob/main/LICENSE",
         "image": "https://whiteguo233.github.io/OpenBiliClaw/images/social-preview-zh.png",
         "screenshot": [
@@ -441,6 +441,116 @@
       flex-wrap: wrap;
       gap: 12px;
       margin-top: 34px;
+    }
+
+    .hero-sponsor {
+      position: absolute;
+      top: 62px;
+      right: 0;
+      z-index: 3;
+      display: grid;
+      justify-items: end;
+      gap: 9px;
+      width: min(360px, 30vw);
+      text-align: right;
+      text-decoration: none;
+    }
+
+    .hero-sponsor-eyebrow {
+      color: rgba(255, 255, 255, 0.46);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .hero-sponsor-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+      transition: transform 160ms ease, box-shadow 160ms ease;
+    }
+
+    .hero-sponsor:hover .hero-sponsor-badge,
+    .hero-sponsor:focus-visible .hero-sponsor-badge {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .hero-sponsor-powered {
+      color: #6f6f6f;
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hero-sponsor-badge img {
+      width: 112px;
+      height: auto;
+    }
+
+    .hero-sponsor-copy {
+      color: rgba(255, 255, 255, 0.58);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 1120px) {
+      .hero-sponsor {
+        display: none;
+      }
+    }
+
+    .partners-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 40px;
+    }
+
+    .partners-copy {
+      max-width: 700px;
+    }
+
+    .partners-copy h2 {
+      font-size: clamp(30px, 3.4vw, 46px);
+      line-height: 1.14;
+    }
+
+    .partners-links {
+      margin-top: 12px;
+      font-weight: 750;
+    }
+
+    .partners-card {
+      flex: 0 0 auto;
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+      padding: 26px 34px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      text-decoration: none;
+    }
+
+    .partners-powered {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .partners-card img {
+      width: 200px;
+      height: auto;
     }
 
     .btn {
@@ -863,6 +973,15 @@
       line-height: 1;
     }
 
+    .star-link .star-count {
+      padding-left: 8px;
+      border-left: 1px solid rgba(255, 255, 255, 0.18);
+      color: rgba(255, 255, 255, 0.68);
+      font-size: 12px;
+      font-weight: 750;
+      line-height: 1;
+    }
+
     .star-cta {
       text-align: center;
       background:
@@ -953,6 +1072,54 @@
       color: var(--ink);
       font-weight: 750;
       text-decoration: none;
+    }
+
+    .footer-partner {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px dashed var(--line);
+      align-items: center;
+    }
+
+    .footer-partner-label {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+
+    .footer-partner-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .footer-partner-badge span {
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .footer-partner-badge img {
+      display: block;
+      width: 104px;
+      height: auto;
+    }
+
+    .footer-partner-links {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .footer-partner-links > a:not(.footer-partner-badge) {
+      font-size: 12px;
     }
 
     .reveal {
@@ -1075,6 +1242,17 @@
         flex-direction: column;
       }
 
+      .partners-inner {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 24px;
+      }
+
+      .partners-card {
+        width: 100%;
+        padding: 22px;
+      }
+
       .hero-actions {
         gap: 10px;
         margin-top: 24px;
@@ -1141,15 +1319,16 @@
           <a href="#tech" data-i18n="navTech">架构</a>
           <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/index.md" data-i18n="navDocs">文档</a>
         </nav>
-        <a class="star-link" href="https://github.com/whiteguo233/OpenBiliClaw" aria-label="在 GitHub 上给 OpenBiliClaw 点 Star" data-i18n-attr="aria-label:starLinkAria">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-          <span class="star-ico" aria-hidden="true">★</span>
-          <span class="star-label" data-i18n="starLinkLabel">Star</span>
-        </a>
         <div class="lang-toggle" aria-label="语言切换" data-i18n-attr="aria-label:langToggleAria">
           <button class="lang-btn" type="button" data-lang="zh" aria-pressed="true">中文</button>
           <button class="lang-btn" type="button" data-lang="en" aria-pressed="false">English</button>
         </div>
+        <a class="star-link" href="https://github.com/whiteguo233/OpenBiliClaw" aria-label="在 GitHub 上给 OpenBiliClaw 点 Star" data-i18n-attr="aria-label:starLinkAria">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+          <span class="star-ico" aria-hidden="true">★</span>
+          <span class="star-label" data-i18n="starLinkLabel">Star</span>
+          <span class="star-count" id="starCount">3.6k</span>
+        </a>
       </div>
     </div>
   </header>
@@ -1157,6 +1336,14 @@
   <main id="top">
     <section class="hero section dark">
       <div class="inner hero-inner">
+        <a class="hero-sponsor" href="https://www.siliconflow.cn" target="_blank" rel="noopener noreferrer" aria-label="Powered by SiliconFlow">
+          <span class="hero-sponsor-eyebrow" data-i18n="heroSponsorEyebrow">Technology partner</span>
+          <span class="hero-sponsor-badge">
+            <span class="hero-sponsor-powered">Powered by</span>
+            <img src="images/siliconflow-logo.png" alt="SiliconFlow" width="112" height="16" loading="lazy">
+          </span>
+          <span class="hero-sponsor-copy" data-i18n="heroSponsorCopy">感谢硅基流动提供免费模型额度与推理支持。</span>
+        </a>
         <div class="hero-copy reveal">
           <p class="eyebrow" data-i18n="heroEyebrow">通用个性化内容推荐 · 本地运行 · 只为你一个人构建</p>
           <h1 data-i18n="heroTitle">自进化的跨平台内容发现 Agent。</h1>
@@ -1199,13 +1386,13 @@
           <p class="eyebrow" data-i18n="installEyebrow">Start</p>
           <h2 data-i18n="installTitle">从 Latest 聚合页下载，或把这句话交给 AI 编程助手。</h2>
           <p class="lead" data-i18n="installLead">
-            Latest Release 的 openbiliclaw-v* 聚合页只列出同一版本的后端源码、浏览器插件包和可用桌面安装包；某个 channel 尚未发布时会显示未发布，不会回填上一版资产。Gitee 最近同步至 v0.3.229；v0.3.231 源码与安装包请从 GitHub Release 获取，国内安装包镜像待上传，123 云盘保留历史版本，请核对包名版本号。先装插件，再选择桌面安装包或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手部署后端。
+            Latest Release 的 openbiliclaw-v* 聚合页只列出同一版本的后端源码、浏览器插件包和可用桌面安装包；某个 channel 尚未发布时会显示未发布，不会回填上一版资产。Gitee 源码已同步至 v0.3.231。最新版安装包请从 GitHub Release 获取；123 云盘当前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。先装插件，再选择桌面安装包或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手部署后端。
           </p>
           <div class="hero-actions">
             <a class="btn primary" href="https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg" data-i18n="installDownload">添加到 Chrome</a>
             <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases/latest" data-i18n="installDesktop">打开 Latest 聚合页</a>
             <a class="btn" href="https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3" data-i18n="installDomestic">历史版本（123 云盘）</a>
-            <a class="btn" href="https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229" data-i18n="installGitee">Gitee v0.3.229 源码</a>
+            <a class="btn" href="https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231" data-i18n="installGitee">Gitee v0.3.231 源码</a>
             <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases/latest" data-i18n="installManual">下载插件 zip</a>
             <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw#readme" data-i18n="installReadme">查看 README</a>
           </div>
@@ -1535,6 +1722,21 @@ docker compose -f docker-compose.prebuilt.yml up -d
       </div>
     </section>
 
+    <section class="section band" id="partners">
+      <div class="inner partners-inner reveal">
+        <div class="partners-copy">
+          <p class="eyebrow" data-i18n="partnersEyebrow">Technology partner</p>
+          <h2 data-i18n="partnersTitle">模型算力，由硅基流动提供支持。</h2>
+          <p class="lead" data-i18n="partnersLead">感谢硅基流动（SiliconFlow）为 OpenBiliClaw 提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估。合作不改变推荐逻辑与本地优先的数据边界。</p>
+          <p class="partners-links"><a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/partners.md" data-i18n="partnersMore">了解合作细节 →</a></p>
+        </div>
+        <a class="partners-card" href="https://www.siliconflow.cn" target="_blank" rel="noopener noreferrer" aria-label="Powered by SiliconFlow">
+          <span class="partners-powered">Powered by</span>
+          <img src="images/siliconflow-logo.png" alt="SiliconFlow" width="200" height="28" loading="lazy">
+        </a>
+      </div>
+    </section>
+
     <section class="section star-cta" id="star">
       <div class="inner reveal">
         <div class="star-card">
@@ -1572,6 +1774,16 @@ docker compose -f docker-compose.prebuilt.yml up -d
         <a href="https://github.com/whiteguo233/OpenBiliClaw/releases" data-i18n="footerReleases">发布</a>
         ·
         <a href="https://github.com/whiteguo233/OpenBiliClaw" data-i18n="footerGithub">GitHub</a>
+      </span>
+    </div>
+    <div class="inner footer-partner">
+      <span class="footer-partner-label" data-i18n="footerPartnerLabel">技术合作 · 感谢硅基流动提供免费模型额度与推理支持</span>
+      <span class="footer-partner-links">
+        <a class="footer-partner-badge" href="https://www.siliconflow.cn" target="_blank" rel="noopener noreferrer" aria-label="Powered by SiliconFlow">
+          <span>Powered by</span>
+          <img src="images/siliconflow-logo.png" alt="SiliconFlow" width="104" height="15" loading="lazy">
+        </a>
+        <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/partners.md" data-i18n="footerPartnerDocs">合作说明</a>
       </span>
     </div>
   </footer>
@@ -1617,11 +1829,11 @@ docker compose -f docker-compose.prebuilt.yml up -d
         nextHint: "Install prompt below",
         installEyebrow: "Start",
         installTitle: "从 Latest 聚合页下载，或把这句话交给 AI 编程助手。",
-        installLead: "Latest Release 的 openbiliclaw-v* 聚合页只列出同一版本的后端源码、浏览器插件包和可用桌面安装包；某个 channel 尚未发布时会显示未发布，不会回填上一版资产。Gitee 最近同步至 v0.3.229；v0.3.230 源码与安装包请从 GitHub Release 获取，国内安装包镜像待上传，123 云盘保留历史版本，请核对包名版本号。先装插件，再选择桌面安装包或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手部署后端。",
+        installLead: "Latest Release 的 openbiliclaw-v* 聚合页只列出同一版本的后端源码、浏览器插件包和可用桌面安装包；某个 channel 尚未发布时会显示未发布，不会回填上一版资产。Gitee 源码已同步至 v0.3.231。最新版安装包请从 GitHub Release 获取；123 云盘当前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。先装插件，再选择桌面安装包或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手部署后端。",
         installDownload: "添加到 Chrome",
         installDesktop: "打开 Latest 聚合页",
         installDomestic: "历史版本（123 云盘）",
-        installGitee: "Gitee v0.3.229 源码",
+        installGitee: "Gitee v0.3.231 源码",
         installManual: "下载插件 zip",
         installReadme: "查看 README",
         agentPromptLabel: "一句话安装提示",
@@ -1752,6 +1964,14 @@ docker compose -f docker-compose.prebuilt.yml up -d
         footerDocs: "文档",
         footerReleases: "发布",
         footerGithub: "GitHub",
+        footerPartnerLabel: "技术合作 · 感谢硅基流动提供免费模型额度与推理支持",
+        footerPartnerDocs: "合作说明",
+        heroSponsorEyebrow: "Technology partner",
+        heroSponsorCopy: "感谢硅基流动提供免费模型额度与推理支持。",
+        partnersEyebrow: "Technology partner",
+        partnersTitle: "模型算力由硅基流动提供支持。",
+        partnersLead: "感谢硅基流动（SiliconFlow）为 OpenBiliClaw 提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估。合作不改变推荐逻辑与本地优先的数据边界。",
+        partnersMore: "了解合作细节 →",
       },
       en: {
         pageTitle: "OpenBiliClaw - Self-improving cross-platform content discovery Agent | Local multi-platform recommender",
@@ -1792,11 +2012,11 @@ docker compose -f docker-compose.prebuilt.yml up -d
         nextHint: "Install prompt below",
         installEyebrow: "Start",
         installTitle: "Use the aggregate Latest Release, or hand this prompt to an AI coding agent.",
-        installLead: "The openbiliclaw-v* aggregate Latest Release only lists same-version backend source, browser extension packages, and available desktop installers; when a channel has not shipped yet, it is shown as unpublished instead of being backfilled from a previous release. Gitee is last synced at v0.3.229; get v0.3.231 source and installers from GitHub Releases. Domestic installer mirrors are pending; 123 Cloud retains older versions, so check the version in each filename. Install the extension first, then use the desktop installer or let Claude Code, Codex CLI, Cursor, or Windsurf deploy the backend.",
+        installLead: "The openbiliclaw-v* aggregate Latest Release only lists same-version backend source, browser extension packages, and available desktop installers; when a channel has not shipped yet, it is shown as unpublished instead of being backfilled from a previous release. Gitee source is synced through v0.3.231. Get the latest installers from GitHub Releases; 123 Cloud still holds v0.3.213 historical files, and the latest domestic installer mirror is pending. Install the extension first, then use the desktop installer or let Claude Code, Codex CLI, Cursor, or Windsurf deploy the backend.",
         installDownload: "Add to Chrome",
         installDesktop: "Open Latest Release",
         installDomestic: "Older versions (123 Cloud)",
-        installGitee: "Gitee v0.3.229 source",
+        installGitee: "Gitee v0.3.231 source",
         installManual: "Download extension zip",
         installReadme: "View README",
         agentPromptLabel: "One-line install prompt",
@@ -1927,6 +2147,14 @@ docker compose -f docker-compose.prebuilt.yml up -d
         footerDocs: "Docs",
         footerReleases: "Releases",
         footerGithub: "GitHub",
+        footerPartnerLabel: "Technology partner · SiliconFlow provides free model credits and inference support",
+        footerPartnerDocs: "Partnership details",
+        heroSponsorEyebrow: "Technology partner",
+        heroSponsorCopy: "Thanks to SiliconFlow for free model credits and inference support.",
+        partnersEyebrow: "Technology partner",
+        partnersTitle: "Model compute, powered by SiliconFlow.",
+        partnersLead: "Thanks to SiliconFlow for providing free model credits and inference support to OpenBiliClaw — used for profile consolidation, other assistive tasks, and evaluation of open-source models on real workloads. The partnership does not change recommendation logic or the local-first data boundary.",
+        partnersMore: "Partnership details →",
       },
     };
 

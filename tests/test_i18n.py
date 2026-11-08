@@ -202,6 +202,11 @@ class TestSemanticCatalog:
 
 
 class TestUiCatalogs:
+    def test_source_ui_catalog_is_an_identity_inventory(self) -> None:
+        """The shared runtime may skip fetching the bundled source catalog."""
+        for inventory in (_ui_messages("zh-Hans"), _ui_patterns("zh-Hans")):
+            assert all(source == rendered for source, rendered in inventory.items())
+
     def test_ui_catalog_files_exist_for_every_shipped_locale(self) -> None:
         for locale in SUPPORTED_LOCALES:
             assert (UI_CATALOG_DIR / f"{locale}.json").is_file(), locale

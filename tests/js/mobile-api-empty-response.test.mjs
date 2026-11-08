@@ -3,7 +3,7 @@ import test from "node:test";
 
 test("mobile source DELETE accepts 204 without JSON parsing and preserves request policy", async (t) => {
   const originalLocation = globalThis.location;
-  globalThis.location = { protocol: "https:", host: "claw.example" };
+  globalThis.location = new URL("https://claw.example/m/");
   t.after(() => {
     if (originalLocation === undefined) delete globalThis.location;
     else globalThis.location = originalLocation;

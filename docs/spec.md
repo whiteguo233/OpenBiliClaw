@@ -287,10 +287,70 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
+免费服务预置为普通 LLM 实例与独立 Embedding Provider，使用现有调用链与选择入口。图片能力可选，BGE-M3 仅生成文本向量；受保护传输封装在 adapter 内。
+
 ```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
+```
+
+```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
+```
+
+```text
+packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content versions; precompressed gzip)
+                               → /web/assets/desktop-bundle.js?v=… → one defer request from /web
+shared sources / original asset paths → mobile / extension; no Node build or install/config changes
+
+runtime-stream clients → API PresenceTracker (connect/disconnect; 20s heartbeat)
+                      → atomic data/runtime/extension_presence.json (60s active lease)
+                      → full/discovery worker presence gate → browser task queues
+
+Douyin account bootstrap → MAIN profile/self + web parameters → self-scoped paginated API
+                        → API rows only (including valid partial) → reject reported DOM/zero-API rows → staged task result → profile events
+                        → affirmative empty stays empty; unknown page cards never become account signals
+
+Douyin confirmed discovery failures → dy_tasks-derived retry_at (15/30m exponential; cap 6h)
+                                   → producer pre-keyword-claim / client / pending-task gates
+Douyin native search stream → original Response returned immediately to page
+                            → bounded clone JSON frames → partial ACK / failed → dy_tasks
+dy_tasks hot choices (6h) → fresh runtime plugin client → prefer unselected board words
+
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume
+
+Jev settings test (Web / actual MV3 / mobile Web)
+  → authenticated draft probe → synthetic profile + one candidate → full evaluator (8 questions)
+  → one native HTTP attempt → safe result; no config/DB write or real-profile read
+full Jev evaluation → joint temporal outcome + representative excerpt (8 questions / item)
+                    → hard-state claims bound to exact source and deadline → atomic validation
+                    → native INVALID / contradiction → typed refusal → lease-CAS parking
+                    → no same-context retry; recovery after endpoint/evidence context change
 
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
@@ -298,6 +358,38 @@ recommendation request → main API → optional Unix-socket recommendation proc
 main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
+
+optional Director (default off; separate decision credentials):
+  local profile catalog → on-demand projection (intent / shortlist / byte budget)
+  profile view + latest 3 experienced screens + bounded shortlist
+    → shared screen policy (brief / evidence / soft roles)
+      ├→ recurrent Jev pairs
+      ├→ Agent horizon + Jev local repairs
+      └→ Agent-only horizon (no Jev orchestration)
+         Agent plan → local short refs / canonical restore → strict validation
+                    → at most one correction within original deadline
+    → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
+    → immutable batch → visible ACK / exact click & feedback → future drafts
+  independent discovery semantic filter → shared bounded decision provider → Jev
+    → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
+
+candidate full evaluator (settings switch; LLM default):
+  Web / popup / mobile shared Jev connection form → config API → validated local settings
+    → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
+  Jev: local profile catalog → per-candidate projection + selected-model context budget
+    mandatory baseline + optional positive facts (borrow room before excerpting)
+    + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
+    → detached snapshot → worker-thread source spans / coverage + profile projection
+    → service-loop complete-question-group batch packing (cancellation dispatches nothing)
+    → identical selected profile fields shared once → first-fit open-batch backfill
+    dual byte ceilings use configured capacity integers (no extra 25%); not exact tokenizer
+  named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
+    Jev: 8 questions / candidate; joint temporal outcome + independent representative excerpt
+      hard-state options bind class/scope/state/source/deadline before one native request
+      controlled taxonomy / IP + exact source spans + model-bound dual byte guards
+  → shared metadata validation / separate cache → admission / legacy pool recovery
+  local input overflow → typed InputBudgetFailure → lease-CAS failed_eval (no retry)
+    → profile / negative evidence / evaluator context changed → bounded requeue
 
 interactive (dialogue / config probe / agent.chat / agent.task) ┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
@@ -384,11 +476,13 @@ Douyin source supply: daemon presence gate (explicit manual call bypasses it)
                      → one shared plugin-cycle wait budget → terminal dy_task → pending_eval
                      absent → zero enqueue; timeout/error/budget → bounded retry floor
 
-cover images: proxy foreground ─┐
-              refresh prefetch ─┴→ app-stable coordinator(total 4 / bg 3, fg priority)
-                                  → cache-key singleflight → host allowlist + public DNS (proxy: fixed DoH)
-                                  → pinned IP/direct-or-proxy (original Host + verified TLS)
-                                  → atomic cache
+cover display: UI → main API pooled internal HTTP → image service
+                  (or in-process coordinator when service is unavailable)
+cover bytes: foreground + background prefetch → coordinator(total 10 / bg 8, foreground priority)
+             → disk cache hit / singleflight miss → allowlist + public DNS + pinned IP/TLS
+                                                  → atomic original disk cache
+foreground display only: original bytes → bounded 640px rendition LRU (128 / 16 MiB) → UI
+
 Instagram manual replenish → producer/task locks + quota/budget → topic/creator
                           → explicit bounded eval/copy → usable supply or refresh.failed
 dialogue entries → app-stable execution lease(max active 1; reload pause/drain)
@@ -403,6 +497,9 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → raw user intent + ToolTextGuard(delta/final) + explicit named-call evidence
+                 → missing evidence / protocol-only reply → one corrective attempt
+                 → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
                  → hard_write call → ApprovalStore pending card → approve endpoint re-dispatch → config_update_hook → settings apply queue / last-good + ledger audit
@@ -444,6 +541,25 @@ reshuffle HTTP → temporal review-hold / expiry retirement → PoolServeSnapsho
 pool maintenance → isolated maintenance DB worker → ≤50 mutations/transaction
                  → commit/release lock → unchanged skip / 10m safety sweep
 ```
+
+独立 `decision/` 与 `[llm]` 凭据和路由隔离。默认关闭的 `[director]` 接通 Jev 逐对、
+Agent+Jev 修补、Agent-only 三策略，`[discovery.semantic_filter]` 独立控制过滤。
+三策略共用屏 brief／事件证据／软角色策略：先定本屏任务，再比较每对的增量价值和整屏覆盖。
+Jev 每步一次联合选择 pair + role；Agent 先判断有用供给，再规划具体多屏目标，修补带上原角色与剩余草稿。
+Agent 模型 seam 使用本次 `c0..` 短引用，只还原所选／遗漏，不翻译证据引用；所有既有校验仍执行。
+首次 JSON／结构／引用／覆盖不合法时至多纠正一次，总调用 ≤2，共用原默认 20 秒 deadline；
+用量累计、网络／超时不重试，无新配置、不提高生产预算。生成建议 completion 在先，旧 JSON 键顺序仍兼容。
+Agent 预排 → 目标覆盖／合法短尾校验 → 初始 completion 留痕；修补不机械补满语义短尾。
+提前停排必须说明遗漏候选并通过剩余硬可行性检查；仅给定前缀的验证，不证明语义质量或全局最优。
+角色不是固定比例或硬配额，整屏自检是模型指令；程序仅报告规范化标题重复，不认证语义质量。
+最多 40 张 shortlist、20 张屏、3 屏预排是工程上限；模型提案经 fresh eligibility / fencing / CAS
+后整屏提交，实际可见 ACK 才计曝光，点击与明确反馈精确关联批次。三端和 CLI 接通协议，
+模式设置使用 TOML，未增加图形探测或安装依赖；未实测真实模型质量。见
+[决策模块](modules/decision.md)、[导演运行时](modules/director.md)及[设计](plans/2026-09-26-director-jev-modes.md)。
+
+可选 `run_director_live_e2e.py --real` 用源库只读 backup 与白名单 memory 副本，经真实 loopback TCP
+HTTP／SQLite／Soul／Luna 验收；测试反馈只写临时副本，报告只留安全结构数据。关闭 ASGI lifespan，
+不覆盖 discovery、长期学习、后台恢复或 Jev；`--serve` 仅供临时浏览器检查，启动成功不代表验收通过。
 
 应用内 Tailnet 的产品边界是“让电脑端应用本身成为一个 tailnet 节点”，而不是要求电脑全局
 开启 Tailscale。`[tailnet].enabled=false` 保持默认；开启时 CLI / 桌面入口在 uvicorn 外层托管
@@ -541,6 +657,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 手机版二维码：桌面/插件 -> 同 scheme /api/qr-info -> /m      │   │
+│  │ App 相机/截图本机识别；手机网页保留代理前缀访问 API/资源/WS  │   │
 │  │ 跳过 /api/health readiness / embedding probe                 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -615,6 +732,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │       + frozen admission / worker-only apply / 轻量 ref winner / applied 投影 │ │
 │  │       + confusions FIFO(≤5/队头 fencing/12h 补扫) + 冻结/held 重放 + 深层门控 │ │
 │  │       (off/shadow 默认/enforce · 两接入点: 深层对话候选/soul 重建; 管线 VALUES·CORE 已封死) │ │
+│  │     Event provenance: created_at 永不入 prompt · 无 timestamp = 时间未知 · 存量关注聚合成一行 │ │
 │  │     Autostart: user login item + Ollama preflight/self-heal + Ollama.app runtime 校验 │ │
 │  │     Bili DOM fallback + XHS/Douyin/YouTube/X/Zhihu/Reddit/Linux.do/Bangumi/V2EX/Weibo/GitHub producers: 按平台缺口独立补池 │ │
 │  │     CLI discover --source douyin -> 同一正式 producer -> 统一关键词终态 -> pending eval │ │
@@ -667,6 +785,8 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ + 各自 producer│ │ bounded task/result│  │ HTTP/浏览器 │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ Web 抽取 → 完整 URL 身份 → 去重；原生平台 ID 保留           │ │
+│  │ GitHub/Instagram init → 所选 producer → 评估/文案 → 可用库存 │ │
 │  │ sources.platforms：十五来源 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │
@@ -811,11 +931,12 @@ localhost。两个入口互斥，默认 HTTP 不变。
 
 ---
 
-可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](modules/discovery.md#可选-keenable-grounding)。
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 
@@ -900,3 +1021,6 @@ TikTok 封面：`image_cache → DoH 解析/公网地址验证 → IP 固定（�
 ## macOS 构建分发补充
 
 桌面打包 → Developer ID 内层/应用签名 → Apple 公证并附票据 → ZIP/DMG → DMG 签名、公证和 Gatekeeper 检查；正式 DMG 拖入 Applications 安装。此构建链不改变 §3 的运行时数据流。详见[架构分发链](architecture.md#macos-分发构建链)与[打包接口](modules/packaging.md)。
+
+
+中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。

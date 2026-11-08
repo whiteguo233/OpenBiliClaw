@@ -75,8 +75,12 @@
     // Compiled pattern entries: { regex, replacement, order, weight }.
     patterns: [],
     catalogs: new Map(),
+    catalogLoads: new Map(),
     basePath: "/i18n/ui/",
     fetchCatalog: null,
+    activationVersion: 0,
+    sourceIsIdentity: true,
+    hasLocalizedDom: false,
     ready: false,
     observer: null,
     applying: false,
@@ -154,31 +158,56 @@
 
   async function loadCatalog(locale) {
     if (state.catalogs.has(locale)) return state.catalogs.get(locale);
-    let catalog = { messages: new Map(), patterns: {} };
+    if (state.catalogLoads.has(locale)) return state.catalogLoads.get(locale);
+    // Capture this catalog source: a later init may replace the loader/path
+    // while a previous request is still resolving.
+    const catalogs = state.catalogs;
+    const loads = state.catalogLoads;
+    const fetchCatalog = state.fetchCatalog;
+    const basePath = state.basePath;
+    const pending = (async () => {
+      try {
+        let payload;
+        if (typeof fetchCatalog === "function") {
+          payload = await fetchCatalog(locale);
+        } else {
+          const response = await fetch(`${basePath}${locale}.json`, { cache: "no-cache" });
+          if (!response.ok) throw new Error(`catalog request failed: ${response.status}`);
+          payload = await response.json();
+        }
+        const catalog = toCatalog(payload);
+        // A failed or empty response must not disable translation for the
+        // entire page session. A later locale selection can retry it.
+        if (catalog.messages.size || Object.keys(catalog.patterns).length) catalogs.set(locale, catalog);
+        return catalog;
+      } catch (error) {
+        // A missing catalog is not fatal: the surface keeps its source copy.
+        if (typeof console !== "undefined" && console.warn) {
+          console.warn(`[i18n] catalog ${locale} unavailable`, error);
+        }
+        return { messages: new Map(), patterns: {} };
+      }
+    })();
+    loads.set(locale, pending);
     try {
-      if (typeof state.fetchCatalog === "function") {
-        catalog = toCatalog(await state.fetchCatalog(locale));
-      } else {
-        const response = await fetch(`${state.basePath}${locale}.json`, { cache: "no-cache" });
-        if (response.ok) catalog = toCatalog(await response.json());
-      }
-    } catch (error) {
-      // A missing catalog is not fatal: the surface keeps its source copy.
-      if (typeof console !== "undefined" && console.warn) {
-        console.warn(`[i18n] catalog ${locale} unavailable`, error);
-      }
+      return await pending;
+    } finally {
+      if (loads.get(locale) === pending) loads.delete(locale);
     }
-    state.catalogs.set(locale, catalog);
-    return catalog;
   }
 
   function toCatalog(payload) {
     const messages = (payload && payload.messages) || payload || {};
     const patterns = (payload && payload.patterns) || {};
     return {
-      messages: new Map(Object.entries(messages)),
-      patterns: patterns && typeof patterns === "object" ? patterns : {}
+      messages: new Map(validEntries(messages)),
+      patterns: Object.fromEntries(validEntries(patterns))
     };
+  }
+
+  function validEntries(entries) {
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) return [];
+    return Object.entries(entries).filter(([key, value]) => key && typeof value === "string" && value.trim());
   }
 
   function escapeRegExp(value) {
@@ -223,17 +252,28 @@
 
   async function activate(locale) {
     const normalized = normalizeLocale(locale);
-    const fallback = await loadCatalog(DEFAULT_LOCALE);
+    const version = ++state.activationVersion;
+    // The bundled source catalog is an identity inventory (guarded by tests),
+    // so source strings already provide its complete fallback. Custom loaders
+    // and paths may deliberately override source copy and keep the old path.
+    const customSource = typeof state.fetchCatalog === "function" || state.basePath !== "/i18n/ui/";
+    const fallback = customSource
+      ? await loadCatalog(DEFAULT_LOCALE)
+      : { messages: new Map(), patterns: {} };
     const primary = normalized === DEFAULT_LOCALE ? fallback : await loadCatalog(normalized);
+    if (version !== state.activationVersion) return;
     // Traditional Chinese gets its own complete catalog; English is filled in
     // incrementally, so untranslated copy falls back to the Chinese source
     // rather than disappearing.
     state.locale = normalized;
     state.catalog = mergeCatalog(fallback.messages, primary.messages);
     state.patterns = compilePatterns(mergePatterns(fallback.patterns, primary.patterns));
+    state.sourceIsIdentity = normalized === DEFAULT_LOCALE && !customSource;
+    if (!state.sourceIsIdentity) state.hasLocalizedDom = true;
     document.documentElement.lang = normalized;
     document.documentElement.dir = "ltr";
     apply(document.documentElement);
+    observe();
     if (typeof state.listener === "function") {
       try {
         state.listener(normalized);
@@ -355,6 +395,9 @@
 
   function apply(root) {
     if (!root) return;
+    // Nothing has ever translated this source-language DOM. Do not allocate
+    // source records or walk thousands of hidden settings nodes at startup.
+    if (state.sourceIsIdentity && !state.hasLocalizedDom) return;
     if (state.applying) return;
     state.applying = true;
     try {
@@ -410,6 +453,7 @@
 
   function observe() {
     if (state.observer || typeof MutationObserver === "undefined") return;
+    if (state.sourceIsIdentity && !state.hasLocalizedDom) return;
     state.observer = new MutationObserver((records) => {
       if (state.applying) return;
       const roots = [];
@@ -418,6 +462,8 @@
           record.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) roots.push(node);
           });
+        } else if (record.type === "attributes") {
+          roots.push(record.target);
         } else if (record.type === "characterData") {
           roots.push(record.target);
         }
@@ -427,17 +473,24 @@
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: TRANSLATABLE_ATTRS
     });
   }
 
   async function init(options) {
     const config = options || {};
+    const previousBasePath = state.basePath;
+    const previousFetchCatalog = state.fetchCatalog;
     if (config.basePath) state.basePath = config.basePath.endsWith("/") ? config.basePath : `${config.basePath}/`;
     if (typeof config.fetchCatalog === "function") state.fetchCatalog = config.fetchCatalog;
+    if (previousBasePath !== state.basePath || previousFetchCatalog !== state.fetchCatalog) {
+      state.catalogs = new Map();
+      state.catalogLoads = new Map();
+    }
     if (typeof config.onChange === "function") state.listener = config.onChange;
     await activate(config.locale || document.documentElement.lang || DEFAULT_LOCALE);
-    observe();
     state.ready = true;
     return state.locale;
   }

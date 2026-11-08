@@ -61,7 +61,8 @@ def test_desktop_hydration_does_not_gate_cards_on_secondary_resources() -> None:
     assert "Promise.all([" not in body
     assert "recommendationsPromise.then" in body
     assert "runtimePromise.then" in body
-    assert "Promise.allSettled(secondaryPromises)" in body
+    assert "const secondaryTasks = [" in body
+    assert "hydrateSecondaryWorker()," in body
     assert "ENDPOINTS.ping" in body
 
 

@@ -21,6 +21,7 @@ from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
 from .orcarouter_provider import OrcaRouterProvider
 from .requesty_provider import RequestyProvider
+from .sponsored_embedding import SponsoredEmbeddingAdapter
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config
@@ -43,6 +44,28 @@ class RegistrySummary:
 
 
 def build_llm_registry(
+    config: Config,
+    *,
+    provider_overrides: dict[str, LLMProvider] | None = None,
+    fallback_order: list[str] | None = None,
+) -> LLMRegistry:
+    """Build ordinary instances and chains, including the built-in free adapter."""
+    from openbiliclaw.config import migrate_sponsored_provider_config
+    from openbiliclaw.sponsored_runtime_state import install_sponsored_settings
+
+    from .sponsored_router import sponsored_bypassed
+
+    migrate_sponsored_provider_config(config.llm)
+    if not sponsored_bypassed():
+        install_sponsored_settings(config.llm.sponsored, data_path=config.data_path)
+    return _build_user_llm_registry(
+        config,
+        provider_overrides=provider_overrides,
+        fallback_order=fallback_order,
+    )
+
+
+def _build_user_llm_registry(
     config: Config,
     *,
     provider_overrides: dict[str, LLMProvider] | None = None,
@@ -219,6 +242,10 @@ def _build_instance_provider(
     instance: Any,
 ) -> LLMProvider | None:
     """Reuse the mature per-adapter factories with one v2 endpoint config."""
+    if provider_type == "siliconflow_free":
+        from .sponsored_adapter import SponsoredChatAdapter
+
+        return SponsoredChatAdapter(model=instance.model, settings=config.llm.sponsored)
     factories = {
         "openai": _maybe_openai_provider,
         "claude": _maybe_claude_provider,
@@ -243,6 +270,7 @@ def _build_instance_provider(
 
 
 _EMBEDDING_CAPABLE_PROVIDERS: tuple[str, ...] = (
+    "siliconflow_free",
     "openai",
     "gemini",
     "ollama",
@@ -307,12 +335,15 @@ def build_embedding_service(
     try:
         from typing import cast
 
+        from openbiliclaw.config import migrate_sponsored_provider_config
         from openbiliclaw.llm.embedding import (
             EmbeddingCache,
             EmbeddingService,
             SupportsEmbed,
             build_embedding_provenance,
         )
+
+        migrate_sponsored_provider_config(config.llm)
 
         emb_cfg = config.llm.embedding
         requested_name = emb_cfg.provider.strip().lower()
@@ -328,7 +359,9 @@ def build_embedding_service(
             if name in _EMBEDDING_CAPABLE_PROVIDERS and name not in fallback_order:
                 fallback_order.append(name)
 
-        chosen_provider: LLMProvider | OllamaEmbeddingProvider | None = None
+        chosen_provider: (
+            LLMProvider | OllamaEmbeddingProvider | SponsoredEmbeddingAdapter | None
+        ) = None
         chosen_name = ""
         chosen_model = ""
         for candidate in fallback_order:
@@ -393,8 +426,10 @@ def build_embedding_service(
             if _embedding_provider_honors_output_dimensionality(chosen_name, chosen_model)
             else 0
         )
+        if chosen_name == "siliconflow_free":
+            provenance_dimension = 1024
         provenance = build_embedding_provenance(
-            chosen_name,
+            "sponsored" if chosen_name == "siliconflow_free" else chosen_name,
             endpoint,
             chosen_model,
             provenance_dimension,
@@ -430,12 +465,24 @@ def _build_dedicated_embedding_provider(
     emb_cfg: Any,
     config: Config,
     requested_name: str,
-) -> tuple[LLMProvider | OllamaEmbeddingProvider, str] | None:
+) -> tuple[LLMProvider | OllamaEmbeddingProvider | SponsoredEmbeddingAdapter, str] | None:
     """Construct a dedicated provider instance for embedding calls.
 
     Returns ``(provider, effective_model)`` or ``None`` if the candidate
     can't be constructed (missing api_key, missing SDK, ...).
     """
+    if candidate == "siliconflow_free":
+        from .sponsored_profiles import EMBEDDING_MODEL
+
+        if candidate == requested_name and (
+            emb_cfg.model != EMBEDDING_MODEL
+            or emb_cfg.api_key
+            or emb_cfg.base_url
+            or emb_cfg.multimodal_enabled
+        ):
+            raise ValueError("免费 Embedding 仅支持内置 BGE-M3 文本向量")
+        return SponsoredEmbeddingAdapter(config.llm.sponsored), EMBEDDING_MODEL
+
     emb_api_key = emb_cfg.api_key.strip()
     emb_base_url = emb_cfg.base_url.strip()
     fallback_enabled = bool(getattr(emb_cfg, "fallback_enabled", False))
@@ -671,7 +718,7 @@ def _embedding_endpoint(
     provider_name: str,
     emb_cfg: Any,
     config: Config,
-    provider: LLMProvider | OllamaEmbeddingProvider,
+    provider: LLMProvider | OllamaEmbeddingProvider | SponsoredEmbeddingAdapter,
 ) -> str:
     """Return the endpoint actually used by a dedicated embedding provider."""
     for attr in ("base_url", "_base_url"):

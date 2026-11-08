@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from openbiliclaw.llm.evaluation_wire import (
     EvaluationWireError,
+    project_evaluation_source_metadata,
     validate_canonical_evaluation_envelope,
 )
 
@@ -27,6 +29,9 @@ _OPTIONAL_POSITIVE_INTEGER_FIELDS = (
     "comment_count",
     "share_count",
     "danmaku_count",
+    "reply_count",
+    "retweet_count",
+    "bookmark_count",
     "rating_count",
     "source_rank",
 )
@@ -36,6 +41,38 @@ _OPTIONAL_LIST_FIELDS = ("tags", "related_interests")
 
 class CanonicalEvaluationPayloadError(ValueError):
     """Raised when a sparse evaluator payload is not canonical."""
+
+
+@dataclass(frozen=True)
+class InputBudgetFailure:
+    """Local deterministic refusal, never a model score or remote answer.
+
+    The engine binds the effective profile/evaluator context before persistence.
+    An unchanged context must not immediately retry the same oversized input.
+    """
+
+    context_fingerprint: str = ""
+
+    @property
+    def storage_reason(self) -> str:
+        """Stable, non-sensitive cause and recovery identity."""
+        return f"input_budget_exhausted:{self.context_fingerprint}"
+
+
+@dataclass(frozen=True)
+class InvalidEvaluationEvidence:
+    """Received but invalid evidence, parked instead of paid reevaluation.
+
+    This is not an input overflow or a low relevance score. A changed effective
+    evaluation context permits one new attempt; unchanged restarts do not.
+    """
+
+    context_fingerprint: str = ""
+
+    @property
+    def storage_reason(self) -> str:
+        """Safe cause and context identity; never include the remote payload."""
+        return f"invalid_evaluation_evidence:{self.context_fingerprint}"
 
 
 @dataclass(frozen=True)
@@ -66,7 +103,7 @@ class CanonicalEvaluationBatch:
 
 
 def _copy_item(item: Mapping[str, object]) -> dict[str, object]:
-    return {key: list(value) if isinstance(value, list) else value for key, value in item.items()}
+    return deepcopy(dict(item))
 
 
 def _text(value: object) -> str:
@@ -170,6 +207,10 @@ def build_canonical_evaluation_batch(
             value = source.get(field)
             if isinstance(value, str) and (sanitized := _sanitize_wire_text(value)):
                 item[field] = sanitized
+        if "published_at" not in item:
+            label = source.get("published_label")
+            if isinstance(label, str) and (sanitized := _sanitize_wire_text(label)):
+                item["published_label"] = sanitized
         for field in _OPTIONAL_POSITIVE_INTEGER_FIELDS:
             value = source.get(field)
             if _is_positive_integer(value):
@@ -188,6 +229,11 @@ def build_canonical_evaluation_batch(
                     item[field] = entries
         if _text(source.get("cover_image_ref")):
             item["cover_image_ref"] = f"cover:{local_id}"
+        metadata = project_evaluation_source_metadata(
+            platforms[index], source.get("source_metadata")
+        )
+        if metadata:
+            item["source_metadata"] = metadata
         canonical_items.append(item)
 
     batch = CanonicalEvaluationBatch(

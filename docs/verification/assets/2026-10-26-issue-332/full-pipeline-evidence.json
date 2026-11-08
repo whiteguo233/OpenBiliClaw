@@ -1,0 +1,1104 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-10-26 Asia/Shanghai",
+  "scope": "capability-increment: Chrome installed extension / formal producer / original model / actual desktop cards",
+  "result": "PASS for the declared bounded chain; full multi-browser/unattended source certification not claimed",
+  "identity": {
+    "branch": "fix/issue-332-shared-presence",
+    "base_commit": "4ac8b45af2f3c75dba38e61565ffea33e6839a8b",
+    "extension_source_commit": "b7d7fe77ea040005fae9c136384befcc1f93ec04",
+    "phase_a_source_hashes": {
+      "extension/src/background/dy-task-dispatcher.ts": "7228b2223eaf36ff3405cddfede6118b77999591fc94fcd8a1ca9ea1055381e0",
+      "extension/src/content/douyin.ts": "76ed6bbbb8073a4d5fcd6d5a79b323c32c50c2f5e95c20936bbdf1ffa417a142",
+      "extension/src/main/dy-fetch-tap.ts": "5ca76bc390993b08f4c0e60edd0a50836a9b2bd6120b476f9e523d5c3bf4d8a4",
+      "src/openbiliclaw/sources/dy_tasks.py": "05f8968438af2b75caa811601c357d175bede43929171b4f4defe48b48dd41de",
+      "src/openbiliclaw/sources/douyin_plugin_search.py": "59c68dd10f485f1fb29e0adf52e2c98ff1f2db88ca6bb2042564aadc525eacdd",
+      "src/openbiliclaw/runtime/douyin_producer.py": "a06acd08ae17983175bcb42645f9f5f6b94752e7e6288b1756411788a9988fda"
+    },
+    "phase_b_source_hashes": {
+      "extension/src/background/dy-task-dispatcher.ts": "7228b2223eaf36ff3405cddfede6118b77999591fc94fcd8a1ca9ea1055381e0",
+      "extension/src/content/douyin.ts": "76ed6bbbb8073a4d5fcd6d5a79b323c32c50c2f5e95c20936bbdf1ffa417a142",
+      "extension/src/main/dy-fetch-tap.ts": "5ca76bc390993b08f4c0e60edd0a50836a9b2bd6120b476f9e523d5c3bf4d8a4",
+      "src/openbiliclaw/sources/dy_tasks.py": "f131ea87115393c0f64a97742c8b5d84eca8dccf98b73c711953ea031f8dea7f",
+      "src/openbiliclaw/sources/douyin_plugin_search.py": "5493d4b866ebfa710cbb9ba16be3d852c9948652fd38075202b1a2ae73372d8c",
+      "src/openbiliclaw/runtime/douyin_producer.py": "a06acd08ae17983175bcb42645f9f5f6b94752e7e6288b1756411788a9988fda"
+    },
+    "source_hashes_still_match": {
+      "extension/src/background/dy-task-dispatcher.ts": true,
+      "extension/src/content/douyin.ts": true,
+      "extension/src/main/dy-fetch-tap.ts": true,
+      "src/openbiliclaw/sources/dy_tasks.py": true,
+      "src/openbiliclaw/sources/douyin_plugin_search.py": true,
+      "src/openbiliclaw/runtime/douyin_producer.py": true
+    },
+    "regression_test_hashes": {
+      "tests/test_douyin_producer.py": "6a8da64b84eb77855db47058f37fcfd8d874c313d2523c1fd075254d501d0ec4",
+      "tests/test_dy_tasks.py": "19dee57dd20f67d8f9fa906746cc9c2e6d05d750e5fb55be94ff8d4fe98fcb13"
+    }
+  },
+  "configuration": {
+    "llm_route_preserved": true,
+    "discovery_config_preserved": true,
+    "profile_interest_count": 82,
+    "admission_threshold": 0.6,
+    "llm_timeout_seconds": 1200,
+    "successful_source_min_interval_minutes": 3,
+    "unified_keyword_planner_enabled": false,
+    "keyword_generation": "actual configured legacy profile LLM path",
+    "embedding": {
+      "provider": "ollama",
+      "model": "nomic-embed-text",
+      "dimensions": 768,
+      "persisted_vectors_from_empty": 133
+    },
+    "bounded_overrides": {
+      "selected_source_each_round": [
+        "hot",
+        "search"
+      ],
+      "keywords_per_run": 1,
+      "hot_task_limit": 12,
+      "search_task_limit": 6,
+      "automatic_loops_disabled": true
+    }
+  },
+  "rounds": [
+    {
+      "phase": "A",
+      "task": {
+        "id": "eba44e13-2303-4363-805d-1f14d0f25f72",
+        "type": "hot",
+        "status": "completed",
+        "created_at": "2026-10-25 18:10:05",
+        "claimed_at": "2026-10-25 18:10:05",
+        "completed_at": "2026-10-25 18:10:30",
+        "max_items": 12,
+        "hot_item_count": 2,
+        "video_ids": [
+          "7700664474853217898",
+          "7700481463862463778",
+          "7700665695654654586",
+          "7700666538038870459",
+          "7700665470764508838",
+          "7700665984381765850",
+          "7667964159576870144",
+          "7683142256663989555",
+          "7697884859914457713",
+          "7697921210521244401",
+          "7699009824423997311",
+          "7699467969331592305"
+        ],
+        "error": null,
+        "debug": {
+          "api_pages_fetched": 0,
+          "api_items_harvested": 0,
+          "api_error": "",
+          "requested_max_items": 6,
+          "search_navigation_resumes": 2,
+          "hot_collection_method": "hot_word_search",
+          "ui_triggered": true,
+          "search_navigation_ok": true,
+          "passive_items_harvested": 30,
+          "passive_responses_observed": 10
+        }
+      },
+      "producer_result": {
+        "discovered": 12,
+        "source_counts": {
+          "dy-plugin-hot-related": 12
+        },
+        "reason": "ok",
+        "source_outcomes": {
+          "hot": "used"
+        },
+        "enqueued": 12
+      },
+      "presence": {
+        "local_count": 0,
+        "shared_visible_without_grace": true
+      },
+      "bounded_keyword_count": 1,
+      "producer_elapsed_seconds": 25.933,
+      "evaluation": {
+        "evaluated": 12,
+        "cached": 0,
+        "rejected": 12
+      },
+      "evaluation_elapsed_seconds": 245.063,
+      "copy_callback_state": "not_owned",
+      "public_hot_choices": [
+        {
+          "sentence_id": "2713121",
+          "word": "IG对战HLE"
+        },
+        {
+          "sentence_id": "2713035",
+          "word": "跟着现在就出发玩转九寨沟"
+        }
+      ]
+    },
+    {
+      "phase": "A",
+      "task": {
+        "id": "a544f099-388e-4dd8-91af-afab23e4433c",
+        "type": "search",
+        "status": "completed",
+        "created_at": "2026-10-25 18:15:58",
+        "claimed_at": "2026-10-25 18:15:58",
+        "completed_at": "2026-10-25 18:16:06",
+        "max_items": null,
+        "hot_item_count": 0,
+        "video_ids": [
+          "7683129058863240037",
+          "7588112859939228971",
+          "7518606098090577203",
+          "7631561939390505827",
+          "7477474343887457551",
+          "7662248112035695281"
+        ],
+        "error": null,
+        "debug": {
+          "api_pages_fetched": 0,
+          "api_items_harvested": 0,
+          "api_error": "",
+          "requested_max_items": 6,
+          "search_navigation_resumes": 1,
+          "ui_triggered": true,
+          "search_navigation_ok": true,
+          "passive_items_harvested": 24,
+          "passive_responses_observed": 6
+        }
+      },
+      "producer_result": {
+        "discovered": 6,
+        "source_counts": {
+          "dy-plugin-search": 6
+        },
+        "reason": "ok",
+        "source_outcomes": {
+          "search": "used"
+        },
+        "enqueued": 6,
+        "keyword_outcome_counts": {
+          "used": 1
+        }
+      },
+      "presence": {
+        "local_count": 0,
+        "shared_visible_without_grace": true
+      },
+      "bounded_keyword_count": 1,
+      "producer_elapsed_seconds": 13.042,
+      "evaluation": {
+        "evaluated": 6,
+        "cached": 2,
+        "rejected": 4
+      },
+      "evaluation_elapsed_seconds": 118.713,
+      "copy_callback_state": "not_owned"
+    },
+    {
+      "phase": "B",
+      "task": {
+        "id": "eab7e77e-fb69-4cac-ae8d-659ca99fdfba",
+        "type": "hot",
+        "status": "completed",
+        "created_at": "2026-10-25 18:25:32",
+        "claimed_at": "2026-10-25 18:25:32",
+        "completed_at": "2026-10-25 18:25:54",
+        "max_items": 12,
+        "hot_item_count": 2,
+        "video_ids": [
+          "7548288264873053492",
+          "7700597641435974963",
+          "7676370850752269578",
+          "7672711916594802161",
+          "7671237471086054699",
+          "7624836618477784371",
+          "7639035503454457123",
+          "7700526722667547919",
+          "7700577219965390120",
+          "7700457346631949243",
+          "7700514361512627494",
+          "7700597785674592997"
+        ],
+        "error": null,
+        "debug": {
+          "api_pages_fetched": 0,
+          "api_items_harvested": 0,
+          "api_error": "",
+          "requested_max_items": 5,
+          "search_navigation_resumes": 2,
+          "hot_collection_method": "hot_word_search",
+          "ui_triggered": true,
+          "search_navigation_ok": true,
+          "passive_items_harvested": 21,
+          "passive_responses_observed": 6
+        }
+      },
+      "producer_result": {
+        "discovered": 12,
+        "source_counts": {
+          "dy-plugin-hot-related": 12
+        },
+        "reason": "ok",
+        "source_outcomes": {
+          "hot": "used"
+        },
+        "enqueued": 12
+      },
+      "presence": {
+        "local_count": 0,
+        "shared_visible_without_grace": true
+      },
+      "bounded_keyword_count": 1,
+      "producer_elapsed_seconds": 22.036,
+      "evaluation": {
+        "evaluated": 12,
+        "cached": 2,
+        "rejected": 10
+      },
+      "evaluation_elapsed_seconds": 100.426,
+      "copy_callback_state": "not_owned",
+      "public_hot_choices": [
+        {
+          "sentence_id": "2712925",
+          "word": "引江补汉工程有多硬核"
+        },
+        {
+          "sentence_id": "2712071",
+          "word": "奥巴马中期选举首秀抨击特朗普"
+        }
+      ]
+    },
+    {
+      "phase": "B",
+      "task": {
+        "id": "e5459a72-368a-4de1-8ad8-6d0feb514104",
+        "type": "hot",
+        "status": "completed",
+        "created_at": "2026-10-25 18:34:17",
+        "claimed_at": "2026-10-25 18:34:17",
+        "completed_at": "2026-10-25 18:34:38",
+        "max_items": 12,
+        "hot_item_count": 2,
+        "video_ids": [
+          "7700584742413017280",
+          "7700582668685118755",
+          "7700587816317254838",
+          "7700612538232294691",
+          "7700580781021728041",
+          "7700630437932125494",
+          "7700593027361836298",
+          "7700499924874999909",
+          "7700557092251274506",
+          "7700543493390732570",
+          "7700183132671535291",
+          "7700573696394800330"
+        ],
+        "error": null,
+        "debug": {
+          "api_pages_fetched": 0,
+          "api_items_harvested": 0,
+          "api_error": "",
+          "requested_max_items": 5,
+          "search_navigation_resumes": 2,
+          "hot_collection_method": "hot_word_search",
+          "ui_triggered": true,
+          "search_navigation_ok": true,
+          "passive_items_harvested": 21,
+          "passive_responses_observed": 6
+        }
+      },
+      "producer_result": {
+        "discovered": 12,
+        "source_counts": {
+          "dy-plugin-hot-related": 12
+        },
+        "reason": "ok",
+        "source_outcomes": {
+          "hot": "used"
+        },
+        "enqueued": 12
+      },
+      "presence": {
+        "local_count": 0,
+        "shared_visible_without_grace": true
+      },
+      "bounded_keyword_count": 1,
+      "producer_elapsed_seconds": 21.468,
+      "evaluation": {
+        "evaluated": 12,
+        "cached": 2,
+        "rejected": 10
+      },
+      "evaluation_elapsed_seconds": 74.158,
+      "copy_callback_state": "not_owned",
+      "public_hot_choices": [
+        {
+          "sentence_id": "2712876",
+          "word": "陈熠3:0战胜张本美和夺冠"
+        },
+        {
+          "sentence_id": "2712819",
+          "word": "iPhone Duo防尘测试翻车"
+        }
+      ]
+    }
+  ],
+  "candidate_identity_checks": {
+    "candidate_count": 42,
+    "unique_content_ids": 42,
+    "candidate_keys_canonical": true,
+    "candidate_bvids_valid": true,
+    "urls_canonical": true,
+    "titles_nonempty": true,
+    "authors_nonempty": true,
+    "covers_nonempty": true,
+    "thresholds": [
+      0.6
+    ],
+    "status_counts": {
+      "rejected_low_score": 36,
+      "cached": 6
+    },
+    "sources": {
+      "dy-plugin-hot-related": 36,
+      "dy-plugin-search": 6
+    }
+  },
+  "final_candidates": [
+    {
+      "candidate_key": "douyin:7700664474853217898",
+      "content_id": "7700664474853217898",
+      "bvid": "dy:7700664474853217898",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.12,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700481463862463778",
+      "content_id": "7700481463862463778",
+      "bvid": "dy:7700481463862463778",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.12,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700665695654654586",
+      "content_id": "7700665695654654586",
+      "bvid": "dy:7700665695654654586",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.08,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700666538038870459",
+      "content_id": "7700666538038870459",
+      "bvid": "dy:7700666538038870459",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.08,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700665470764508838",
+      "content_id": "7700665470764508838",
+      "bvid": "dy:7700665470764508838",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.1,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700665984381765850",
+      "content_id": "7700665984381765850",
+      "bvid": "dy:7700665984381765850",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.08,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7667964159576870144",
+      "content_id": "7667964159576870144",
+      "bvid": "dy:7667964159576870144",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.3,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7683142256663989555",
+      "content_id": "7683142256663989555",
+      "bvid": "dy:7683142256663989555",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.35,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7697884859914457713",
+      "content_id": "7697884859914457713",
+      "bvid": "dy:7697884859914457713",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.08,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7697921210521244401",
+      "content_id": "7697921210521244401",
+      "bvid": "dy:7697921210521244401",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.12,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7699009824423997311",
+      "content_id": "7699009824423997311",
+      "bvid": "dy:7699009824423997311",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.06,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7699467969331592305",
+      "content_id": "7699467969331592305",
+      "bvid": "dy:7699467969331592305",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.08,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7683129058863240037",
+      "content_id": "7683129058863240037",
+      "bvid": "dy:7683129058863240037",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-search",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.3,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7588112859939228971",
+      "content_id": "7588112859939228971",
+      "bvid": "dy:7588112859939228971",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-search",
+      "status": "cached",
+      "score_threshold": 0.6,
+      "relevance_score": 0.62,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7518606098090577203",
+      "content_id": "7518606098090577203",
+      "bvid": "dy:7518606098090577203",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-search",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.3,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7631561939390505827",
+      "content_id": "7631561939390505827",
+      "bvid": "dy:7631561939390505827",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-search",
+      "status": "cached",
+      "score_threshold": 0.6,
+      "relevance_score": 0.82,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7477474343887457551",
+      "content_id": "7477474343887457551",
+      "bvid": "dy:7477474343887457551",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-search",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.38,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7662248112035695281",
+      "content_id": "7662248112035695281",
+      "bvid": "dy:7662248112035695281",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-search",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.1,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7548288264873053492",
+      "content_id": "7548288264873053492",
+      "bvid": "dy:7548288264873053492",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.5,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700597641435974963",
+      "content_id": "7700597641435974963",
+      "bvid": "dy:7700597641435974963",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.55,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7676370850752269578",
+      "content_id": "7676370850752269578",
+      "bvid": "dy:7676370850752269578",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.52,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7672711916594802161",
+      "content_id": "7672711916594802161",
+      "bvid": "dy:7672711916594802161",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.45,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7671237471086054699",
+      "content_id": "7671237471086054699",
+      "bvid": "dy:7671237471086054699",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "cached",
+      "score_threshold": 0.6,
+      "relevance_score": 0.62,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7624836618477784371",
+      "content_id": "7624836618477784371",
+      "bvid": "dy:7624836618477784371",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "cached",
+      "score_threshold": 0.6,
+      "relevance_score": 0.6,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7639035503454457123",
+      "content_id": "7639035503454457123",
+      "bvid": "dy:7639035503454457123",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.5,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700526722667547919",
+      "content_id": "7700526722667547919",
+      "bvid": "dy:7700526722667547919",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.3,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700577219965390120",
+      "content_id": "7700577219965390120",
+      "bvid": "dy:7700577219965390120",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.4,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700457346631949243",
+      "content_id": "7700457346631949243",
+      "bvid": "dy:7700457346631949243",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.28,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700514361512627494",
+      "content_id": "7700514361512627494",
+      "bvid": "dy:7700514361512627494",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.38,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700597785674592997",
+      "content_id": "7700597785674592997",
+      "bvid": "dy:7700597785674592997",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.32,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700584742413017280",
+      "content_id": "7700584742413017280",
+      "bvid": "dy:7700584742413017280",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.28,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700582668685118755",
+      "content_id": "7700582668685118755",
+      "bvid": "dy:7700582668685118755",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.26,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700587816317254838",
+      "content_id": "7700587816317254838",
+      "bvid": "dy:7700587816317254838",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.29,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700612538232294691",
+      "content_id": "7700612538232294691",
+      "bvid": "dy:7700612538232294691",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.26,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700580781021728041",
+      "content_id": "7700580781021728041",
+      "bvid": "dy:7700580781021728041",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.27,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700630437932125494",
+      "content_id": "7700630437932125494",
+      "bvid": "dy:7700630437932125494",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.27,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700593027361836298",
+      "content_id": "7700593027361836298",
+      "bvid": "dy:7700593027361836298",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.28,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700499924874999909",
+      "content_id": "7700499924874999909",
+      "bvid": "dy:7700499924874999909",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.52,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700557092251274506",
+      "content_id": "7700557092251274506",
+      "bvid": "dy:7700557092251274506",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.28,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700543493390732570",
+      "content_id": "7700543493390732570",
+      "bvid": "dy:7700543493390732570",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "cached",
+      "score_threshold": 0.6,
+      "relevance_score": 0.62,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700183132671535291",
+      "content_id": "7700183132671535291",
+      "bvid": "dy:7700183132671535291",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "rejected_low_score",
+      "score_threshold": 0.6,
+      "relevance_score": 0.58,
+      "eval_attempts": 0
+    },
+    {
+      "candidate_key": "douyin:7700573696394800330",
+      "content_id": "7700573696394800330",
+      "bvid": "dy:7700573696394800330",
+      "source_platform": "douyin",
+      "source_strategy": "dy-plugin-hot-related",
+      "status": "cached",
+      "score_threshold": 0.6,
+      "relevance_score": 0.68,
+      "eval_attempts": 0
+    }
+  ],
+  "final_sinks": {
+    "events": 0,
+    "seen_items": 0,
+    "profile_update_ledger": 0,
+    "saved_memberships": 0,
+    "discovery_candidates": 42,
+    "content_cache": 6,
+    "recommendations": 6,
+    "llm_usage": 7
+  },
+  "llm_usage": [
+    {
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "caller": "discovery.douyin.keyword_gen",
+      "success": 1,
+      "calls": 1,
+      "total_tokens": 4260
+    },
+    {
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "caller": "discovery.evaluate_batch",
+      "success": 1,
+      "calls": 4,
+      "total_tokens": 81244
+    },
+    {
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "caller": "recommendation.write_expression",
+      "success": 1,
+      "calls": 1,
+      "total_tokens": 9579
+    },
+    {
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "recommendation.write_expression",
+      "success": 1,
+      "calls": 1,
+      "total_tokens": 15139
+    }
+  ],
+  "recommendation_copy_rounds": [
+    {
+      "copied": 4,
+      "served": 2,
+      "ok": true,
+      "elapsed_seconds": 45.523
+    },
+    {
+      "copied": 2,
+      "served": 2,
+      "ok": true,
+      "elapsed_seconds": 10.312
+    }
+  ],
+  "first_output_filter_diagnostic": {
+    "read_only": true,
+    "database_recommendations": [
+      "douyin:7624836618477784371",
+      "douyin:7671237471086054699",
+      "douyin:7588112859939228971",
+      "douyin:7631561939390505827"
+    ],
+    "after_actual_dislikes": [
+      "douyin:7588112859939228971",
+      "douyin:7631561939390505827"
+    ],
+    "after_temporal": [
+      "douyin:7588112859939228971",
+      "douyin:7631561939390505827"
+    ],
+    "after_franchise_cap": [
+      "douyin:7588112859939228971",
+      "douyin:7631561939390505827"
+    ]
+  },
+  "browser": {
+    "installed_identity": {
+      "id": "oegfehdndnlolhgmbbiibkilonegcndi",
+      "version": "0.3.231",
+      "endpoint": {
+        "host": "127.0.0.1",
+        "port": 58972,
+        "scheme": "http"
+      },
+      "hashes": {
+        "dist/background/service-worker.js": "a32bb0d0f93b35c752cde0f84e7cf9d8dc30f2be21cbdf76d0f5c39f63e0531d",
+        "dist/content/douyin.js": "b624ec9548f5272642442103a0583e13672259e92b00e6e00238814c0ee80809",
+        "dist/main/dy-fetch-tap.js": "e3ebcb9e48f795983023e8852bf5c6ce86a78d29c1e1b7dc49b928a6df753e4c"
+      }
+    },
+    "task_tab_event_count": 97,
+    "source_states_count": 77,
+    "all_source_states_muted": true,
+    "all_source_states_inactive": true,
+    "any_audible_record": false,
+    "created_tabs": 4,
+    "removed_tabs": 4,
+    "callback_status_counts": {
+      "partial": 7,
+      "ok": 4
+    },
+    "aweme_response_status_counts": {
+      "200": 177
+    },
+    "native_search_stream_response_count": 7,
+    "open_pages": [
+      {
+        "host": "127.0.0.1",
+        "path": "/web/"
+      }
+    ]
+  },
+  "final_desktop": {
+    "http_status": 200,
+    "browser_url": "http://127.0.0.1:58972/web/",
+    "http_count": 4,
+    "dom_count": 4,
+    "http_dom_same_ids": true,
+    "title_matches_all": true,
+    "expression_matches_all": true,
+    "canonical_url_matches_all": true,
+    "recommendation_ids_match_all": true,
+    "publication_matches_db": true,
+    "covers_loaded_all": true,
+    "source_counts": {
+      "dy-plugin-hot-related": 2,
+      "dy-plugin-search": 2
+    },
+    "video_elements": 0,
+    "page_error_count": 0,
+    "cards": [
+      {
+        "bvid": "douyin:7700543493390732570",
+        "content_id": "7700543493390732570",
+        "source_strategy": "dy-plugin-hot-related",
+        "score": 0.62,
+        "cover_dimensions": [
+          {
+            "width": 440,
+            "height": 330
+          }
+        ]
+      },
+      {
+        "bvid": "douyin:7700573696394800330",
+        "content_id": "7700573696394800330",
+        "source_strategy": "dy-plugin-hot-related",
+        "score": 0.68,
+        "cover_dimensions": [
+          {
+            "width": 440,
+            "height": 330
+          }
+        ]
+      },
+      {
+        "bvid": "douyin:7588112859939228971",
+        "content_id": "7588112859939228971",
+        "source_strategy": "dy-plugin-search",
+        "score": 0.62,
+        "cover_dimensions": [
+          {
+            "width": 440,
+            "height": 330
+          }
+        ]
+      },
+      {
+        "bvid": "douyin:7631561939390505827",
+        "content_id": "7631561939390505827",
+        "source_strategy": "dy-plugin-search",
+        "score": 0.82,
+        "cover_dimensions": [
+          {
+            "width": 440,
+            "height": 330
+          }
+        ]
+      }
+    ],
+    "screenshot_sha256": "96b07e9a9be255ba22de5f128b037517338b88dcd31b9c96a3c28b445c76b4f5"
+  },
+  "preservation": {
+    "original_config_unchanged": true,
+    "original_profile_files_unchanged": {
+      "memory/soul.json": true,
+      "memory/preference.json": true,
+      "memory/profile_overrides.json": true
+    },
+    "isolated_profile_files_unchanged": {
+      "memory/soul.json": true,
+      "memory/preference.json": true,
+      "memory/profile_overrides.json": true
+    },
+    "original_store_manifest_unchanged": true,
+    "original_store_sw_unchanged": true
+  },
+  "verification": {
+    "factory_regression_before": {
+      "exit_code": 1,
+      "expected": [
+        [
+          "1",
+          "2"
+        ],
+        [
+          "3",
+          "4"
+        ]
+      ],
+      "observed": [
+        [
+          "1",
+          "2"
+        ],
+        [
+          "1",
+          "2"
+        ]
+      ]
+    },
+    "python": {
+      "tests": [
+        "tests/test_dy_tasks.py",
+        "tests/test_douyin_plugin_search.py",
+        "tests/test_douyin_producer.py",
+        "tests/test_douyin_direct_strategy.py",
+        "tests/test_douyin_discovery_service.py",
+        "tests/test_api_dy_ingest.py"
+      ],
+      "passed": 113,
+      "warnings": 120,
+      "seconds": 14.28,
+      "exit_code": 0,
+      "log_sha256": "5c45fc8b0a8381599dd37381c20cc6295ef712e9daa4d270e4fa97e779bec7b1"
+    },
+    "ruff_check": "PASS: src/ tests/",
+    "ruff_format": "four changed Python/test files unchanged",
+    "mypy": {
+      "source_files": 363,
+      "exit_code": 0,
+      "log_sha256": "5f41072bd6e9be3ae8541110905d6c4521073278c2fa6428b4de31afa3e9f41a"
+    },
+    "git_diff_check": "PASS"
+  },
+  "limitations": [
+    "One Chrome for Testing profile and one authorized account; Edge not retested.",
+    "Bounded actual produce_if_due/drain/copy/serve invocations, not a continuously running scheduler.",
+    "Configured unified keyword planner is disabled; no live coordinator-claim evidence from this run.",
+    "No bootstrap, native save, social interaction or new CAPTCHA challenge validation.",
+    "Prior complete extension suite has two documented pre-existing main failures; not relabeled PASS.",
+    "Speaker output not measured acoustically; tab muted/inactive/audible states observed."
+  ],
+  "cleanup": {
+    "state": "complete",
+    "worker_stopped": true,
+    "isolated_api_stopped": true,
+    "owned_browser_session_closed": true,
+    "all_source_tasks_terminal": true,
+    "all_candidate_evaluations_terminal": true,
+    "no_inflight_commands": true,
+    "original_health_status": 200,
+    "original_config_and_profiles_still_match": true,
+    "private_root_removed": true,
+    "pointer_removed": true
+  }
+}

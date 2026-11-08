@@ -946,22 +946,31 @@ class ContinuousRefreshController:
         discovered_count = 0
         async with self._refresh_lock:
             copy_error: BaseException | None = None
-            if sources is not None and "instagram" in sources:
+            # Explicit initialisation owns the producer, evaluation and copy
+            # while daemon coordinators are paused. Do not route GitHub-only
+            # setup through the legacy Bilibili bundle.
+            init_producers = (
+                ("instagram", "Instagram", self.instagram_producer),
+                ("github", "GitHub", self.github_producer),
+            )
+            for source, label, producer in init_producers:
+                if sources is None or source not in sources:
+                    continue
                 current = self.database.count_pool_candidates()
                 self._update_llm_inventory_state(current)
-                if current < target and self.instagram_producer is not None:
-                    await _report(0, 4, "正在基于完整画像发现 Instagram 内容")
+                if current < target and producer is not None:
+                    await _report(0, 4, f"正在基于完整画像发现 {label} 内容")
                     request_limit = max(1, min(20, target - current))
                     produce_kwargs: dict[str, Any] = {"limit": request_limit, "force": True}
-                    if register_instagram_task is not None:
+                    if source == "instagram" and register_instagram_task is not None:
                         produce_kwargs["register_task"] = register_instagram_task
-                    result = await self.instagram_producer.produce_if_due(**produce_kwargs)
+                    result = await producer.produce_if_due(**produce_kwargs)
                     discovered_count += int(result.get("discovered", 0) or 0)
                     # Background coordinators pause during init. Its explicit
                     # wave must own evaluation and copy through readiness.
                     pipeline = self.discovery_candidate_pipeline
                     if pipeline is not None:
-                        await _report(1, 4, "正在评估 Instagram 候选")
+                        await _report(1, 4, f"正在评估 {label} 候选")
                         await pipeline.drain_pending(
                             profile=profile,
                             flush=True,
@@ -969,7 +978,7 @@ class ContinuousRefreshController:
                                 request_limit, max(1, int(result.get("enqueued", 0) or 0))
                             ),
                         )
-                    await _report(2, 4, "正在生成 Instagram 首轮推荐文案")
+                    await _report(2, 4, f"正在生成 {label} 首轮推荐文案")
                     try:
                         await self.recommendation_engine.drain_pending_expression_copy(
                             profile=profile, limit=max(1, target)

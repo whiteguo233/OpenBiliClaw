@@ -1,5 +1,7 @@
 # B 站接入层
 
+扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
+
 > API 优先的 B 站数据访问层，包含 Cookie 认证、核心 API 封装和 agent-browser 浏览器集成。
 
 ## 概述
@@ -29,6 +31,7 @@
 |------|------|------|
 | 3.1 Cookie 认证 | ✅ | set / load / validate / clear + CLI auth 命令 + 运行时 cookie 回退 |
 | 扩展 Cookie 自动同步 | ✅ | 浏览器扩展可 POST `/api/bilibili/cookie` 持久化 Cookie；后端在 background runtime-stream 连接且缺 Cookie 时会发 `bilibili_cookie_sync_requested` 主动要求扩展回传。guided init 期间异值推送暂存到 `data/runtime/staged_bilibili_cookie.json`、init 完成后自动应用（`runtime-status` 的 `bilibili_cookie_staged` 可见）；写入探针遭遇传输失败时短退避重试后以显式 unverified 标记落盘（账号同步每轮复检兜底），平台明确 -101 仍拒绝；凭据落盘即清 `account_sync_state.json` 残留的 `auth_expired` 横幅状态 |
+| 扫码登录 | ✅ | 成功码 0 精确判定，读取本次响应 Set-Cookie，调用方兼容 URL 参数 |
 | 3.2 核心 API | ✅ | 10+ API 方法 + 限流 + 统一错误处理 |
 | 移动端播放画质 | ✅ | DASH 候选先匹配请求的 `qn`，再在同画质内选择 `preferred_codec`；目标画质不可用时保留候选流回退，`video.qn` 始终表示实际返回的画质。 |
 | 登录态诊断 | ✅ | 任意 `_get_json()` endpoint 返回 `-101` 时抛 `BilibiliAuthExpiredError`；日志使用固定 session-expired 文案提示重新登录或保持扩展在线，不复制远端 message/body。 |
@@ -51,6 +54,8 @@
 `get_danmaku_texts()` 仅作为返回文本列表的兼容包装。
 
 ## 公开 API
+
+`poll_qrcode(qrcode_key)` 返回 `status/message/url/qrcode_key/raw_code/cookie`；`cookie` 仅包含成功响应的凭据白名单，供后端持久化，不对前端暴露。非成功状态不返回 Cookie，不能凭 URL 非空判定成功。
 
 `BilibiliAPIClient.get_play_info(bvid, cid=None, qn=80, preferred_codec="avc")` 为 `/api/bilibili/player/play-url` 返回视频、音轨、选集、字幕与弹幕地址。B 站 DASH 响应可能同时包含多档清晰度，`qn` 匹配优先于编码偏好；不能直接取第一个 AVC 流，否则 480P 请求会错误返回 1080P。若目标画质不在实际候选中，保留既有回退行为，调用方应以响应中的 `video.qn` 判断实际画质。
 
@@ -126,7 +131,7 @@ folder = await client.ensure_favorite_folder("OpenBiliClaw")
 await client.add_video_to_favorite("BV1xx411c7mD", folder.media_id)
 await client.add_video_to_watch_later("BV1xx411c7mD")
 
-# 关注
+# 关注（mtime = 关注时间，epoch 秒；0 = 上游未返回）
 following = await client.get_following(page=1, page_size=50)  # list[FollowingUser]
 
 # 视频
@@ -206,7 +211,7 @@ BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -
 | `VideoInfo` | 视频详情（标题、UP主、播放/点赞/收藏数等） |
 | `FavoriteFolder` | 收藏夹元数据（media_id, title, media_count） |
 | `FavoriteFolderWithItems` | 收藏夹 + 内容列表 + truncated 标记 |
-| `FollowingUser` | 关注用户（mid, uname, sign） |
+| `FollowingUser` | 关注用户（mid, uname, sign, mtime）；`mtime` 是 `/x/relation/followings` 返回的关注时间（epoch 秒），缺省为 0 表示上游没给——不拿抓取时刻顶替，否则一次同步会把整份关注列表写成同一秒 |
 | `CommentInfo` | 评论（mid, uname, message, like_count；`rpid` / `root` / `parent` 用于楼中楼回复，默认 0） |
 | `AuthStatus` | 认证状态（has_cookie, authenticated, username 等；`network_error=True` 表示校验死在传输层——代理 / 风控 / 超时——而非 Cookie 失效） |
 | `BilibiliAuthExpiredError` | 任意 `_get_json()` endpoint 返回 `-101` 时的专项异常，仍继承 `BilibiliAPIError` |

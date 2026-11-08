@@ -1,0 +1,55 @@
+{
+  "release_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-06.1",
+  "runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+  "core_contract_sha": "a5ace69724d94f663ca710332c163a5540203dcc",
+  "workflow_run": 42123598419,
+  "artifacts": [
+    {
+      "archive": "obc-sponsored-runtime-linux-arm64.tar.gz",
+      "sha256": "4a0a4c7649ab1c366a639f3d34fd6c8406f72b46441bee98e6493fef60020431",
+      "platform": "linux-arm64",
+      "core_sha": "a5ace69724d94f663ca710332c163a5540203dcc",
+      "runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+      "profile": "siliconflow-free-v1",
+      "platform_signing": "manifest-only"
+    },
+    {
+      "archive": "obc-sponsored-runtime-linux-x86_64.tar.gz",
+      "sha256": "a164b328f889612379ffac1bee3c23905cbdf5f8f2bd12d559f6e8debd66acdb",
+      "platform": "linux-x86_64",
+      "core_sha": "a5ace69724d94f663ca710332c163a5540203dcc",
+      "runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+      "profile": "siliconflow-free-v1",
+      "platform_signing": "manifest-only"
+    },
+    {
+      "archive": "obc-sponsored-runtime-macos-arm64.tar.gz",
+      "sha256": "7a050580e46a06a6b4a3c60921646a5f99897a530a63ae811c05f94f2b766997",
+      "platform": "macos-arm64",
+      "core_sha": "a5ace69724d94f663ca710332c163a5540203dcc",
+      "runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+      "profile": "siliconflow-free-v1",
+      "platform_signing": "macos-notarized",
+      "notarization_id": "8a3143cf-423b-48e9-a8cc-e5cb72ecc544"
+    },
+    {
+      "archive": "obc-sponsored-runtime-macos-x86_64.tar.gz",
+      "sha256": "5cdb77c1230df2920261c0e7cdcfa7bc44dbcb18f48af46588786e7e9b42c1ac",
+      "platform": "macos-x86_64",
+      "core_sha": "a5ace69724d94f663ca710332c163a5540203dcc",
+      "runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+      "profile": "siliconflow-free-v1",
+      "platform_signing": "macos-notarized",
+      "notarization_id": "ca7c7c5a-31ff-4127-a4d2-4258d0046eca"
+    },
+    {
+      "archive": "obc-sponsored-runtime-windows-x86_64.tar.gz",
+      "sha256": "1bfe5bb383e6df51495fa026e86b00789750521660144091d71130e719ebbe22",
+      "platform": "windows-x86_64",
+      "core_sha": "a5ace69724d94f663ca710332c163a5540203dcc",
+      "runtime_sha": "c4878e842f443415d6a0e28d68d1ba9adf4be971",
+      "profile": "siliconflow-free-v1",
+      "platform_signing": "manifest-only"
+    }
+  ]
+}

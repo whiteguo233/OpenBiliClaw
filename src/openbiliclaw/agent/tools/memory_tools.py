@@ -46,6 +46,9 @@ def build_memory_tools(ctx: AgentToolContext) -> list[Tool]:
                 "原始 JSON 数据（超长会截断，可用 max_chars 调整）。layer=agent_notes "
                 "列出用户保存的聊天笔记；key精确查询、keyword搜索、offset/limit分页。"
                 "指定四个可写层并传key/keyword可定位该层笔记，修改前须读取完整value。"
+                "查询大量记录中的具体字段时，指定记忆层和json_pointer精确读取原值，"
+                "例如/records/record_0731；获取value后即可回答，不要重复读取相同路径。"
+                "不必把整层塞入上下文，也不要猜测被省略的记录。"
             ),
             permission_level="read",
             parameters={
@@ -60,10 +63,21 @@ def build_memory_tools(ctx: AgentToolContext) -> list[Tool]:
                         "type": "integer",
                         "description": "返回内容的最大字符数，默认 3000，上限 8000",
                     },
-                    "key": {"type": "string", "description": "聊天笔记的精确键名"},
+                    "key": {
+                        "type": "string",
+                        "description": "聊天笔记的精确键名（不是路径；字段路径请使用json_pointer）",
+                    },
                     "keyword": {"type": "string", "description": "搜索聊天笔记键名或内容"},
                     "limit": {"type": "integer", "description": "笔记分页大小，默认20，上限50"},
                     "offset": {"type": "integer", "description": "笔记分页起点，默认0"},
+                    "json_pointer": {
+                        "type": "string",
+                        "maxLength": 512,
+                        "description": (
+                            "原始记忆层字段路径（JSON Pointer）；/分隔字段或数组下标，"
+                            "~1表示/、~0表示~。精确返回原值，超限则要求缩小范围。"
+                        ),
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -164,7 +178,24 @@ async def _read_memory(ctx: AgentToolContext, args: dict[str, Any]) -> str:
     keyword = str(args.get("keyword") or "").strip()
     layer = str(args.get("layer") or ("agent_notes" if key or keyword else "core")).strip().lower()
     max_chars = clamp_int(args.get("max_chars"), default=3000, minimum=200, maximum=8000)
+    if "json_pointer" in args:
+        if layer not in MEMORY_LAYERS or key or keyword:
+            raise ValueError("json_pointer需要指定原始记忆层，不能与聊天笔记key/keyword混用。")
+        data = (await maybe_await(memory.get_layer(layer))).data
+        pointer = args["json_pointer"]
+        value = _memory_value_at_pointer(data, pointer)
+        result = json.dumps(
+            {"layer": layer, "json_pointer": pointer, "value": value},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        if len(result) > min(max_chars, DEFAULT_TOOL_RESULT_MAX_CHARS):
+            raise ValueError("精确字段超过返回长度上限，请指定更具体的路径或提高max_chars。")
+        return result
     if layer == "agent_notes" or key or keyword:
+        if "/" in key:
+            raise ValueError("key只接受聊天笔记键名；原始字段路径请使用json_pointer并以/开头。")
         if layer != "agent_notes" and layer not in WRITABLE_LAYERS:
             raise ValueError("key/keyword查询仅支持agent_notes或四个可写记忆层。")
         list_notes = getattr(memory, "list_agent_notes", None)
@@ -236,6 +267,28 @@ async def _read_memory(ctx: AgentToolContext, args: dict[str, Any]) -> str:
         return f"记忆层 {layer} 当前为空。"
     payload = json.dumps(data, ensure_ascii=False, indent=1, default=str)
     return truncate_text(payload, max_chars)
+
+
+def _memory_value_at_pointer(data: Any, pointer: str) -> Any:
+    """Resolve a bounded JSON Pointer without scanning or interpreting source text."""
+    if not isinstance(pointer, str) or len(pointer) > 512:
+        raise ValueError("json_pointer必须是长度不超过512的字符串。")
+    if pointer == "":
+        return data
+    if not pointer.startswith("/") or len(pointer.split("/")) > 33:
+        raise ValueError("json_pointer必须以/开头，最多32层。")
+    value = data
+    for segment in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", segment):
+            raise ValueError("json_pointer包含无效转义。")
+        key = segment.replace("~1", "/").replace("~0", "~")
+        if isinstance(value, dict) and key in value:
+            value = value[key]
+        elif isinstance(value, list) and re.fullmatch(r"0|[1-9]\d*", key) and int(key) < len(value):
+            value = value[int(key)]
+        else:
+            raise ValueError("记忆中不存在该精确路径，请核对字段或下标。")
+    return value
 
 
 async def _write_memory(ctx: AgentToolContext, args: dict[str, Any]) -> str:

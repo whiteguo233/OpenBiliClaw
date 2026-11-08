@@ -1,0 +1,1996 @@
+{
+  "date": "2026-11-04",
+  "overall": "partial; not stable-system acceptance",
+  "sdk_release": "sponsored-runtime-2026-11-04.1",
+  "free_and_paid_fallback_disabled": true,
+  "input": "synthetic history plus anonymous public Bilibili search",
+  "models": {
+    "Qwen/Qwen3-8B": {
+      "business": [
+        {
+          "name": "install_verified_published_sdk",
+          "status": "pass",
+          "seconds": 1.498,
+          "calls": [],
+          "result": {
+            "verified": true,
+            "downloaded_production_sdk": true
+          }
+        },
+        {
+          "name": "application_startup_and_saved_config",
+          "status": "pass",
+          "seconds": 0.414,
+          "calls": [],
+          "result": {
+            "sponsored": {
+              "enabled": true,
+              "model": "Qwen/Qwen3-8B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "BAAI/bge-m3",
+              "context_window": 131072,
+              "image_embedding": false
+            }
+          }
+        },
+        {
+          "name": "behavior_to_preference_to_persisted_profile",
+          "status": "pass",
+          "seconds": 93.808,
+          "calls": [
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5337,
+              "completion_tokens": 1517,
+              "success": 1
+            },
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5077,
+              "completion_tokens": 1277,
+              "success": 1
+            }
+          ],
+          "interests": [
+            {
+              "name": "科技",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "编程",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "Rust",
+              "category": "科技",
+              "weight": 0.85,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "Python",
+              "category": "科技",
+              "weight": 0.8,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "SQLite",
+              "category": "科技",
+              "weight": 0.75,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "Docker",
+              "category": "科技",
+              "weight": 0.7,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            }
+          ]
+        },
+        {
+          "name": "event_ingress_persistence_and_deduplication",
+          "status": "pass",
+          "seconds": 0.038,
+          "calls": [],
+          "result": {
+            "response": {
+              "accepted": 2,
+              "duplicates": 0,
+              "rejected": [],
+              "receipts": [
+                {
+                  "index": 0,
+                  "event_id": 13,
+                  "event_type": "favorite",
+                  "inserted": true,
+                  "duplicate": false
+                },
+                {
+                  "index": 1,
+                  "event_id": 14,
+                  "event_type": "like",
+                  "inserted": true,
+                  "duplicate": false
+                }
+              ]
+            },
+            "replay": {
+              "accepted": 2,
+              "duplicates": 2,
+              "rejected": [],
+              "receipts": [
+                {
+                  "index": 0,
+                  "event_id": 13,
+                  "event_type": "favorite",
+                  "inserted": false,
+                  "duplicate": true
+                },
+                {
+                  "index": 1,
+                  "event_id": 14,
+                  "event_type": "like",
+                  "inserted": false,
+                  "duplicate": true
+                }
+              ]
+            },
+            "stored_events": 14
+          }
+        },
+        {
+          "name": "bge_text_embedding_similarity_and_cache",
+          "status": "pass",
+          "seconds": 0.858,
+          "calls": [],
+          "result": {
+            "model": "BAAI/bge-m3",
+            "dimensions": 1024,
+            "cache_hit": true,
+            "related_cosine": 0.7037794736096277,
+            "unrelated_cosine": 0.31257710060776633
+          }
+        },
+        {
+          "name": "production_discovery_keyword_generation",
+          "status": "pass",
+          "seconds": 31.923,
+          "calls": [
+            {
+              "caller": "discovery.search.queries",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2002,
+              "completion_tokens": 1140,
+              "success": 1
+            }
+          ],
+          "result": {
+            "queries": [
+              "科技 新品 测评",
+              "Rust 性能优化 实战"
+            ]
+          }
+        },
+        {
+          "name": "anonymous_live_bilibili_search",
+          "status": "pass",
+          "seconds": 0.671,
+          "calls": [],
+          "result": {
+            "query": "科技 新品 测评",
+            "items": 3,
+            "titles": [
+              "山姆餐吧史诗级<em class=\"keyword\">新品</em>，拉丝芝士大块牛肉派超过瘾，顶级美味不吃后悔！",
+              "2026北京EDC玩具展 全展会限定&amp;<em class=\"keyword\">新品</em>前瞻",
+              "<em class=\"keyword\">新品</em>爆料！！！！"
+            ]
+          }
+        },
+        {
+          "name": "production_batch_evaluation_and_pool_admission",
+          "status": "pass",
+          "seconds": 59.585,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5455,
+              "completion_tokens": 1534,
+              "success": 1
+            }
+          ],
+          "result": {
+            "input_count": 12,
+            "scores": [
+              {
+                "title": "Rust 所有权实战：修复借用检查错误",
+                "score": 0.92,
+                "reason": "聚焦 Rust 所有权机制，契合技术探索需求"
+              },
+              {
+                "title": "SQLite 查询优化：建立复合索引",
+                "score": 0.88,
+                "reason": "SQLite 查询优化实践，符合技术探索期需求"
+              },
+              {
+                "title": "Python asyncio 超时与取消",
+                "score": 0.85,
+                "reason": "Python 异步编程实践，契合编程技术兴趣"
+              },
+              {
+                "title": "FastAPI 与 SQLite 事务测试",
+                "score": 0.83,
+                "reason": "FastAPI 与 SQLite 事务测试，符合编程实践兴趣"
+              },
+              {
+                "title": "Docker 多阶段构建 Python 服务",
+                "score": 0.8,
+                "reason": "Docker 构建 Python 服务，契合技术探索兴趣"
+              },
+              {
+                "title": "Git worktree 同时维护两个分支",
+                "score": 0.77,
+                "reason": "Git worktree 管理，符合编程技术兴趣"
+              },
+              {
+                "title": "Rust 的 Result 错误类型设计",
+                "score": 0.87,
+                "reason": "Rust Result 类型设计，符合编程技术兴趣"
+              },
+              {
+                "title": "给 Python HTTP 客户端写回归测试",
+                "score": 0.82,
+                "reason": "Python HTTP 客户端测试，符合编程技术兴趣"
+              },
+              {
+                "title": "阳台番茄浇水和光照记录",
+                "score": 0.45,
+                "reason": ""
+              },
+              {
+                "title": "盆栽番茄搭支架和整枝",
+                "score": 0.45,
+                "reason": ""
+              },
+              {
+                "title": "赌场必胜秘诀与下注攻略",
+                "score": 0.45,
+                "reason": ""
+              },
+              {
+                "title": "明星绯闻速报",
+                "score": 0.45,
+                "reason": ""
+              }
+            ],
+            "admitted": 8
+          }
+        },
+        {
+          "name": "batch_copy_ranking_and_recommendation_delivery",
+          "status": "pass",
+          "seconds": 38.484,
+          "calls": [
+            {
+              "caller": "recommendation.write_expression",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3125,
+              "completion_tokens": 1582,
+              "success": 1
+            }
+          ],
+          "result": {
+            "copy_generated": 8,
+            "served": [
+              {
+                "content": {
+                  "bvid": "BV1EVL000000",
+                  "title": "Rust 所有权实战：修复借用检查错误",
+                  "up_name": "合成验收样本",
+                  "up_mid": 0,
+                  "cover_url": "",
+                  "duration": 600,
+                  "view_count": 1000,
+                  "like_count": 0,
+                  "favorite_count": 0,
+                  "collect_count": 0,
+                  "comment_count": 0,
+                  "share_count": 0,
+                  "danmaku_count": 0,
+                  "reply_count": 0,
+                  "retweet_count": 0,
+                  "bookmark_count": 0,
+                  "engagement_available": [],
+                  "rating_score": 0.0,
+                  "rating_count": 0,
+                  "source_rank": 0,
+                  "tags": [
+                    "编程"
+                  ],
+                  "topic_key": "",
+                  "topic_group": "编程实践",
+                  "style_key": "deep_focus",
+                  "franchise_key": "",
+                  "description": "用可运行例子解释借用检查和所有权移动。",
+                  "published_at": "",
+                  "published_label": "",
+                  "source_strategy": "search",
+                  "discovery_lane": "",
+                  "relevance_score": 0.92,
+                  "relevance_reason": "聚焦 Rust 所有权机制，契合技术探索需求",
+                  "semantic_filter_deferred": false,
+                  "semantic_filter_review": false,
+                  "temporal_class": "evergreen",
+                  "temporal_confidence": 0.95,
+                  "temporal_reason": "核心价值不依赖当前时间",
+                  "temporal_policy_version": "v2",
+                  "temporal_validity_mode": "none",
+                  "temporal_valid_until": "",
+                  "temporal_scope": "none",
+                  "temporal_evidence": "",
+                  "temporal_state": "unknown",
+                  "temporal_next_review_at": "",
+                  "temporal_evaluated_at": "2026-11-04T14:50:31Z",
+                  "temporal_evidence_complete": true,
+                  "temporal_evaluated": false,
+                  "pool_expression": "这条视频用可运行代码块直接上手，UP主‘合成验收样本’把Rust所有权机制拆解得像拆礼物一样清晰，修复借用检查错误的过程特别有成就感",
+                  "pool_topic_label": "编程实践",
+                  "candidate_tier": "primary",
+                  "discovered_at": "2026-11-04 14:51:31",
+                  "last_scored_at": "2026-11-04 14:51:31",
+                  "content_id": "BV1EVL000000",
+                  "item_key": "bilibili:BV1EVL000000",
+                  "content_url": "https://www.bilibili.com/video/BV1EVL000000",
+                  "source_platform": "bilibili",
+                  "author_name": "合成验收样本",
+                  "score_threshold": 0.0,
+                  "body_text": "",
+                  "content_type": "video",
+                  "source_metadata": {},
+                  "source_keyword_id": null
+                },
+                "recommendation_id": 1,
+                "expression": "这条视频用可运行代码块直接上手，UP主‘合成验收样本’把Rust所有权机制拆解得像拆礼物一样清晰，修复借用检查错误的过程特别有成就感",
+                "topic_label": "编程实践",
+                "confidence": 0.92,
+                "presented": false,
+                "feedback": null
+              },
+              {
+                "content": {
+                  "bvid": "BV1EVL000004",
+                  "title": "Docker 多阶段构建 Python 服务",
+                  "up_name": "合成验收样本",
+                  "up_mid": 0,
+                  "cover_url": "",
+                  "duration": 600,
+                  "view_count": 1000,
+                  "like_count": 0,
+                  "favorite_count": 0,
+                  "collect_count": 0,
+                  "comment_count": 0,
+                  "share_count": 0,
+                  "danmaku_count": 0,
+                  "reply_count": 0,
+                  "retweet_count": 0,
+                  "bookmark_count": 0,
+                  "engagement_available": [],
+                  "rating_score": 0.0,
+                  "rating_count": 0,
+                  "source_rank": 0,
+                  "tags": [
+                    "编程"
+                  ],
+                  "topic_key": "",
+                  "topic_group": "容器技术",
+                  "style_key": "deep_focus",
+                  "franchise_key": "",
+                  "description": "构建并运行一个可复现的 Python 容器。",
+                  "published_at": "",
+                  "published_label": "",
+                  "source_strategy": "search",
+                  "discovery_lane": "",
+                  "relevance_score": 0.8,
+                  "relevance_reason": "Docker 构建 Python 服务，契合技术探索兴趣",
+                  "semantic_filter_deferred": false,
+                  "semantic_filter_review": false,
+                  "temporal_class": "unknown",
+                  "temporal_confidence": 0.0,
+                  "temporal_reason": "",
+                  "temporal_policy_version": "v2",
+                  "temporal_validity_mode": "none",
+                  "temporal_valid_until": "",
+                  "temporal_scope": "none",
+                  "temporal_evidence": "",
+                  "temporal_state": "unknown",
+                  "temporal_next_review_at": "",
+                  "temporal_evaluated_at": "",
+                  "temporal_evidence_complete": false,
+                  "temporal_evaluated": false,
+                  "pool_expression": "这条视频用Docker多阶段构建Python服务，UP主‘合成验收样本’把容器技术讲得像搭乐高一样直观，分层构建的细节很适合技术沉淀",
+                  "pool_topic_label": "容器技术",
+                  "candidate_tier": "primary",
+                  "discovered_at": "2026-11-04 14:51:31",
+                  "last_scored_at": "2026-11-04 14:51:31",
+                  "content_id": "BV1EVL000004",
+                  "item_key": "bilibili:BV1EVL000004",
+                  "content_url": "https://www.bilibili.com/video/BV1EVL000004",
+                  "source_platform": "bilibili",
+                  "author_name": "合成验收样本",
+                  "score_threshold": 0.0,
+                  "body_text": "",
+                  "content_type": "video",
+                  "source_metadata": {},
+                  "source_keyword_id": null
+                },
+                "recommendation_id": 2,
+                "expression": "这条视频用Docker多阶段构建Python服务，UP主‘合成验收样本’把容器技术讲得像搭乐高一样直观，分层构建的细节很适合技术沉淀",
+                "topic_label": "容器技术",
+                "confidence": 0.8,
+                "presented": false,
+                "feedback": null
+              },
+              {
+                "content": {
+                  "bvid": "BV1EVL000001",
+                  "title": "SQLite 查询优化：建立复合索引",
+                  "up_name": "合成验收样本",
+                  "up_mid": 0,
+                  "cover_url": "",
+                  "duration": 600,
+                  "view_count": 1000,
+                  "like_count": 0,
+                  "favorite_count": 0,
+                  "collect_count": 0,
+                  "comment_count": 0,
+                  "share_count": 0,
+                  "danmaku_count": 0,
+                  "reply_count": 0,
+                  "retweet_count": 0,
+                  "bookmark_count": 0,
+                  "engagement_available": [],
+                  "rating_score": 0.0,
+                  "rating_count": 0,
+                  "source_rank": 0,
+                  "tags": [
+                    "编程"
+                  ],
+                  "topic_key": "",
+                  "topic_group": "数据库优化",
+                  "style_key": "deep_focus",
+                  "franchise_key": "",
+                  "description": "用 EXPLAIN QUERY PLAN 比较索引前后查询。",
+                  "published_at": "",
+                  "published_label": "",
+                  "source_strategy": "search",
+                  "discovery_lane": "",
+                  "relevance_score": 0.88,
+                  "relevance_reason": "SQLite 查询优化实践，符合技术探索期需求",
+                  "semantic_filter_deferred": false,
+                  "semantic_filter_review": false,
+                  "temporal_class": "unknown",
+                  "temporal_confidence": 0.0,
+                  "temporal_reason": "",
+                  "temporal_policy_version": "v2",
+                  "temporal_validity_mode": "none",
+                  "temporal_valid_until": "",
+                  "temporal_scope": "none",
+                  "temporal_evidence": "",
+                  "temporal_state": "unknown",
+                  "temporal_next_review_at": "",
+                  "temporal_evaluated_at": "",
+                  "temporal_evidence_complete": false,
+                  "temporal_evaluated": false,
+                  "pool_expression": "这个UP主‘合成验收样本’用EXPLAIN QUERY PLAN实测索引前后差异，SQLite优化细节讲得像解谜一样有意思，复合索引的实战技巧能直接提升数据库效率",
+                  "pool_topic_label": "数据库优化",
+                  "candidate_tier": "primary",
+                  "discovered_at": "2026-11-04 14:51:31",
+                  "last_scored_at": "2026-11-04 14:51:31",
+                  "content_id": "BV1EVL000001",
+                  "item_key": "bilibili:BV1EVL000001",
+                  "content_url": "https://www.bilibili.com/video/BV1EVL000001",
+                  "source_platform": "bilibili",
+                  "author_name": "合成验收样本",
+                  "score_threshold": 0.0,
+                  "body_text": "",
+                  "content_type": "video",
+                  "source_metadata": {},
+                  "source_keyword_id": null
+                },
+                "recommendation_id": 3,
+                "expression": "这个UP主‘合成验收样本’用EXPLAIN QUERY PLAN实测索引前后差异，SQLite优化细节讲得像解谜一样有意思，复合索引的实战技巧能直接提升数据库效率",
+                "topic_label": "数据库优化",
+                "confidence": 0.88,
+                "presented": false,
+                "feedback": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "feedback_persistence_and_profile_learning",
+          "status": "pass",
+          "seconds": 206.914,
+          "calls": [
+            {
+              "caller": "soul.speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2016,
+              "completion_tokens": 2147,
+              "success": 1
+            },
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3747,
+              "completion_tokens": 1482,
+              "success": 1
+            },
+            {
+              "caller": "soul.avoidance_speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 871,
+              "completion_tokens": 1833,
+              "success": 1
+            },
+            {
+              "caller": "soul.speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2052,
+              "completion_tokens": 1114,
+              "success": 1
+            }
+          ],
+          "result": {
+            "persisted_feedback": 3,
+            "learning": {
+              "triggered": true,
+              "feedback_count": 3,
+              "preference_updated": true,
+              "preference_changed": false,
+              "profile_rebuilt": false,
+              "unified_interest_line": true,
+              "migrated_feedback_events": 3,
+              "enqueued_feedback_events": 3
+            }
+          }
+        },
+        {
+          "name": "agent_real_tool_execution_and_final_answer",
+          "status": "pass",
+          "seconds": 123.309,
+          "calls": [
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 6638,
+              "completion_tokens": 1359,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2940,
+              "completion_tokens": 33,
+              "success": 1
+            },
+            {
+              "caller": "soul.insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2770,
+              "completion_tokens": 1096,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3944,
+              "completion_tokens": 61,
+              "success": 1
+            }
+          ],
+          "tools": [
+            "get_profile",
+            "read_memory"
+          ],
+          "final": [
+            "你的两个主要兴趣是：  \n1. 编程技术，尤其是对Rust和Python等语言的底层原理与实际应用有浓厚兴趣。  \n2. 技术细节的深入探索，追求逻辑闭环与实现美感，喜欢拆解复杂概念并结合具体案例理解。"
+          ],
+          "both_requested_tools_executed": true
+        },
+        {
+          "name": "explicit_dialogue_learning",
+          "status": "not_counted",
+          "seconds": 98.221,
+          "calls": [
+            {
+              "caller": "soul.dialogue_insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2122,
+              "completion_tokens": 1188,
+              "success": 1
+            },
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3306,
+              "completion_tokens": 1432,
+              "success": 1
+            },
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4765,
+              "completion_tokens": 1525,
+              "success": 1
+            }
+          ],
+          "result": {
+            "event_logged": true,
+            "candidate_count": 2,
+            "preference_updated": true,
+            "profile_rebuilt": true
+          },
+          "audit_note": "Initial runner invoked learning outside settlement queue; 8B logged worker-guard rejection. HTTP queued learning checked separately."
+        },
+        {
+          "name": "profile_consolidation_and_embedding_recall",
+          "status": "fail",
+          "seconds": 198.587,
+          "calls": [
+            {
+              "caller": "soul.posture_gate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2374,
+              "completion_tokens": 667,
+              "success": 1
+            }
+          ],
+          "result": {
+            "ran": true,
+            "throttled": false,
+            "skipped_clean": false,
+            "dry_run": true,
+            "applied": false,
+            "write_conflict": false,
+            "run_id": "20261104-225918",
+            "rule_merges": [],
+            "clusters_sent": 1,
+            "llm_batches": 1,
+            "merges": [],
+            "rejected_clusters": [
+              "L1: no ops returned"
+            ],
+            "likes_before": 7,
+            "likes_after": 7,
+            "dislikes_before": 0,
+            "dislikes_after": 0,
+            "likes_target_upper": 512,
+            "likes_target_soft": 450,
+            "like_similarity_threshold": 0.8,
+            "archived_interests": [],
+            "protected_interests": [],
+            "inventory_reason": "",
+            "retry_pending": true,
+            "errors": [
+              "llm: Sponsored task failed for soul.consolidation: UNAVAILABLE"
+            ]
+          },
+          "audit_note": "Initial runner mislabeled returned errors as pass; corrected here and in runner"
+        },
+        {
+          "name": "database_and_profile_reload",
+          "status": "pass",
+          "seconds": 0.125,
+          "calls": [],
+          "result": {
+            "restored_interests": 9,
+            "restored_events": 18,
+            "saved_model": "Qwen/Qwen3-8B"
+          }
+        }
+      ],
+      "http": [
+        {
+          "name": "real_server_startup_and_user_surfaces",
+          "status": "pass",
+          "result": {
+            "/api/health": {
+              "status": 200,
+              "bytes": 136
+            },
+            "/api/profile-summary": {
+              "status": 200,
+              "bytes": 9459
+            },
+            "/web/": {
+              "status": 200,
+              "bytes": 185062
+            },
+            "/m/": {
+              "status": 200,
+              "bytes": 1665
+            }
+          },
+          "seconds": 15.126,
+          "calls": []
+        },
+        {
+          "name": "real_sse_two_turn_chat_and_durable_history",
+          "status": "pass",
+          "result": {
+            "turns": [
+              {
+                "first_content_seconds": 43.723,
+                "elapsed_seconds": 44.696,
+                "reply": "Rust 借用允许你安全地访问数据而不拥有它，避免了不必要的数据复制。它通过引用（&）来实现，确保在使用数据时不会引发数据竞争，同时保持内存效率。记住代号“蓝色番茄731”。",
+                "event_counts": {
+                  "delta": 54,
+                  "done": 1,
+                  "final": 1
+                },
+                "persisted": true
+              },
+              {
+                "first_content_seconds": 85.122,
+                "elapsed_seconds": 85.232,
+                "reply": "蓝色番茄731",
+                "event_counts": {
+                  "delta": 5,
+                  "done": 1,
+                  "final": 1
+                },
+                "persisted": true
+              }
+            ]
+          },
+          "seconds": 129.982,
+          "calls": [
+            {
+              "caller": "discovery.keyword_planner",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3318,
+              "completion_tokens": 1507,
+              "success": 1
+            },
+            {
+              "caller": "discovery.search.queries",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2259,
+              "completion_tokens": 1140,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5038,
+              "completion_tokens": 56,
+              "success": 1
+            },
+            {
+              "caller": "discovery.keyword_inspiration",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 4790,
+              "completion_tokens": 2735,
+              "success": 1
+            },
+            {
+              "caller": "soul.dialogue_insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2197,
+              "completion_tokens": 1088,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5183,
+              "completion_tokens": 5,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_and_insight_cognition_cycle",
+          "status": "pass",
+          "result": {
+            "ran": true,
+            "throttled": false,
+            "awareness_generated": 2,
+            "insight_generated": 3,
+            "total_awareness_after": 5,
+            "total_insight_after": 5,
+            "errors": []
+          },
+          "seconds": 361.084,
+          "calls": [
+            {
+              "caller": "discovery.keyword_inspiration",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3538,
+              "completion_tokens": 2397,
+              "success": 1
+            },
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3596,
+              "completion_tokens": 1405,
+              "success": 1
+            },
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 5321,
+              "completion_tokens": 1272,
+              "success": 1
+            },
+            {
+              "caller": "soul.dialogue_insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2131,
+              "completion_tokens": 438,
+              "success": 1
+            },
+            {
+              "caller": "soul.speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2299,
+              "completion_tokens": 1701,
+              "success": 1
+            },
+            {
+              "caller": "soul.speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 2091,
+              "completion_tokens": 1780,
+              "success": 1
+            },
+            {
+              "caller": "soul.insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3-8B",
+              "prompt_tokens": 3386,
+              "completion_tokens": 1134,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "post_chat_learning_queue_drained",
+          "status": "pass",
+          "result": {
+            "drained": true,
+            "dialogue_events": 3
+          },
+          "seconds": 0.001,
+          "calls": []
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3.5-4B",
+          "status": "fail",
+          "error": "AssertionError: {'state': 'applying', 'requested_revision': 1, 'applied_revision': 0, 'message': '正在等待画像/反馈任务结束，再应用配置；此时仍可继续聊天。', 'error': '', 'updated_at': '2026-11-04T15:11:51.390202+00:00'}",
+          "seconds": 31.888,
+          "calls": []
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3-8B",
+          "status": "fail",
+          "error": "AssertionError: {'state': 'queued', 'requested_revision': 2, 'applied_revision': 0, 'message': '配置修订 2 已保存，后端空闲后自动应用。', 'error': '', 'updated_at': '2026-11-04T15:12:23.202371+00:00'}",
+          "seconds": 31.909,
+          "calls": []
+        }
+      ],
+      "consolidation_small_probe": [
+        {
+          "mode": "legacy_contract",
+          "model": "Qwen/Qwen3-8B",
+          "status": "pass",
+          "content": "{\n\n  \"likes\": [\n    {\n      \"cluster_id\": \"L1\",\n      \"op\": \"merge\",\n      \"members\": [\n        \"Rust 所有权与借用\",\n        \"Rust 的所有权和借用检查\"\n      ],\n      \"canonical\": \"Rust 所有权与借用\"\n    }\n  ],\n  \"dislikes\": []\n}",
+          "usage": {
+            "prompt_tokens": 1112,
+            "completion_tokens": 445,
+            "total_tokens": 1557
+          },
+          "seconds": 11.863
+        },
+        {
+          "mode": "bounded_structured_diagnostic",
+          "model": "Qwen/Qwen3-8B",
+          "status": "pass",
+          "content": "\n\n{\n  \"likes\": [\n    {\n      \"cluster_id\": \"L1\",\n      \"op\": \"merge\",\n      \"members\": [\n        \"Rust 所有权与借用\",\n        \"Rust 的所有权和借用检查\"\n      ],\n      \"canonical\": \"Rust 所有权与借用检查\",\n      \"reason\": \"措辞变体且推荐结果高度重叠\"\n    }\n  ],\n  \"dislikes\": []\n}",
+          "usage": {
+            "prompt_tokens": 1112,
+            "completion_tokens": 555,
+            "total_tokens": 1667
+          },
+          "seconds": 20.447
+        }
+      ]
+    },
+    "Qwen/Qwen3.5-4B": {
+      "business": [
+        {
+          "name": "install_verified_published_sdk",
+          "status": "pass",
+          "seconds": 1.675,
+          "calls": [],
+          "result": {
+            "verified": true,
+            "downloaded_production_sdk": true
+          }
+        },
+        {
+          "name": "application_startup_and_saved_config",
+          "status": "pass",
+          "seconds": 0.471,
+          "calls": [],
+          "result": {
+            "sponsored": {
+              "enabled": true,
+              "model": "Qwen/Qwen3.5-4B",
+              "fallback_to_other_free_model": false,
+              "fallback_to_user_provider": false,
+              "notify_on_fallback": true,
+              "request_timeout_seconds": 180.0,
+              "runtime_available": true,
+              "embedding_model": "BAAI/bge-m3",
+              "context_window": 262144,
+              "image_embedding": false
+            }
+          }
+        },
+        {
+          "name": "behavior_to_preference_to_persisted_profile",
+          "status": "pass",
+          "seconds": 30.938,
+          "calls": [
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5584,
+              "completion_tokens": 406,
+              "success": 1
+            },
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4580,
+              "completion_tokens": 601,
+              "success": 1
+            }
+          ],
+          "interests": [
+            {
+              "name": "科技",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "编程",
+              "category": "科技",
+              "weight": 0.95,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "生活",
+              "category": "生活",
+              "weight": 0.7,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            },
+            {
+              "name": "园艺",
+              "category": "生活",
+              "weight": 0.7,
+              "first_seen": null,
+              "last_seen": null,
+              "source": "",
+              "state": "active",
+              "evidence_count": 0,
+              "last_evidence_at": "",
+              "parent_topic": ""
+            }
+          ]
+        },
+        {
+          "name": "event_ingress_persistence_and_deduplication",
+          "status": "pass",
+          "seconds": 0.038,
+          "calls": [],
+          "result": {
+            "response": {
+              "accepted": 2,
+              "duplicates": 0,
+              "rejected": [],
+              "receipts": [
+                {
+                  "index": 0,
+                  "event_id": 13,
+                  "event_type": "favorite",
+                  "inserted": true,
+                  "duplicate": false
+                },
+                {
+                  "index": 1,
+                  "event_id": 14,
+                  "event_type": "like",
+                  "inserted": true,
+                  "duplicate": false
+                }
+              ]
+            },
+            "replay": {
+              "accepted": 2,
+              "duplicates": 2,
+              "rejected": [],
+              "receipts": [
+                {
+                  "index": 0,
+                  "event_id": 13,
+                  "event_type": "favorite",
+                  "inserted": false,
+                  "duplicate": true
+                },
+                {
+                  "index": 1,
+                  "event_id": 14,
+                  "event_type": "like",
+                  "inserted": false,
+                  "duplicate": true
+                }
+              ]
+            },
+            "stored_events": 14
+          }
+        },
+        {
+          "name": "bge_text_embedding_similarity_and_cache",
+          "status": "pass",
+          "seconds": 0.823,
+          "calls": [],
+          "result": {
+            "model": "BAAI/bge-m3",
+            "dimensions": 1024,
+            "cache_hit": true,
+            "related_cosine": 0.7035694807602407,
+            "unrelated_cosine": 0.3123659671777639
+          }
+        },
+        {
+          "name": "production_discovery_keyword_generation",
+          "status": "pass",
+          "seconds": 5.102,
+          "calls": [
+            {
+              "caller": "discovery.search.queries",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2081,
+              "completion_tokens": 116,
+              "success": 1
+            }
+          ],
+          "result": {
+            "queries": [
+              "园艺 实操 避坑 指南",
+              "编程 底层 逻辑 解析"
+            ]
+          }
+        },
+        {
+          "name": "anonymous_live_bilibili_search",
+          "status": "pass",
+          "seconds": 0.581,
+          "calls": [],
+          "result": {
+            "query": "园艺 实操 避坑 指南",
+            "items": 3,
+            "titles": [
+              "【文心兰】新手教程，11个养护知识",
+              "<em class=\"keyword\">园艺</em>学概论【国家级精品课】【全60讲】",
+              "家庭<em class=\"keyword\">园艺</em>养护精讲通识课"
+            ]
+          }
+        },
+        {
+          "name": "production_batch_evaluation_and_pool_admission",
+          "status": "pass",
+          "seconds": 72.639,
+          "calls": [
+            {
+              "caller": "discovery.evaluate_batch",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5338,
+              "completion_tokens": 1948,
+              "success": 1
+            }
+          ],
+          "result": {
+            "input_count": 12,
+            "scores": [
+              {
+                "title": "Rust 所有权实战：修复借用检查错误",
+                "score": 0.92,
+                "reason": "契合原理结合实战的偏好及编程核心兴趣"
+              },
+              {
+                "title": "SQLite 查询优化：建立复合索引",
+                "score": 0.88,
+                "reason": "提供具体 SQL 优化实操，符合动手实践需求"
+              },
+              {
+                "title": "Python asyncio 超时与取消",
+                "score": 0.86,
+                "reason": "讲解异步机制原理与资源清理实战"
+              },
+              {
+                "title": "FastAPI 与 SQLite 事务测试",
+                "score": 0.84,
+                "reason": "覆盖接口验证与事务回滚的完整测试流程"
+              },
+              {
+                "title": "Docker 多阶段构建 Python 服务",
+                "score": 0.9,
+                "reason": "演示容器化部署实操，契合技术栈重构需求"
+              },
+              {
+                "title": "Git worktree 同时维护两个分支",
+                "score": 0.87,
+                "reason": "展示多分支维护的具体 Git 工程实践"
+              },
+              {
+                "title": "Rust 的 Result 错误类型设计",
+                "score": 0.89,
+                "reason": "通过错误类型设计体现 Rust 底层机制解析"
+              },
+              {
+                "title": "给 Python HTTP 客户端写回归测试",
+                "score": 0.85,
+                "reason": "提供 HTTP 客户端测试的完整代码示例"
+              },
+              {
+                "title": "阳台番茄浇水和光照记录",
+                "score": 0.78,
+                "reason": "记录阳台种植细节，满足生活园艺兴趣与实操需求"
+              },
+              {
+                "title": "盆栽番茄搭支架和整枝",
+                "score": 0.76,
+                "reason": "示范支架搭建与整枝操作，符合园艺实操偏好"
+              },
+              {
+                "title": "赌场必胜秘诀与下注攻略",
+                "score": 0.15,
+                "reason": ""
+              },
+              {
+                "title": "明星绯闻速报",
+                "score": 0.12,
+                "reason": ""
+              }
+            ],
+            "admitted": 10
+          }
+        },
+        {
+          "name": "batch_copy_ranking_and_recommendation_delivery",
+          "status": "pass",
+          "seconds": 43.475,
+          "calls": [
+            {
+              "caller": "recommendation.write_expression",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3753,
+              "completion_tokens": 1092,
+              "success": 1
+            }
+          ],
+          "result": {
+            "copy_generated": 10,
+            "served": [
+              {
+                "content": {
+                  "bvid": "BV1EVL000000",
+                  "title": "Rust 所有权实战：修复借用检查错误",
+                  "up_name": "合成验收样本",
+                  "up_mid": 0,
+                  "cover_url": "",
+                  "duration": 600,
+                  "view_count": 1000,
+                  "like_count": 0,
+                  "favorite_count": 0,
+                  "collect_count": 0,
+                  "comment_count": 0,
+                  "share_count": 0,
+                  "danmaku_count": 0,
+                  "reply_count": 0,
+                  "retweet_count": 0,
+                  "bookmark_count": 0,
+                  "engagement_available": [],
+                  "rating_score": 0.0,
+                  "rating_count": 0,
+                  "source_rank": 0,
+                  "tags": [
+                    "编程"
+                  ],
+                  "topic_key": "",
+                  "topic_group": "编程语言",
+                  "style_key": "deep_focus",
+                  "franchise_key": "",
+                  "description": "用可运行例子解释借用检查和所有权移动。",
+                  "published_at": "",
+                  "published_label": "",
+                  "source_strategy": "search",
+                  "discovery_lane": "",
+                  "relevance_score": 0.92,
+                  "relevance_reason": "契合原理结合实战的偏好及编程核心兴趣",
+                  "semantic_filter_deferred": false,
+                  "semantic_filter_review": false,
+                  "temporal_class": "evergreen",
+                  "temporal_confidence": 0.95,
+                  "temporal_reason": "编程原理不依赖特定时间节点",
+                  "temporal_policy_version": "v2",
+                  "temporal_validity_mode": "none",
+                  "temporal_valid_until": "",
+                  "temporal_scope": "none",
+                  "temporal_evidence": "",
+                  "temporal_state": "unknown",
+                  "temporal_next_review_at": "",
+                  "temporal_evaluated_at": "2026-11-04T14:46:13Z",
+                  "temporal_evidence_complete": true,
+                  "temporal_evaluated": false,
+                  "pool_expression": "这集 Rust 教程把‘所有权’和‘借用’这种抽象概念，直接塞进了可运行的错误演示里，看得人头皮发麻又爽。你之前纠结的‘变量越界’或者‘编译过不去’，大概就在这儿有答案了，这种把底层机制掰开揉碎讲清楚的风格，正好对你现在重构技术栈的需求。",
+                  "pool_topic_label": "编译原理实战",
+                  "candidate_tier": "primary",
+                  "discovered_at": "2026-11-04 14:47:26",
+                  "last_scored_at": "2026-11-04 14:47:26",
+                  "content_id": "BV1EVL000000",
+                  "item_key": "bilibili:BV1EVL000000",
+                  "content_url": "https://www.bilibili.com/video/BV1EVL000000",
+                  "source_platform": "bilibili",
+                  "author_name": "合成验收样本",
+                  "score_threshold": 0.0,
+                  "body_text": "",
+                  "content_type": "video",
+                  "source_metadata": {},
+                  "source_keyword_id": null
+                },
+                "recommendation_id": 1,
+                "expression": "这集 Rust 教程把‘所有权’和‘借用’这种抽象概念，直接塞进了可运行的错误演示里，看得人头皮发麻又爽。你之前纠结的‘变量越界’或者‘编译过不去’，大概就在这儿有答案了，这种把底层机制掰开揉碎讲清楚的风格，正好对你现在重构技术栈的需求。",
+                "topic_label": "编译原理实战",
+                "confidence": 0.92,
+                "presented": false,
+                "feedback": null
+              },
+              {
+                "content": {
+                  "bvid": "BV1EVL000008",
+                  "title": "阳台番茄浇水和光照记录",
+                  "up_name": "合成验收样本",
+                  "up_mid": 0,
+                  "cover_url": "",
+                  "duration": 600,
+                  "view_count": 1000,
+                  "like_count": 0,
+                  "favorite_count": 0,
+                  "collect_count": 0,
+                  "comment_count": 0,
+                  "share_count": 0,
+                  "danmaku_count": 0,
+                  "reply_count": 0,
+                  "retweet_count": 0,
+                  "bookmark_count": 0,
+                  "engagement_available": [],
+                  "rating_score": 0.0,
+                  "rating_count": 0,
+                  "source_rank": 0,
+                  "tags": [
+                    "园艺"
+                  ],
+                  "topic_key": "",
+                  "topic_group": "园艺种植",
+                  "style_key": "daily_wander",
+                  "franchise_key": "",
+                  "description": "盆栽番茄的日常养护记录，不涉及商业种植。",
+                  "published_at": "",
+                  "published_label": "",
+                  "source_strategy": "search",
+                  "discovery_lane": "",
+                  "relevance_score": 0.78,
+                  "relevance_reason": "记录阳台种植细节，满足生活园艺兴趣与实操需求",
+                  "semantic_filter_deferred": false,
+                  "semantic_filter_review": false,
+                  "temporal_class": "evergreen",
+                  "temporal_confidence": 0.85,
+                  "temporal_reason": "养护记录与种植原理长期适用",
+                  "temporal_policy_version": "v2",
+                  "temporal_validity_mode": "none",
+                  "temporal_valid_until": "",
+                  "temporal_scope": "none",
+                  "temporal_evidence": "",
+                  "temporal_state": "unknown",
+                  "temporal_next_review_at": "",
+                  "temporal_evaluated_at": "2026-11-04T14:46:13Z",
+                  "temporal_evidence_complete": true,
+                  "temporal_evaluated": false,
+                  "pool_expression": "阳台番茄浇水和光照记录，这集没搞那些商业种植的大道理，就盯着盆栽的日常养护来，看着叶子舒展挺解压。你周末喜欢园艺，这种把‘硬核’技术思维用在生活琐事里的记录，正好能帮你平衡一下周一到周五的紧绷感。",
+                  "pool_topic_label": "园艺日常",
+                  "candidate_tier": "primary",
+                  "discovered_at": "2026-11-04 14:47:26",
+                  "last_scored_at": "2026-11-04 14:47:26",
+                  "content_id": "BV1EVL000008",
+                  "item_key": "bilibili:BV1EVL000008",
+                  "content_url": "https://www.bilibili.com/video/BV1EVL000008",
+                  "source_platform": "bilibili",
+                  "author_name": "合成验收样本",
+                  "score_threshold": 0.0,
+                  "body_text": "",
+                  "content_type": "video",
+                  "source_metadata": {},
+                  "source_keyword_id": null
+                },
+                "recommendation_id": 2,
+                "expression": "阳台番茄浇水和光照记录，这集没搞那些商业种植的大道理，就盯着盆栽的日常养护来，看着叶子舒展挺解压。你周末喜欢园艺，这种把‘硬核’技术思维用在生活琐事里的记录，正好能帮你平衡一下周一到周五的紧绷感。",
+                "topic_label": "园艺日常",
+                "confidence": 0.78,
+                "presented": false,
+                "feedback": null
+              },
+              {
+                "content": {
+                  "bvid": "BV1EVL000004",
+                  "title": "Docker 多阶段构建 Python 服务",
+                  "up_name": "合成验收样本",
+                  "up_mid": 0,
+                  "cover_url": "",
+                  "duration": 600,
+                  "view_count": 1000,
+                  "like_count": 0,
+                  "favorite_count": 0,
+                  "collect_count": 0,
+                  "comment_count": 0,
+                  "share_count": 0,
+                  "danmaku_count": 0,
+                  "reply_count": 0,
+                  "retweet_count": 0,
+                  "bookmark_count": 0,
+                  "engagement_available": [],
+                  "rating_score": 0.0,
+                  "rating_count": 0,
+                  "source_rank": 0,
+                  "tags": [
+                    "编程"
+                  ],
+                  "topic_key": "",
+                  "topic_group": "云计算",
+                  "style_key": "hands_on",
+                  "franchise_key": "",
+                  "description": "构建并运行一个可复现的 Python 容器。",
+                  "published_at": "",
+                  "published_label": "",
+                  "source_strategy": "search",
+                  "discovery_lane": "",
+                  "relevance_score": 0.9,
+                  "relevance_reason": "演示容器化部署实操，契合技术栈重构需求",
+                  "semantic_filter_deferred": false,
+                  "semantic_filter_review": false,
+                  "temporal_class": "current",
+                  "temporal_confidence": 0.75,
+                  "temporal_reason": "容器技术随云原生发展持续更新",
+                  "temporal_policy_version": "v2",
+                  "temporal_validity_mode": "freshness_only",
+                  "temporal_valid_until": "",
+                  "temporal_scope": "hook",
+                  "temporal_evidence": "构建并运行一个可复现的 Python 容器",
+                  "temporal_state": "unknown",
+                  "temporal_next_review_at": "",
+                  "temporal_evaluated_at": "2026-11-04T14:46:13Z",
+                  "temporal_evidence_complete": true,
+                  "temporal_evaluated": false,
+                  "pool_expression": "多阶段构建 Python 容器这点太扎实了，本来以为只是调命令，结果看到它一步步拆解镜像层，直接把‘资源浪费’和‘体积优化’说透了。现在你正想把技术思维迁移过来，这种实操性极强的部署方案，简直比理论文档管用多了。",
+                  "pool_topic_label": "容器化部署",
+                  "candidate_tier": "primary",
+                  "discovered_at": "2026-11-04 14:47:26",
+                  "last_scored_at": "2026-11-04 14:47:26",
+                  "content_id": "BV1EVL000004",
+                  "item_key": "bilibili:BV1EVL000004",
+                  "content_url": "https://www.bilibili.com/video/BV1EVL000004",
+                  "source_platform": "bilibili",
+                  "author_name": "合成验收样本",
+                  "score_threshold": 0.0,
+                  "body_text": "",
+                  "content_type": "video",
+                  "source_metadata": {},
+                  "source_keyword_id": null
+                },
+                "recommendation_id": 3,
+                "expression": "多阶段构建 Python 容器这点太扎实了，本来以为只是调命令，结果看到它一步步拆解镜像层，直接把‘资源浪费’和‘体积优化’说透了。现在你正想把技术思维迁移过来，这种实操性极强的部署方案，简直比理论文档管用多了。",
+                "topic_label": "容器化部署",
+                "confidence": 0.9,
+                "presented": false,
+                "feedback": null
+              }
+            ]
+          }
+        },
+        {
+          "name": "feedback_persistence_and_profile_learning",
+          "status": "pass",
+          "seconds": 184.8,
+          "calls": [
+            {
+              "caller": "soul.speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2002,
+              "completion_tokens": 1755,
+              "success": 1
+            },
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3358,
+              "completion_tokens": 715,
+              "success": 1
+            },
+            {
+              "caller": "soul.avoidance_speculate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 930,
+              "completion_tokens": 868,
+              "success": 1
+            },
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4495,
+              "completion_tokens": 640,
+              "success": 1
+            },
+            {
+              "caller": "soul.posture_gate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2431,
+              "completion_tokens": 103,
+              "success": 1
+            },
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 7600,
+              "completion_tokens": 329,
+              "success": 1
+            },
+            {
+              "caller": "soul.insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3742,
+              "completion_tokens": 207,
+              "success": 1
+            }
+          ],
+          "result": {
+            "persisted_feedback": 3,
+            "learning": {
+              "triggered": true,
+              "feedback_count": 3,
+              "preference_updated": true,
+              "preference_changed": true,
+              "profile_rebuilt": true,
+              "unified_interest_line": true,
+              "migrated_feedback_events": 3,
+              "enqueued_feedback_events": 3
+            }
+          }
+        },
+        {
+          "name": "agent_real_tool_execution_and_final_answer",
+          "status": "partial",
+          "seconds": 8.122,
+          "calls": [
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2898,
+              "completion_tokens": 16,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3833,
+              "completion_tokens": 98,
+              "success": 1
+            }
+          ],
+          "tools": [
+            "get_profile"
+          ],
+          "final": [
+            "根据您提供的用户画像和记忆数据，您的两个主要兴趣是：\n\n1.  **编程与底层技术**（特别是 Rust 语言和 Docker 容器化部署）：您高度关注编程语言的底层机制、工程实践以及可运行的代码，追求技术细节的精准度和逻辑闭环。\n2.  **园艺与植物养护**：您热衷于阳台种植，关注园艺实操细节，并倾向于将植物生长视为一种严谨的“微环境”工程实验。"
+          ],
+          "both_requested_tools_executed": false,
+          "audit_note": "Initial assertion required only get_profile; read_memory was explicitly required but omitted"
+        },
+        {
+          "name": "explicit_dialogue_learning",
+          "status": "not_counted",
+          "seconds": 51.629,
+          "calls": [
+            {
+              "caller": "soul.dialogue_insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2611,
+              "completion_tokens": 249,
+              "success": 1
+            },
+            {
+              "caller": "soul.preference",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3903,
+              "completion_tokens": 615,
+              "success": 1
+            },
+            {
+              "caller": "soul.profile_build",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5089,
+              "completion_tokens": 604,
+              "success": 1
+            }
+          ],
+          "result": {
+            "event_logged": true,
+            "candidate_count": 3,
+            "preference_updated": true,
+            "profile_rebuilt": true
+          },
+          "audit_note": "Initial runner invoked learning outside settlement queue; 8B logged worker-guard rejection. HTTP queued learning checked separately."
+        },
+        {
+          "name": "profile_consolidation_and_embedding_recall",
+          "status": "not_exercised",
+          "seconds": 13.443,
+          "calls": [
+            {
+              "caller": "soul.posture_gate",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3226,
+              "completion_tokens": 163,
+              "success": 1
+            }
+          ],
+          "result": {
+            "ran": true,
+            "throttled": false,
+            "skipped_clean": false,
+            "dry_run": true,
+            "applied": false,
+            "write_conflict": false,
+            "run_id": "20261104-225214",
+            "rule_merges": [],
+            "clusters_sent": 0,
+            "llm_batches": 0,
+            "merges": [],
+            "rejected_clusters": [],
+            "likes_before": 8,
+            "likes_after": 8,
+            "dislikes_before": 1,
+            "dislikes_after": 1,
+            "likes_target_upper": 512,
+            "likes_target_soft": 450,
+            "like_similarity_threshold": 0.8,
+            "archived_interests": [],
+            "protected_interests": [],
+            "inventory_reason": "",
+            "retry_pending": false,
+            "errors": []
+          },
+          "audit_note": "No clusters required an LLM merge judgement"
+        },
+        {
+          "name": "database_and_profile_reload",
+          "status": "pass",
+          "seconds": 0.087,
+          "calls": [],
+          "result": {
+            "restored_interests": 10,
+            "restored_events": 18,
+            "saved_model": "Qwen/Qwen3.5-4B"
+          }
+        }
+      ],
+      "http": [
+        {
+          "name": "real_server_startup_and_user_surfaces",
+          "status": "pass",
+          "result": {
+            "/api/health": {
+              "status": 200,
+              "bytes": 136
+            },
+            "/api/profile-summary": {
+              "status": 200,
+              "bytes": 11825
+            },
+            "/web/": {
+              "status": 200,
+              "bytes": 185062
+            },
+            "/m/": {
+              "status": 200,
+              "bytes": 1665
+            }
+          },
+          "seconds": 15.117,
+          "calls": []
+        },
+        {
+          "name": "real_sse_two_turn_chat_and_durable_history",
+          "status": "pass",
+          "result": {
+            "turns": [
+              {
+                "first_content_seconds": null,
+                "elapsed_seconds": 24.443,
+                "reply": "蓝色番茄731代号已记录。Rust 借用是为了在栈上安全地移动数据所有权而不复制，防止内存泄漏或悬垂指针，确保资源始终被正确释放。",
+                "event_counts": {
+                  "delta": 40,
+                  "done": 1,
+                  "final": 1
+                },
+                "persisted": true
+              },
+              {
+                "first_content_seconds": null,
+                "elapsed_seconds": 85.99,
+                "reply": "蓝色番茄731",
+                "event_counts": {
+                  "delta": 5,
+                  "done": 1,
+                  "final": 1
+                },
+                "persisted": true
+              }
+            ]
+          },
+          "seconds": 110.559,
+          "calls": [
+            {
+              "caller": "discovery.keyword_planner",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3502,
+              "completion_tokens": 736,
+              "success": 1
+            },
+            {
+              "caller": "discovery.search.queries",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2528,
+              "completion_tokens": 117,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4861,
+              "completion_tokens": 40,
+              "success": 1
+            },
+            {
+              "caller": "discovery.keyword_inspiration",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5260,
+              "completion_tokens": 2014,
+              "success": 1
+            },
+            {
+              "caller": "soul.dialogue_insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2636,
+              "completion_tokens": 21,
+              "success": 1
+            },
+            {
+              "caller": "agent.chat",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4983,
+              "completion_tokens": 5,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "awareness_and_insight_cognition_cycle",
+          "status": "pass",
+          "result": {
+            "ran": true,
+            "throttled": false,
+            "awareness_generated": 1,
+            "insight_generated": 1,
+            "total_awareness_after": 4,
+            "total_insight_after": 3,
+            "errors": []
+          },
+          "seconds": 113.44,
+          "calls": [
+            {
+              "caller": "discovery.keyword_inspiration",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 4571,
+              "completion_tokens": 2463,
+              "success": 1
+            },
+            {
+              "caller": "soul.awareness_confusions",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 5771,
+              "completion_tokens": 170,
+              "success": 1
+            },
+            {
+              "caller": "soul.dialogue_insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 2587,
+              "completion_tokens": 16,
+              "success": 1
+            },
+            {
+              "caller": "soul.insight",
+              "provider": "sponsored",
+              "model": "Qwen/Qwen3.5-4B",
+              "prompt_tokens": 3865,
+              "completion_tokens": 164,
+              "success": 1
+            }
+          ]
+        },
+        {
+          "name": "post_chat_learning_queue_drained",
+          "status": "pass",
+          "result": {
+            "drained": true,
+            "dialogue_events": 3
+          },
+          "seconds": 0.0,
+          "calls": []
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3-8B",
+          "status": "pass",
+          "result": {
+            "ok": true,
+            "kind": "sponsored",
+            "instance_id": "",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3-8B",
+            "message": "流式对话和 BGE-M3 文本向量均可用",
+            "error": "",
+            "latency_ms": 793
+          },
+          "seconds": 1.342,
+          "calls": []
+        },
+        {
+          "name": "save_apply_live_probe_Qwen3.5-4B",
+          "status": "pass",
+          "result": {
+            "ok": true,
+            "kind": "sponsored",
+            "instance_id": "",
+            "provider": "sponsored",
+            "model": "Qwen/Qwen3.5-4B",
+            "message": "流式对话和 BGE-M3 文本向量均可用",
+            "error": "",
+            "latency_ms": 677
+          },
+          "seconds": 1.214,
+          "calls": []
+        }
+      ],
+      "consolidation_small_probe": [
+        {
+          "mode": "legacy_contract",
+          "model": "Qwen/Qwen3.5-4B",
+          "status": "pass",
+          "content": "{\n  \"likes\": [\n    {\n      \"cluster_id\": \"L1\",\n      \"op\": \"merge\",\n      \"members\": [\n        {\n          \"category\": \"编程\",\n          \"name\": \"Rust 所有权与借用\",\n          \"weight\": 1.0\n        },\n        {\n          \"category\": \"编程\",\n          \"name\": \"Rust 的所有权和借用检查\",\n          \"weight\": 0.8\n        }\n      ],\n      \"canonical\": \"Rust 所有权与借用\",\n      \"reason\": \"两个成员描述同一核心概念，后者为前者变体\"\n    }\n  ],\n  \"dislikes\": []\n}",
+          "usage": {
+            "prompt_tokens": 1108,
+            "completion_tokens": 611,
+            "total_tokens": 1719
+          },
+          "seconds": 21.96
+        },
+        {
+          "mode": "bounded_structured_diagnostic",
+          "model": "Qwen/Qwen3.5-4B",
+          "status": "pass",
+          "content": "```json\n{\n  \"likes\": [\n    {\n      \"cluster_id\": \"L1\",\n      \"op\": \"merge\",\n      \"members\": [\n        {\n          \"category\": \"编程\",\n          \"name\": \"Rust 所有权与借用\"\n        },\n        {\n          \"category\": \"编程\",\n          \"name\": \"Rust 的所有权和借用检查\"\n        }\n      ],\n      \"canonical\": \"Rust 所有权与借用\",\n      \"reason\": \"后者是前者的同义变体，推荐意图完全重叠\"\n    }\n  ],\n  \"dislikes\": []\n}\n```",
+          "usage": {
+            "prompt_tokens": 1110,
+            "completion_tokens": 145,
+            "total_tokens": 1255
+          },
+          "seconds": 10.288
+        }
+      ]
+    }
+  },
+  "4b_additional_sse_timing": {
+    "first_delta_seconds": 27.341,
+    "total_seconds": 27.664,
+    "delta_count": 8
+  },
+  "background_observations": {
+    "Qwen/Qwen3-8B": [
+      "2026-11-04 23:08:24,801 openbiliclaw.llm.concurrency WARNING LLM maintenance traffic parked 300s on an empty content pool with no refill progress; admitting 3 waiter(s) so profile updates are not starved indefinitely. Check whether refill is failing (sources disabled, credentials expired, or network blocked).",
+      "2026-11-04 23:08:25,669 openbiliclaw.soul.awareness_analyzer WARNING awareness note cited 4 event id(s) outside the analysed batch ([10, 17, 18, 19]...); falling back to approximate batch attribution",
+      "2026-11-04 23:08:25,669 openbiliclaw.soul.awareness_analyzer WARNING awareness note cited 5 event id(s) outside the analysed batch ([10, 13, 14, 17, 18]...); falling back to approximate batch attribution",
+      "2026-11-04 23:12:23,152 root ERROR Acceptance case failed: save_apply_live_probe_Qwen3.5-4B",
+      "2026-11-04 23:12:55,066 root ERROR Acceptance case failed: save_apply_live_probe_Qwen3-8B"
+    ],
+    "Qwen/Qwen3.5-4B": [
+      "2026-11-04 23:00:06,844 openbiliclaw.soul.awareness_analyzer WARNING awareness note cited 7 event id(s) outside the analysed batch ([11, 12, 13, 14, 17]...); falling back to approximate batch attribution",
+      "2026-11-04 23:03:24,469 openbiliclaw.runtime.candidate_eval WARNING candidate evaluation worker failed: sponsored runtime timed out",
+      "2026-11-04 23:07:39,631 openbiliclaw.runtime.candidate_eval WARNING candidate evaluation worker failed: sponsored runtime timed out",
+      "2026-11-04 23:10:54,746 openbiliclaw.runtime.candidate_eval WARNING candidate evaluation worker failed: sponsored runtime timed out",
+      "2026-11-04 23:14:24,865 openbiliclaw.runtime.candidate_eval WARNING candidate evaluation worker failed: sponsored runtime timed out"
+    ]
+  },
+  "checks": {
+    "focused_pytest": {
+      "passed": 126,
+      "seconds": 14.58
+    },
+    "mypy": {
+      "source_files": 384,
+      "result": "pass"
+    },
+    "ruff": "pass",
+    "script_py_compile": "pass",
+    "full_pytest": {
+      "passed": 12453,
+      "skipped": 70,
+      "failed": 2,
+      "warnings": 12954,
+      "seconds": 3100.58,
+      "failures": [
+        "test_recommendations_and_runtime_recover_without_leaving_init_gate",
+        "test_enabled_zero_stock_platform_survives_config_snapshot_retry"
+      ],
+      "baseline": "Previously independently reproduced on unchanged main f4af7744",
+      "scope": "Full run snapshot precedes final short-output guard; final delta covered by 126 focused tests, real 64-token JSON and static checks"
+    }
+  },
+  "tiny_json_final_guard": {
+    "model": "Qwen/Qwen3-8B",
+    "max_tokens": 64,
+    "json": {
+      "ok": true
+    },
+    "seconds": 0.792,
+    "usage": {
+      "prompt_tokens": 30,
+      "completion_tokens": 8,
+      "total_tokens": 38
+    }
+  }
+}

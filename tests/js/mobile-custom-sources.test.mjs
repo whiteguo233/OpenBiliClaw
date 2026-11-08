@@ -32,6 +32,8 @@ function harness({ fetchConfig = async () => ({ saved_sync: {} }), managerAvaila
       removeAttribute(key) { delete this.attributes[key]; },
       addEventListener(event, listener) { this.listeners[event] = listener; },
       append(child) { this.children.push(child); },
+      replaceChildren(...children) { this.children = children; },
+      get options() { return this.children; },
       remove() { this.removed = true; },
       focus() { focus.push(this); },
       querySelector(selector) {
@@ -45,7 +47,12 @@ function harness({ fetchConfig = async () => ({ saved_sync: {} }), managerAvaila
   const context = vm.createContext({
     URL,
     document: { body, createElement() { const node = createNode(); nodes.push(node); return node; } },
-    window: { location: { origin: "https://claw.example", assign: url => navigation.push(url) }, confirm: () => true },
+    window: {
+      location: { origin: "https://claw.example", href: "https://claw.example/m/", assign: url => navigation.push(url) },
+      confirm: () => true,
+      OpenBiliClawJevSettings: { mount: () => ({ load() {}, read: () => ({}) }) },
+    },
+    probeJevConfig: async () => ({}),
     fetchConfig,
     updateConfig: async data => calls.push({ path: "/config", options: data }),
     requestJson: async (path, options) => { calls.push({ path, options }); return { items: [] }; },
@@ -98,7 +105,7 @@ test("reopening or closing mobile settings disposes the old source manager", asy
   assert.equal(h.managers[0].destroys, 1);
   assert.equal(h.managers[1].destroys, 0);
   assert.equal(h.body.children[0].removed, true);
-  h.nodes[3].querySelector(".mobile-settings-close").listeners.click();
+  h.body.children[1].children[0].querySelector(".mobile-settings-close").listeners.click();
   assert.equal(h.managers[1].destroys, 1);
   assert.equal(h.body.children[1].removed, true);
 });
@@ -143,6 +150,22 @@ test("custom names survive recommendation and delight normalization without chan
   assert.equal(getRecommendationSourceLabel({ source_platform: "web", source_name: " " }), "Web");
 });
 
+test("mobile source login preserves the scanned backend prefix", async () => {
+  const h = harness();
+  h.context.window.location.href = "https://claw.example/tenant/one/m/";
+  await h.context.openMobileSettings({});
+  h.managers[0].options.openUrl("/web/source-login.html?draft_id=source-1");
+  assert.equal(h.navigation[0], "https://claw.example/tenant/one/m/desktop/source-login.html?draft_id=source-1");
+  let prevented = false;
+  h.context.handleMobileSourceLoginClick({
+    target: { closest: () => ({ href: "https://claw.example/tenant/one/web/source-login.html?draft_id=chat-1" }) },
+    button: 0, preventDefault() { prevented = true; },
+  });
+  assert.equal(prevented, true);
+  assert.equal(h.navigation[1], "https://claw.example/tenant/one/m/desktop/source-login.html?draft_id=chat-1");
+  assert.throws(() => h.managers[0].options.openUrl("/other/web/source-login.html?draft_id=wrong"));
+});
+
 test("saved card normalization preserves the custom source identity and label", () => {
   const saved = readFileSync(new URL("../../src/openbiliclaw/web/js/views/saved.js", import.meta.url), "utf8");
   const start = saved.indexOf("export function normalizeSavedListItem(");
@@ -167,8 +190,9 @@ test("mobile recommendation and delight cards use custom source labels and load 
   assert.equal((recommend.match(/esc\(getRecommendationSourceLabel\(/g) || []).length, 3);
   assert.doesNotMatch(recommend, /getSourceLabel\((?:d|item)\.source_platform\)/);
   const html = readFileSync(new URL("../../src/openbiliclaw/web/index.html", import.meta.url), "utf8");
-  assert.match(html, /href="\/shared\/custom-sources\.css"/);
-  assert.ok(html.indexOf('src="/shared/custom-sources.js"') < html.indexOf('src="js/app.js"'));
+  assert.match(html, /href="\.\.\/shared\/custom-sources\.css"/);
+  const sourceScript = html.indexOf('src="../shared/custom-sources.js"');
+  assert.ok(sourceScript >= 0 && sourceScript < html.indexOf('src="js/app.js"'));
 });
 
 test("chat login links use the mobile takeover, ordinary and external links stay untouched", () => {

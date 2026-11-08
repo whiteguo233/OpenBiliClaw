@@ -1,0 +1,467 @@
+{
+  "schema": "director-live-e2e.v1",
+  "policy_version": "director-screen-policy.v3",
+  "code_sha256": {
+    "scripts/run_director_live_e2e.py": "711fd55ff84cf53466b38a3176ac9f60b4ab7acbccf7e08c871ec858058c9a6e",
+    "scripts/director_codex_transport.py": "0af47294620a5e30cec1a463f4300d8d3ad2c64d4b37801fa78c6846325a8b08",
+    "src/openbiliclaw/recommendation/director/planner.py": "edfae00f54d54e4c7b14750b7772f209d2b76ed68124626678a88d3a220155f1",
+    "src/openbiliclaw/recommendation/director/policy.py": "719798ddd2183aab200410780e119f9585cb73bb73d36141aac77dc658196237",
+    "src/openbiliclaw/recommendation/director/horizon_models.py": "34ee5c1717da01cc1a730dea3bb1606865ce4a3a92f6f3aeff69ad1871704cc8",
+    "src/openbiliclaw/recommendation/director/planner_refs.py": "4ef5dd171c120f1a8e78e9c35c49556e7a5e5a551e475b3afd4d7c664186b350"
+  },
+  "started_at": "2026-10-02T04:48:30.810426+00:00",
+  "transport": "codex-cli",
+  "model": "gpt-6-luna",
+  "mode": "interactive_serve",
+  "planning_budget_seconds": 60.0,
+  "budget_class": "diagnostic_override",
+  "real_source_snapshot": true,
+  "source_configuration": "config_toml_plus_local_and_environment",
+  "feedback_is_isolated_acceptance_action": true,
+  "long_term_learning_and_discovery": "excluded",
+  "jev": "not_used_agent_only",
+  "asgi_background_lifespan": "disabled",
+  "http_requests": [],
+  "screens": [],
+  "checks": [
+    "interactive_server_window_completed_not_an_acceptance_verdict"
+  ],
+  "passed": null,
+  "model_calls": [
+    {
+      "input_sha256": "c14a34cfc8b055f6e66caf0a0baac4948c4a9b6970c2933d04f967096f3c1abf",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 37067,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "706f21a5b6c61b5602763262100a2a74da593428c479433ecbb311b7b2657351",
+      "usage": {
+        "input_tokens": 19096,
+        "cached_input_tokens": 0,
+        "output_tokens": 1149,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          10,
+          10,
+          7
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 8,
+        "omitted_count": 21
+      },
+      "elapsed_seconds": 31.205
+    },
+    {
+      "input_sha256": "55945f7624a201bdfd38845f1b81bb92f354a149b1e1f7cc125eaba6bd5bda39",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 42205,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 28.775
+    },
+    {
+      "input_sha256": "5f0941af7a62c5b00752217c4f88560668d83798be6c21cd21e03e97550cf952",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 36029,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "response_sha256": "f47f0f669cb7a1c6d4c0776d7339396e9ed5ac574d185ed7437caa918498f431",
+      "usage": {
+        "input_tokens": 18735,
+        "cached_input_tokens": 0,
+        "output_tokens": 813,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          10,
+          10
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 11
+      },
+      "elapsed_seconds": 21.078
+    },
+    {
+      "input_sha256": "cce0331999e365ca9f9e4c915d1c418a9f2b53779fa1281d7c01a593c48c88ef",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 36083,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "8196049c7b6739b05704639d5be7c67b2dac952fceb72018088378ffd4b34305",
+      "usage": {
+        "input_tokens": 18749,
+        "cached_input_tokens": 7936,
+        "output_tokens": 290,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 40
+      },
+      "elapsed_seconds": 13.901
+    },
+    {
+      "input_sha256": "449dd6dc7133bdf787f865a61b7912700b9d177675fe8407443dce6e2243f8b6",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 37511,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "e65429da8d53b114a12a6b0d2918eb34cf005e0ab8c21e30c0c38193d754d2a2",
+      "usage": {
+        "input_tokens": 19141,
+        "cached_input_tokens": 7936,
+        "output_tokens": 949,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          10,
+          10,
+          10
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 0
+      },
+      "elapsed_seconds": 36.072
+    },
+    {
+      "input_sha256": "4e763fad4ff8ee7dec7897b52f461d862f40ea6cff41c87f081b5309ea4b2556",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 40006,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "response_sha256": "77ae6824c046a074c8a5aa1fbd1097403206532162efdf1649ea5c828fef1eb7",
+      "usage": {
+        "input_tokens": 19755,
+        "cached_input_tokens": 2816,
+        "output_tokens": 954,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          10,
+          10,
+          9
+        ],
+        "unknown_ref_count": 0,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 0,
+        "omitted_count": 0
+      },
+      "elapsed_seconds": 22.274
+    },
+    {
+      "input_sha256": "500e6173635bafdcbdcb96bef452e3d36e145fdb78a49e1abeb820c14fe8cda9",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 40991,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 3,
+      "feedback_kind_counts": {
+        "presented": 2,
+        "like": 1
+      },
+      "requested_horizon": 1,
+      "background": false,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 60.025
+    },
+    {
+      "input_sha256": "9b7f790a9adde9756c5754ab85498efc74e3aafdade209e80e4910fe3cab91ab",
+      "system_sha256": "bda5d0b93e4d9f7dc020bc1925f3561a49ec630044014227995f6d18a5639c17",
+      "input_bytes": 43753,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 1,
+      "recent_card_count": 2,
+      "feedback_count": 3,
+      "feedback_kind_counts": {
+        "presented": 2,
+        "like": 1
+      },
+      "requested_horizon": 3,
+      "background": true,
+      "error_class": "CodexCLIError",
+      "elapsed_seconds": 47.02
+    }
+  ],
+  "transport_records": [
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 184,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 368,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 3522,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "error": 6,
+        "item.completed": 3,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 4,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "failure_code": "cli_turn_failed",
+      "error_markers": [
+        "connection",
+        "stream disconnected"
+      ]
+    }
+  ],
+  "snapshot": {
+    "source_open_mode": "sqlite_readonly_online_backup",
+    "source_data_path_sha256": "25c70f5d9b28fa6b8a5c499ec98df2c2480b34d54e533fe659937830ff64a936",
+    "memory_files": [
+      "soul.json",
+      "preference.json",
+      "awareness.json",
+      "insight.json",
+      "profile_overrides.json",
+      "speculative_state.json",
+      "discovery_runtime.json"
+    ],
+    "database_bytes": 228888576,
+    "private_snapshot_deleted_on_exit": true
+  },
+  "initial_shortlist_count": 40,
+  "listening_url": "http://127.0.0.1:63713",
+  "finished_at": "2026-10-02T04:58:39.687049+00:00"
+}

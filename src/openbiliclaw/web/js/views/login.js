@@ -2,13 +2,13 @@
  * Login view for the mobile web password gate.
  *
  * Rendered before any tab content when the backend reports
- * `{enabled: true, authenticated: false}`. On success the server sets the
+ * `authenticated: false` (including pending remote setup). On login the server sets the
  * HttpOnly session cookie; the SPA never holds the token itself.
  */
 
 import { login } from "../api.js";
 
-export function renderLoginView($app, { onSuccess } = {}) {
+export function renderLoginView($app, { onSuccess, setupRequired = false } = {}) {
   $app.innerHTML = "";
 
   const wrap = document.createElement("section");
@@ -25,6 +25,18 @@ export function renderLoginView($app, { onSuccess } = {}) {
   const subtitle = document.createElement("p");
   subtitle.className = "login-subtitle";
   subtitle.textContent = "请输入访问密码";
+  if (setupRequired) {
+    subtitle.textContent = "请先在运行后端的电脑上，打开设置并启用局域网访问密码，然后返回此页面。";
+    const retry = document.createElement("button");
+    retry.className = "login-button";
+    retry.type = "button";
+    retry.textContent = "已设置，重新检查";
+    retry.addEventListener("click", () => onSuccess?.());
+    card.append(title, subtitle, retry);
+    wrap.append(card);
+    $app.append(wrap);
+    return;
+  }
 
   const input = document.createElement("input");
   input.className = "login-input";

@@ -2,7 +2,8 @@
  * Blue Fish Lab settings panel (extension popup).
  *
  * Mirrors `web/desktop/assets/js/fish-settings.js` against the same
- * `/api/fish/*` endpoints. It saves independently from the popup's global
+ * `/api/fish/*` endpoints via requestJson's `/fish/*` relative paths.
+ * It saves independently from the popup's global
  * `/api/config` flow so lab-only fields and the fish's separate cookie never
  * travel through the main config form.
  */
@@ -202,8 +203,8 @@ if (el.enabled && el.saveConfig) {
   async function loadAll() {
     try {
       const [configPayload, statusPayload] = await Promise.all([
-        requestJson("/api/fish/config"),
-        requestJson("/api/fish/status"),
+        requestJson("/fish/config"),
+        requestJson("/fish/status"),
       ]);
       fillConfig(configPayload.config);
       renderStatus(statusPayload);
@@ -236,7 +237,7 @@ if (el.enabled && el.saveConfig) {
   el.saveConfig.addEventListener("click", () => {
     void withBusy(el.saveConfig, "保存中…", async () => {
       try {
-        const payload = await requestJson("/api/fish/config", {
+        const payload = await requestJson("/fish/config", {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(collectConfig()),
@@ -253,7 +254,7 @@ if (el.enabled && el.saveConfig) {
   el.saveAccount?.addEventListener("click", () => {
     void withBusy(el.saveAccount, "校验中…", async () => {
       try {
-        const payload = await requestJson("/api/fish/account", {
+        const payload = await requestJson("/fish/account", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ cookie: String(el.cookie.value || "").trim() }),
@@ -273,7 +274,7 @@ if (el.enabled && el.saveConfig) {
       let payload = null;
       try {
         payload = await requestJson(
-          `/api/fish/account/qrcode/poll?qrcode_key=${encodeURIComponent(qrcodeKey)}`,
+          `/fish/account/qrcode/poll?qrcode_key=${encodeURIComponent(qrcodeKey)}`,
           { method: "GET" },
         );
       } catch (error) {
@@ -309,7 +310,7 @@ if (el.enabled && el.saveConfig) {
     void withBusy(el.qrLogin, "生成中…", async () => {
       el.qrStatus.textContent = "正在生成二维码…";
       try {
-        const payload = await requestJson("/api/fish/account/qrcode", {
+        const payload = await requestJson("/fish/account/qrcode", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: "{}",
@@ -327,7 +328,7 @@ if (el.enabled && el.saveConfig) {
   el.clearAccount?.addEventListener("click", () => {
     void withBusy(el.clearAccount, "清除中…", async () => {
       try {
-        await requestJson("/api/fish/account", { method: "DELETE" });
+        await requestJson("/fish/account", { method: "DELETE" });
         if (el.accountStatus) el.accountStatus.textContent = "已清除大肥鱼的登录。";
         await loadAll();
       } catch (error) {
@@ -341,7 +342,7 @@ if (el.enabled && el.saveConfig) {
       void withBusy(button, "运行中…", async () => {
         if (el.runResult) el.runResult.textContent = "正在跑一轮…";
         try {
-          const payload = await requestJson("/api/fish/run", {
+          const payload = await requestJson("/fish/run", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ dry_run: dryRun, trigger: "manual" }),

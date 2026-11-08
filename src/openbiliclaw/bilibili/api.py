@@ -187,11 +187,19 @@ def favorite_item_is_dead(item: dict[str, Any]) -> bool:
 
 @dataclass
 class FollowingUser:
-    """Basic followed user info."""
+    """Basic followed user info.
+
+    ``mtime`` is Bilibili's own "when did I follow this account" timestamp
+    (epoch seconds, returned by ``/x/relation/followings``). It is the only
+    honest time a follow can carry, and dropping it is why an account import
+    used to look like "followed 40 creators in one second": without it the
+    ledger fell back to the import moment. Zero means upstream omitted it.
+    """
 
     mid: int
     uname: str
     sign: str = ""
+    mtime: int = 0
 
 
 @dataclass
@@ -1169,28 +1177,31 @@ class BilibiliAPIClient:
                 code=int(payload.get("code", 0) or 0),
             )
         data = _json_object(payload.get("data", {}))
-        inner_code = int(data.get("code", 86101) or 86101)
+        inner_code = int(data.get("code", 86101))
         message = str(data.get("message", "") or "")
-        if inner_code in {0, 86101}:
-            status = "pending"
-            if inner_code == 0:
-                status = "confirmed"
-            elif data.get("url"):
-                # Some clients use 86101 as "not scanned yet"; the URL only
-                # appears once the scan is confirmed.
-                status = "confirmed"
-        elif inner_code == 86090:
-            status = "scanned"
-        elif inner_code == 86038:
-            status = "expired"
-        else:
-            status = "pending"
+        status = {
+            0: "confirmed",
+            86101: "pending",
+            86090: "scanned",
+            86038: "expired",
+        }.get(inner_code, "pending")
+        # Web QR login can deliver credentials via Set-Cookie instead of URL
+        # parameters. Only use this response, never a previous account's jar.
+        allowed = {"SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5", "sid"}
+        cookie = (
+            "; ".join(
+                f"{item.name}={item.value}" for item in resp.cookies.jar if item.name in allowed
+            )
+            if status == "confirmed"
+            else ""
+        )
         return {
             "status": status,
             "message": message,
             "url": str(data.get("url", "") or ""),
             "qrcode_key": qrcode_key,
             "raw_code": inner_code,
+            "cookie": cookie,
         }
 
     async def search(
@@ -1581,6 +1592,10 @@ class BilibiliAPIClient:
                 mid=int(user.get("mid", 0)),
                 uname=str(user.get("uname", "")),
                 sign=str(user.get("sign", "")),
+                # Seconds, per the upstream contract ("关注时间，秒级时间戳").
+                # Never substitute the fetch time here: one sync covering 500
+                # follows would stamp them all with a single moment again.
+                mtime=max(0, _int_value(user.get("mtime"))),
             )
             for user in users
         ]

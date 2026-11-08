@@ -19,9 +19,18 @@
 
 [项目主页](https://whiteguo233.github.io/OpenBiliClaw/) | [English](README_EN.md) | 中文
 
-国内 AtomGit 托管：[OpenBiliClaw](https://atomgit.com/whiteguo233/OpenBiliClaw)（从 GitHub 自动同步源码）
+国内 AtomGit 源码镜像：[OpenBiliClaw](https://atomgit.com/whiteguo233/OpenBiliClaw)
 
 </div>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://whiteguo233.github.io/OpenBiliClaw/images/siliconflow-logo-dark.png">
+    <img src="https://whiteguo233.github.io/OpenBiliClaw/images/siliconflow-logo.png" alt="Powered by SiliconFlow" width="260" height="36">
+  </picture>
+  <br>
+  <sub>模型算力支持：感谢 <a href="https://www.siliconflow.cn">硅基流动（SiliconFlow）</a> 提供免费模型额度与推理支持 · <a href="docs/partners.md">合作说明</a></sub>
+</p>
 
 > ### 🆕 重要更新：OpenBiliClaw 现在可以装进 DeepSeek Harness
 >
@@ -29,18 +38,11 @@
 >
 > 📱 想要原生 App？Flutter 移动端客户端（Android / iOS / Web / 桌面）在独立仓库 [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile)：推荐、对话、画像、收藏 / 稍后再看 / 30 天历史一应俱全，连接同一本地后端。
 
-> 🇨🇳 **国内源**：[Gitee v0.3.229 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229)仍为最近同步版本；v0.3.230 源码与安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.230) 获取，国内安装包镜像待上传。[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)保留历史版本，请核对包名中的版本号。
+> 🇨🇳 **国内源**：[Gitee v0.3.233 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233)为历史源码快照。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
 ## 10 秒看懂 OpenBiliClaw
 
-> **正式来源：Instagram 与 TikTok**（v0.3.231 起正式可用），两者默认关闭、需在设置里显式启用；插件默认包含两者的站点访问权限，无需在保存设置时单独授权。
->
-> - **Instagram**（v0.3.227 起提供，v0.3.231 起正式可用）：按话题、创作者发现内容；同一浏览器登录后，可有界只读导入本人近期点赞、收藏和关注来初始化画像。推荐卡收藏仅保存在本地。[连接说明](docs/modules/instagram.md) · [实测范围](docs/platform-source-acceptance.instagram.md)。
-> - **TikTok**（v0.3.229 起提供，v0.3.231 起正式可用）：未登录可发现推荐流、话题和创作者视频，浏览器登录后可关键词搜索。公开发现→真实模型评估→推荐及桌面/手机 Web 展示已有实测。[连接说明](docs/modules/tiktok.md) · [实测范围](docs/platform-source-acceptance.tiktok.md)。
->
-> 已知限制：TikTok 站内收藏暂缓，非空真实账号画像、周期增量与 Firefox 登录态仍在验证（[#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)）；Instagram 的完整 Likes 历史、双账号、Firefox 登录态与手机真机仍在验证。两者均不宣称全部账号能力已完成验收。
-
-一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与自定义网站发现流程 找内容。
+一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与自定义网站、RSS 来源找内容。
 
 | 跨平台 | 本地优先 | 可调教 |
 |---|---|---|
@@ -65,15 +67,18 @@
 普通用户只需四步；Firefox、Docker、脚本和手动部署等备用路径都在 [安装与部署详情](#安装与部署详情)。
 
 1. **装插件** —— [Chrome 应用商店一键安装](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)（自动更新），或从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载 zip 手动安装（最新功能先到，商店版可能滞后几天）。
-2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 最近同步至 v0.3.229；v0.3.230 源码和安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.230)，国内安装包镜像待上传。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
+2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 源码已同步至 v0.3.233，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
 
    ```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
    ```
 
 3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok、Instagram 需在「设置 → 来源」中手动开启；使用已装插件的浏览器登录，插件默认包含两者站点访问权限。TikTok 未登录可发现公开视频，登录后由插件同步凭据用于关键词搜索；Instagram 可只读导入本人点赞、收藏和关注。两者均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。连接与许可要求见 [TikTok](docs/modules/tiktok.md)、[Instagram](docs/modules/instagram.md)。
 
-4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在设置里填后端地址即可连接同一后端。
+4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在新版 App 设置里点「扫码连接」即可导入同一后端；Web / 插件二维码可切换局域网、Tailscale、公网，详见[手机扫码连接](docs/mobile-connection.md)。
 
 不在同一局域网时，`OpenBiliClaw-mobile` 的 **Android / iOS 原生 App** 已内嵌 `tsnet`，电脑端
 也可让 OpenBiliClaw 自己加入同一 tailnet；Web / Linux / macOS / Windows Flutter 客户端不在
@@ -84,14 +89,15 @@
 源码 / 一句话安装则先运行
 `openbiliclaw tailnet build-helper`（需要 Go 1.26.6），再运行 `openbiliclaw tailnet enable`
 并重启。电脑无需安装或全局开启系统 Tailscale；入口默认关闭、只在 tailnet 私网可见，
-不启用 Funnel/Serve，建议同时在本机 Web 设置中开启应用密码（源码安装也可执行
+不启用 Funnel/Serve，远程使用前需在本机 Web 设置中开启应用密码（源码安装也可执行
 `openbiliclaw set-password`）。详见[应用内 Tailnet](docs/modules/tailnet.md)。
 
-可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](docs/modules/discovery.md#可选-parallel-grounding)。
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](docs/modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](docs/modules/discovery.md#可选-keenable-grounding)。
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 
@@ -131,7 +137,7 @@ query inspiration → configured provider chain → optional Parallel Search MCP
 
 ### 🔒 100% 本地，100% 你的
 
-核心行为、推荐和对话数据留在你硬盘上的 SQLite，配置、画像、凭据与缓存也只保存在本机文件中。LLM 默认用你自己的 API Key，也可实验性复用本机 Codex CLI 的 ChatGPT OAuth 凭据。没有 OpenBiliClaw 运营的云端账号，没有任何人能看到你的画像。这个 Agent 怎么长，完全你说了算——反馈推荐、对话调教、换 LLM、迁移或改数据库，随你。
+核心行为、推荐和对话数据留在你硬盘上的 SQLite，配置、画像、凭据与缓存也保存在本机文件中。LLM 可选免费方案、自有 API Key，或实验性复用本机 Codex CLI 的 ChatGPT OAuth 凭据；调用云端模型时，任务所需的文本和画像上下文会发送给所选模型服务商。没有 OpenBiliClaw 运营的云端账号。这个 Agent 怎么长，完全你说了算——反馈推荐、对话调教、换 LLM、迁移或改数据库，随你。
 
 > 💡 **和其他推荐工具的对比**
 >
@@ -251,12 +257,11 @@ query inspiration → configured provider chain → optional Parallel Search MCP
 
 ## 最近更新
 
-📌 最新版本：**v0.3.231（2026-10-22）**
+📌 最新版本：**v0.3.234（2026-11-06）**
 
-- **Instagram 与 TikTok 正式可用**：不再标注实验性，默认关闭、需在设置中显式启用。
-- **大肥鱼更会说话了**：通知文案改由人设生成，默认人设更可爱；私信修复后已可真实投递。
-- **Ollama embedding**：不再依赖聊天 SDK，部署更轻。
-- 完整变更详见 [docs/changelog.md](docs/changelog.md)。
+- **免费模型开箱可选**：初始化和设置共用 Qwen3-8B / Qwen3.5-4B，文本向量可选云端 BGE-M3 或本地 Ollama。
+- **远程访问先认证**：关闭密码时只允许可信本机访问，并提示远程设备完成设置。
+- **评估保留来源事实**：补齐平台原生互动、GitHub 仓库属性和小红书已有正文，长批次超限时有界拆分。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -324,7 +329,7 @@ npm run package:firefox        # 额外打成未签名 openbiliclaw-extension-v*
 
 到 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合发布页下载对应系统的安装包。这个聚合页会同步展示：
 
-> 🇨🇳 **国内源**：[Gitee v0.3.229 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229)仍为最近同步版本；v0.3.230 源码与安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.230) 获取，国内安装包镜像待上传。[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)保留历史版本，请核对包名中的版本号。
+> 🇨🇳 **国内源**：[Gitee v0.3.233 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233)为历史源码快照。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
 - 当前后端源码 tag：`backend-v*`
 - 当前插件 release：`extension-v*`，并附 `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip`（Firefox 临时调试）；启用 AMO signing 时还会附 `openbiliclaw-extension-v*-firefox.xpi`（Firefox 正式安装）
@@ -378,7 +383,7 @@ openbiliclaw start
 
 > 首次运行 `openbiliclaw init` 时会询问是否允许局域网访问（默认 Y）。如果选了 N 或想改回来，编辑 `config.toml` 的 `[api].host`（`0.0.0.0` = 通过可用的 IPv4 / IPv6 局域网访问，`127.0.0.1` = 仅本机）。二维码优先使用 IPv4；仅有 IPv6 时会自动生成带方括号的 IPv6 地址。
 >
-> **安全提示**：`0.0.0.0` 绑定意味着同网络的任何设备都能访问后端。默认配置下 `[api.auth]` 密码门禁是关闭的，此时历史、画像和点赞/评论等写接口对局域网零鉴权开放；B 站登录凭据接口和设置写/探测接口（`PUT /api/config` 等）例外——它们始终要求本机或已登录会话。只要在不可信网络（公共 Wi-Fi、共享热点、端口映射到公网）使用，请立即执行 `openbiliclaw set-password` 开启门禁。
+> **远程访问**：默认 `[api.auth].enabled=false` 只允许可信本机调用私有 API。手机、局域网和反向代理连接前，请先在后端电脑的设置页启用访问密码，或执行 `openbiliclaw set-password`；远程插件还需设备密钥配对。静态页面和健康探针公开可达。详见[访问认证](docs/modules/api-auth.md)。
 
 打开 `/m/` 后可以把手机页面保存成桌面快捷入口：iPhone / iPad 用 Safari 的「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；如果想要更稳定的完整 PWA 安装提示，建议在可信环境里用 HTTPS 反代访问本机后端。
 
@@ -412,7 +417,10 @@ Windows 原生（PowerShell，不需要 Docker / WSL2）：
 mkdir -p ~/openbiliclaw && cd ~/openbiliclaw
 curl -fsSLO https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docker-compose.prebuilt.yml
 docker compose -f docker-compose.prebuilt.yml up -d
-# 然后打开 http://127.0.0.1:8420/setup/ 完成初始化
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker restart openbiliclaw-backend
+# 先打开 http://127.0.0.1:8420/web/ 登录，再进入 /setup/
+# 扩展设备密钥配对及容器初始化见下方 Docker 部署指南
 ```
 
 也可以把下面这句粘给 AI 编程助手，走终端向导 + 自动 init：
@@ -645,13 +653,58 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 - 🚀 **图形化引导初始化** — 安装包 `/setup/`、桌面 Web 和插件都能点一下完成初始化，不碰命令行
 - 📦 **跨机器迁移** — 桌面配置页一键导出 / 导入可移植配置、SQLite、画像、Cookie 与图片缓存；导入先校验暂存，可查询 / 取消，重启后带回滚副本应用。`.obcbackup` 含明文敏感信息，但不含源机 API 登录密码 / 会话签名密钥或扩展设备 key
 - 🔬 **自动化评测优化** — 5 个模块各带 LLM-as-judge 自优化循环，prompt 质量随轮次自动提升
-- 🔒 **完全私有** — SQLite、配置、画像与缓存都留在本机，LLM 用你自己的 Key，每个实例只为你一个人构建
+- 🔒 **完全私有** — SQLite、配置、画像与缓存都留在本机，可选免费模型或自有 Key，每个实例只为你一个人构建
 - 🔌 **本地 embedding** — 可选 Ollama + bge-m3，CPU 即可，无需额外 API Key
 - 🔧 **完全可控** — 同类型 LLM 可配置多个独立渠道，拖拽全局 / 模块故障切换链；也可直接编辑画像、写自定义 Skill
 
 ## 🏛️ 架构概览
 
 公开订阅网络：`[network] direct/system/custom → 本机 DNS 或代理 DoH → 公共 IP 固定 / Host 与 TLS 身份 → robots → Feed`；文章引用最多 128 域，不授权额外网络请求。
+
+硅基流动作为预置 LLM 实例：在现有实例列表选择8B/4B，默认链和模块链决定调用顺序；Embedding 独立选择云端 BGE-M3 或本地 Ollama。本次统一入口改动待随应用发布。[结构与验收](docs/testing/2026-11-06-unified-providers.md)。
+
+```text
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
+```
+
+文本/JSON 接口转发真实增量流；免费工具适配采用 Qwen 标记格式的提示词桥接，保留结果身份，普通 JSON 作为数据。备用服务只按用户配置的实例链使用。BGE-M3 不提供图片向量。
+
+```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
+```
+
+扩展在线状态：`runtime-stream → API 原子在线心跳 → data/runtime/extension_presence.json → full/discovery worker → 浏览器任务队列`；空闲连接每 20 秒续约，活动租约 60 秒失效，正常断开保留原宽限。见 [Runtime 模块](docs/modules/runtime.md#presencetracker)。
+
+抖音账号导入：`携带网页端参数的 profile/self → 本人账号 API 分页 → 有效 API 结果 → 后端拒绝已知 DOM 回退 → 任务回传 / 画像`；空列表保持为空，失败只保留有效 API partial，页面推荐卡片不进入个人记录。默认每类最多 300 条，成功不表示全量历史。
+
+抖音发现节流：`已领取任务失败 → dy_tasks 持久冷却 → producer 关键词领取前 / client / pending 领取门控`；原生搜索流立即交还网页，仅在有界副本上逐帧采集。有效 partial 与失败同时保留；共用发现客户端与任务队列的路径不能通过重启或 direct fallback 绕过冷却。
+
+抖音热词轮换：`dy_tasks 最近 6 小时的已入队选择 → 每轮新建的 plugin client → 优先未选热词`，避免正式入口因客户端重建而重复选择同一榜单前两词。
+
+桌面静态脚本：`包内桌面/共享脚本 → DesktopAssets（固定依赖顺序、最近两个内容版本、预压缩 gzip）→ /web 一次 defer 请求`。共享源码与原资源入口继续供移动端、插件使用，无需 Node 构建，无安装或配置变化。见[桌面 Web 模块](docs/modules/desktop-web.md)。
+
+封面显示链路：`页面 → API 复用内部连接 → 图片服务（原图磁盘缓存 → 有界缩图缓存）→ 页面`。独立图片服务不可用时回退进程内处理。
 
 TikTok 封面：`图片代理 → DoH 公网地址校验 → 固定 IP / 保留 TLS 身份 → 缓存`，沿配置的网络路由执行。
 
@@ -665,11 +718,28 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 
-聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
+聊一聊：`会话风格 → 持久化 turn 冻结风格 → API 持有的 agent 执行任务 → 会话上下文与聊天笔记 + 角色工具（含网页搜索/链接阅读）+ 表达风格 → 正文工具协议检查 → 事件落库 / SSE → 回复完成`；HTTP 断连后原执行继续，完成的 turn 重试直接回放。
 
-配置应用：`保存 / 批准 → 同一应用队列 → 已知聊天设置局部替换 loop，其他配置安全排空后重建`；局部更新保留正在执行的聊天与学习任务。
+配置应用：`保存 / 批准 → 同一应用队列 → 已知聊天设置局部替换 loop，默认调用链仅调整 registry 顺序，其他配置安全排空后重建`；局部更新保留正在执行的聊天与学习任务。
 
 后台配置：`完整配置应用成功 → 队列结束 → 父进程确认旧子进程退出 → worker / 推荐 / 图片服务读取新配置`；保留当前数据目录与持久化候选，修正模型后补池可继续。
+
+候选完整评估：`命名画像 + 负反馈 + 候选文本 → LLM（默认）或纯 Jev → 元数据验证 / 独立缓存 → 入池`。
+Jev 连接：`Web / 插件 / 移动共用表单 → 配置 API 校验 → 本机 URL/Token/固定模型/容量 → 后台重建`；Token 不回显。
+Jev 草稿测试：`三端测试按钮 → 合成画像与 1 条内容 → 完整 8 题真实请求 → 安全结果`；提示费用、不保存。矛盾时效证据单独停放，同上下文不重复收费。
+Jev 时效：`联合结论 + 独立原句 → 硬状态绑定证据/时间 → 原子校验`；native 无效答案同样停放，修正端点可恢复，单换 Token 不重评。
+Jev 文本路径：`完整描述（不先截 400 字）→ 预算内整段摘录 → 原文身份缓存`；原件不改写。
+Jev 评估与导演共用 `本地完整画像 → 按候选/意图加载事实 → 所选模型预算检查`；不自动换模型，
+不改写源画像，不裁掉明确避雷，未知模型容量需在设置页或 TOML 显式登记。
+画像分配先保必需基线，再加载可容纳的完整正向兴趣事实，避免只剩避雷信息。
+评估输入经本地原文片段与覆盖标记整理后，以完整候选题组合批并行；超限优先减少批量，
+单条仍装不下则 `InputBudgetFailure → 租约 CAS 停放 failed_eval（不重试）→ 上下文变化后有界重入队`。
+公共规则和所有候选都已选中且相同的整画像字段只发送一次；按双预算合批并回填前批空位，
+默认候选搜索上限 64。自动字节预算取消固定 25% 预留，旧手动限制仍保留，不等同精确 token 满载，不增加业务评估轮次。
+Jev 是可在三端设置切换的文本实验模式，主题/IP 用受控词表，未知如实保留；双层输入预算下分批，
+失败不偷偷调用 LLM。连接区可保存本机 Token，也兼容原有 env；中文模型质量待实测，见[评估说明](docs/modules/discovery.md)。
+
+可选推荐导演（默认关闭）：`推荐画像 + 最近三屏真实经历 + shortlist → 共享屏目标 / 证据 / 软角色 → Jev 逐对 / Agent+Jev 修补 / 纯 Agent 预排（Agent 校验至多纠正一次）→ 最新准入复核 → 整屏原子提交 → 实际可见 ACK → 后续草稿`。Agent 先判断有用供给，用请求内短引用编排并还原校验；多屏覆盖／合法短尾与提前结束说明仍严格验证，一次纠正共用原规划截止时间，修补不机械补满语义短尾。三模式按同一策略组织有主次、互补且可独立选择的内容，不强制探索比例。Jev 是独立 decision provider，也可单独用于发现阶段语义过滤；不加入聊天 LLM fallback。三种 Web 表面与 CLI 保留屏身份和精确反馈，配置通过 TOML。未声称真实模型质量已验证，见[决策模块](docs/modules/decision.md)与[导演运行时](docs/modules/director.md)。
 
 完整的架构总览 ASCII 图（runtime 并发闸门、Agent 编排层、多源适配、发现 / 推荐 / 保存链路）已拆分到单独文档，避免 README 过长：
 

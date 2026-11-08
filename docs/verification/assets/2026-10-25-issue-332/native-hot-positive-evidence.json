@@ -1,0 +1,1425 @@
+{
+  "scope": "capability-increment: native Douyin hot-word collection and positive recommendations",
+  "recorded_at_utc": "2026-10-25T13:26:55.999192+00:00",
+  "provenance": {
+    "branch": "fix/issue-332-shared-presence",
+    "initial_api_worker_source_commit": "3bb9a5a01268924b2656ebfb0967498afe816839",
+    "latest_worker_source_commit": "41622bf3b12104ae318b5c68b64c0d0a983c4f77",
+    "backend_port": 52445,
+    "isolated_config_data_and_browser": true,
+    "original_service_interrupted": false,
+    "extension_id": "oegfehdndnlolhgmbbiibkilonegcndi",
+    "extension_build": {
+      "source_base": "41622bf3b12104ae318b5c68b64c0d0a983c4f77",
+      "version": "0.3.231",
+      "backend_for_test": "http://127.0.0.1:52445",
+      "store_release": false,
+      "changed_source_sha256": "5f6408e9921fed830b260f9f27a49df3c23cc5f75325187356c97a50af12ce8a",
+      "built_content_sha256": "e214aff9c09d06fad1008378dd982570f5e8cef6f5d62475d99c25ff4dc3f91e",
+      "hot_collection": "native hot-board word search; wordless seed-related compatibility",
+      "archive": "/Users/white/workspace/OpenBiliClaw/.worktrees/issue332-shared-presence/outputs/issue332-extension-hot-word-review.zip",
+      "archive_sha256": "05c5433aefe088c1930fdaf74f31ecae44fd4c2a50b0aa7f08fd9c92807a1ae2"
+    },
+    "direct_fallback": false,
+    "model_chain_preserved": true,
+    "admission_threshold": 0.6
+  },
+  "browser_access_after_human_verification": {
+    "human_reported_verification_complete": true,
+    "observed_at_utc": "2026-10-25T12:13:16.897709+00:00",
+    "browser_page_title": "抖音精选电脑版 - 抖音旗下优质视频平台",
+    "browser_page_path": "/jingxuan",
+    "task_marker": true,
+    "sms_verification_visible": false,
+    "backend_auth": {
+      "state": "ready",
+      "logged_in": true
+    },
+    "extension_worker": "chrome-extension://oegfehdndnlolhgmbbiibkilonegcndi/dist/background/service-worker.js"
+  },
+  "profile_preservation": {
+    "soul.json": true,
+    "preference.json": true,
+    "profile_overrides.json": true
+  },
+  "sampling_regression": {
+    "source_commit": "97e3f94957891e3464d9462476cd91ac0d366932",
+    "before_fix_public_entry_test": "FAIL: selected unseeded row before later seeded row",
+    "after_fix": {
+      "backend_scoped_passed": 58,
+      "ruff": "PASS",
+      "mypy_source_files": 363
+    },
+    "board_shape": {
+      "count": 30,
+      "with_seed": 29,
+      "first10": [
+        {
+          "rank": 1,
+          "sentence_id": "2712652",
+          "has_seed": false,
+          "has_word": true
+        },
+        {
+          "rank": 2,
+          "sentence_id": "2712021",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 3,
+          "sentence_id": "2712851",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 4,
+          "sentence_id": "2712596",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 5,
+          "sentence_id": "2712071",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 6,
+          "sentence_id": "2712183",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 7,
+          "sentence_id": "2712151",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 8,
+          "sentence_id": "2712014",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 9,
+          "sentence_id": "2712876",
+          "has_seed": true,
+          "has_word": true
+        },
+        {
+          "rank": 10,
+          "sentence_id": "2712642",
+          "has_seed": true,
+          "has_word": true
+        }
+      ]
+    },
+    "real_fetch": {
+      "ok": null,
+      "source_commit": "97e3f94957891e3464d9462476cd91ac0d366932",
+      "received": 11,
+      "normalized": 11,
+      "enqueued": 3,
+      "elapsed_seconds": 17.617,
+      "source_counts": null,
+      "source_outcomes": null,
+      "outcome": "used",
+      "thresholds": [
+        0.6
+      ],
+      "ids": [
+        "7685392688950136098",
+        "7693911846453087531",
+        "7686464801099102897",
+        "7668240770239226609",
+        "7687119395814249926",
+        "7695756939288941413",
+        "7690461472606559451",
+        "7676003754080507526",
+        "7691205436885225707",
+        "7669032239908408614",
+        "7676188999383282082"
+      ]
+    },
+    "acceptance_limit": "Completed transport returned unrelated game videos for news/sport hot words; not accepted as semantically correct hot supply."
+  },
+  "native_page_observation": {
+    "counts": {
+      "events": 33,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0
+    },
+    "native_hot_word": "台湾光复81周年",
+    "native_result_path": "/root/search/<hot-word>",
+    "native_request_path": "/aweme/v1/web/general/search/stream/",
+    "actual_result_titles_match_word": true,
+    "normal_page_closed": true
+  },
+  "native_collection_regression": {
+    "source_commit": "41622bf3b12104ae318b5c68b64c0d0a983c4f77",
+    "before_fix": "Two entry regressions selected related instead of native word search",
+    "extension_scoped": {
+      "passed": 116,
+      "failed": 0
+    },
+    "extension_full": {
+      "passed": 1835,
+      "failed": 2,
+      "total": 1837,
+      "known_unchanged_failures": [
+        "pending confirmation badge wiring",
+        "settings tabs 6-column inventory"
+      ]
+    },
+    "chrome_build": "PASS",
+    "manifest_WAR_assets": 22,
+    "backend_scoped_passed": 58
+  },
+  "fetches": {
+    "native_hot12": {
+      "ok": true,
+      "source_commit": null,
+      "received": 10,
+      "normalized": null,
+      "enqueued": 10,
+      "elapsed_seconds": 81.074,
+      "source_counts": {
+        "dy-plugin-hot-related": 10
+      },
+      "source_outcomes": {
+        "hot": "failed"
+      },
+      "outcome": null,
+      "thresholds": [
+        0.6
+      ],
+      "ids": [
+        "7700183632895561014",
+        "7700442454318891978",
+        "7700413525495123254",
+        "7700438326674722074",
+        "7700226394839715081",
+        "7700210360711744808",
+        "7700159166832276047",
+        "7564749677233442099",
+        "7700107217294396698",
+        "7699782747526647055"
+      ]
+    },
+    "native_search6": {
+      "ok": true,
+      "source_commit": null,
+      "received": 6,
+      "normalized": null,
+      "enqueued": 6,
+      "elapsed_seconds": 8.551,
+      "source_counts": {
+        "dy-plugin-search": 6
+      },
+      "source_outcomes": {
+        "search": "used"
+      },
+      "outcome": null,
+      "thresholds": [
+        0.6
+      ],
+      "ids": [
+        "7602562888422722825",
+        "7627498652400104185",
+        "7439315581725101364",
+        "7650878192899727353",
+        "7667205291175464233",
+        "7670388784588897635"
+      ]
+    },
+    "native_hot10": {
+      "ok": null,
+      "source_commit": "41622bf3b12104ae318b5c68b64c0d0a983c4f77",
+      "received": 8,
+      "normalized": 8,
+      "enqueued": 8,
+      "elapsed_seconds": 96.372,
+      "source_counts": null,
+      "source_outcomes": null,
+      "outcome": "failed",
+      "thresholds": [
+        0.6
+      ],
+      "ids": [
+        "7700544163892284691",
+        "7700507436171463963",
+        "7700516174858172779",
+        "7685054980239215887",
+        "7685055317515848994",
+        "7699481666510802216",
+        "7699482638747424950",
+        "7685328497346137379"
+      ]
+    }
+  },
+  "ordinary_sink_baselines": {
+    "before_normal_page_probe": {
+      "at_utc": "2026-10-25T12:28:54.188125+00:00",
+      "counts": {
+        "events": 0,
+        "seen_items": 0,
+        "profile_update_ledger": 0,
+        "saved_memberships": 0
+      },
+      "note": "Independent normal-page UI diagnosis; any telemetry is separated from formal marked discovery tasks."
+    },
+    "after_normal_page_probe": {
+      "counts": {
+        "events": 33,
+        "seen_items": 0,
+        "profile_update_ledger": 0,
+        "saved_memberships": 0
+      },
+      "native_hot_word": "台湾光复81周年",
+      "native_result_path": "/root/search/<hot-word>",
+      "native_request_path": "/aweme/v1/web/general/search/stream/",
+      "actual_result_titles_match_word": true,
+      "normal_page_closed": true
+    },
+    "before_formal_native_tasks": {
+      "at_utc": "2026-10-25T12:42:38.458519+00:00",
+      "counts": {
+        "events": 33,
+        "seen_items": 0,
+        "profile_update_ledger": 0,
+        "saved_memberships": 0
+      }
+    },
+    "after_all_formal_tasks_and_audio_probe": {
+      "events": 33,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0
+    }
+  },
+  "evaluation": {
+    "total_candidates": 37,
+    "evaluated": 37,
+    "admitted": 9,
+    "rejected_low_score": 28,
+    "admitted_native_hot": 6,
+    "admitted_search": 3,
+    "threshold_unchanged": 0.6,
+    "all_candidates_terminal": true,
+    "batches": [
+      {
+        "name": "003-evaluate-hot10-result.json",
+        "result": {
+          "evaluated": 10,
+          "cached": 0,
+          "rejected": 10
+        },
+        "elapsed_seconds": 505.164
+      },
+      {
+        "name": "007-evaluate-native-result.json",
+        "result": {
+          "evaluated": 19,
+          "cached": 9,
+          "rejected": 10
+        },
+        "elapsed_seconds": 310.021
+      },
+      {
+        "name": "009-evaluate-native-remainder-result.json",
+        "result": {
+          "evaluated": 8,
+          "cached": 0,
+          "rejected": 8
+        },
+        "elapsed_seconds": 1077.755
+      }
+    ],
+    "real_successful_llm_calls": [
+      {
+        "timestamp": "2026-10-25 12:23:23",
+        "provider": "openai_compatible",
+        "model": "sensenova-6.8-flash-lite",
+        "caller": "discovery.evaluate_batch",
+        "success": 1
+      },
+      {
+        "timestamp": "2026-10-25 12:50:03",
+        "provider": "openai_compatible",
+        "model": "deepseek-v4-flash",
+        "caller": "discovery.evaluate_batch",
+        "success": 1
+      },
+      {
+        "timestamp": "2026-10-25 13:08:37",
+        "provider": "openai_compatible",
+        "model": "sensenova-6.8-flash-lite",
+        "caller": "discovery.evaluate_batch",
+        "success": 1
+      },
+      {
+        "timestamp": "2026-10-25 13:10:16",
+        "provider": "openai_compatible",
+        "model": "sensenova-6.8-flash-lite",
+        "caller": "discovery.evaluate_batch",
+        "success": 1
+      },
+      {
+        "timestamp": "2026-10-25 13:10:33",
+        "provider": "openai_compatible",
+        "model": "deepseek-v4-flash",
+        "caller": "recommendation.write_expression",
+        "success": 1
+      }
+    ]
+  },
+  "gates": {
+    "human_verification_cleared": "PASS",
+    "installed_new_content_hash": "PASS",
+    "native_word_search_executed": "PASS",
+    "full_hot12_task": "FAIL: second hot word api_timeout; valid partial candidates preserved",
+    "full_hot10_task": "FAIL: later hot word api_timeout; valid partial candidates preserved",
+    "hot_positive_card": "PASS: six native-hot cards match actual source callbacks, original scores and HTTP/DOM",
+    "search_positive_card": "PASS: two search cards rendered, three admitted/persisted",
+    "real_model_expression_and_persistence": "PASS: nine actual expressions and recommendation rows",
+    "desktop_rendering": "PASS: eight matching IDs/titles/expressions/URLs/covers and five enabled feedback buttons per card",
+    "task_audio_policy": "PASS in Chrome for Testing; independent static regression covers recovery; no speaker output measurement"
+  },
+  "completion": "incremental only: requested positive hot/search cards and task mute policy verified; full hot multiword tasks still have retained api_timeout failures; no cross-platform/global acceptance",
+  "tasks": [
+    {
+      "id": "f13f68d6-9d29-4325-9221-66425341d58f",
+      "type": "hot",
+      "status": "failed",
+      "created_at": "2026-10-25 10:58:51",
+      "claimed_at": "2026-10-25 10:58:51",
+      "completed_at": "2026-10-25 10:58:53",
+      "target_limit": 12,
+      "hot_seed_count": 2,
+      "video_ids": [],
+      "scope_counts": null,
+      "error": "hot_ui_not_triggered",
+      "debug": {
+        "fetch_tap_install_status": "unknown",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "Failed to execute 'json' on 'Response': Unexpected end of JSON input",
+        "dom_items_harvested": 0,
+        "ui_triggered": false,
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 0,
+        "early_buffer_items": 0,
+        "seed_aweme_id": "7553058116880930083",
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "c342139d-f665-442c-9155-1dbc1cb9308a",
+      "type": "hot",
+      "status": "failed",
+      "created_at": "2026-10-25 12:13:17",
+      "claimed_at": "2026-10-25 12:13:17",
+      "completed_at": "2026-10-25 12:13:32",
+      "target_limit": 12,
+      "hot_seed_count": 2,
+      "video_ids": [
+        "7685392688950136098",
+        "7668240770239226609",
+        "7693911846453087531",
+        "7686464801099102897",
+        "7687119395814249926",
+        "7676188999383282082",
+        "7674169190001020201",
+        "7690461472606559451",
+        "7695756939288941413",
+        "7670290908465634725"
+      ],
+      "scope_counts": {
+        "dy_hot": 10
+      },
+      "error": "hot_ui_not_triggered",
+      "debug": {
+        "hot_status": "ok",
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "",
+        "dom_items_harvested": 0,
+        "ui_triggered": false,
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 0,
+        "early_buffer_items": 0,
+        "seed_aweme_id": "",
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "89026829-38c2-4145-ac04-f77c11b94ff3",
+      "type": "hot",
+      "status": "completed",
+      "created_at": "2026-10-25 12:19:50",
+      "claimed_at": "2026-10-25 12:19:50",
+      "completed_at": "2026-10-25 12:20:06",
+      "target_limit": 12,
+      "hot_seed_count": 2,
+      "video_ids": [
+        "7685392688950136098",
+        "7693911846453087531",
+        "7686464801099102897",
+        "7668240770239226609",
+        "7687119395814249926",
+        "7695756939288941413",
+        "7690461472606559451",
+        "7676003754080507526",
+        "7691205436885225707",
+        "7669032239908408614",
+        "7676188999383282082"
+      ],
+      "scope_counts": {
+        "dy_hot": 20
+      },
+      "error": null,
+      "debug": {
+        "hot_status": "ok",
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 1,
+        "api_items_harvested": 10,
+        "api_error": "",
+        "dom_items_harvested": 0,
+        "ui_triggered": false,
+        "passive_items_harvested": 30,
+        "passive_responses_observed": 3,
+        "early_buffer_items": 0,
+        "seed_aweme_id": "7700424336226112794",
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "18d04578-e921-4380-96d0-fa32ee86924e",
+      "type": "hot",
+      "status": "failed",
+      "created_at": "2026-10-25 12:42:39",
+      "claimed_at": "2026-10-25 12:42:39",
+      "completed_at": "2026-10-25 12:43:59",
+      "target_limit": 12,
+      "hot_seed_count": 2,
+      "video_ids": [
+        "7700183632895561014",
+        "7700442454318891978",
+        "7700413525495123254",
+        "7700438326674722074",
+        "7700226394839715081",
+        "7700210360711744808",
+        "7700159166832276047",
+        "7564749677233442099",
+        "7700107217294396698",
+        "7699782747526647055"
+      ],
+      "scope_counts": {
+        "dy_hot": 10
+      },
+      "error": "api_timeout",
+      "debug": {
+        "hot_collection_method": "hot_word_search",
+        "hot_status": "ok",
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "timeout",
+        "dom_items_harvested": 0,
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "search_submit_method": "button",
+        "navigation_resumed": false,
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 4,
+        "early_buffer_items": 0,
+        "scroll_rounds": 2,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "e648c890-0572-4e39-bea4-26c872a989d1",
+      "type": "search",
+      "status": "completed",
+      "created_at": "2026-10-25 12:44:00",
+      "claimed_at": "2026-10-25 12:44:00",
+      "completed_at": "2026-10-25 12:44:08",
+      "target_limit": 6,
+      "hot_seed_count": 0,
+      "video_ids": [
+        "7602562888422722825",
+        "7627498652400104185",
+        "7439315581725101364",
+        "7650878192899727353",
+        "7667205291175464233",
+        "7670388784588897635"
+      ],
+      "scope_counts": {
+        "dy_search": 6
+      },
+      "error": null,
+      "debug": {
+        "keyword_status": "ok",
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "",
+        "dom_items_harvested": 0,
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "search_submit_method": "button",
+        "navigation_resumed": false,
+        "passive_items_harvested": 27,
+        "passive_responses_observed": 3,
+        "early_buffer_items": 0,
+        "scroll_rounds": 1,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "d4456bed-494a-42ad-adb5-d3cd14408cea",
+      "type": "hot",
+      "status": "failed",
+      "created_at": "2026-10-25 12:47:07",
+      "claimed_at": "2026-10-25 12:47:07",
+      "completed_at": "2026-10-25 12:48:43",
+      "target_limit": 10,
+      "hot_seed_count": 5,
+      "video_ids": [
+        "7700544163892284691",
+        "7700507436171463963",
+        "7700516174858172779",
+        "7685054980239215887",
+        "7685055317515848994",
+        "7699481666510802216",
+        "7699482638747424950",
+        "7685328497346137379"
+      ],
+      "scope_counts": {
+        "dy_hot": 8
+      },
+      "error": "api_timeout",
+      "debug": {
+        "hot_collection_method": "hot_word_search",
+        "hot_status": "ok",
+        "fetch_tap_install_status": "installed",
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "timeout",
+        "dom_items_harvested": 0,
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "search_submit_method": "button",
+        "navigation_resumed": false,
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 4,
+        "early_buffer_items": 0,
+        "scroll_rounds": 2,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    }
+  ],
+  "config_route_preservation": {
+    "llm": true,
+    "discovery": true
+  },
+  "evaluation_first_native_batch": {
+    "ok": true,
+    "result": {
+      "evaluated": 19,
+      "cached": 9,
+      "rejected": 10
+    },
+    "elapsed_seconds": 310.021
+  },
+  "first_native_admission": [
+    {
+      "content_id": "7700183632895561014",
+      "source_strategy": "dy-plugin-hot-related",
+      "relevance_score": 0.73,
+      "status": "cached"
+    },
+    {
+      "content_id": "7700442454318891978",
+      "source_strategy": "dy-plugin-hot-related",
+      "relevance_score": 0.62,
+      "status": "cached"
+    },
+    {
+      "content_id": "7700438326674722074",
+      "source_strategy": "dy-plugin-hot-related",
+      "relevance_score": 0.62,
+      "status": "cached"
+    },
+    {
+      "content_id": "7700159166832276047",
+      "source_strategy": "dy-plugin-hot-related",
+      "relevance_score": 0.85,
+      "status": "cached"
+    },
+    {
+      "content_id": "7564749677233442099",
+      "source_strategy": "dy-plugin-hot-related",
+      "relevance_score": 0.66,
+      "status": "cached"
+    },
+    {
+      "content_id": "7700107217294396698",
+      "source_strategy": "dy-plugin-hot-related",
+      "relevance_score": 0.76,
+      "status": "cached"
+    },
+    {
+      "content_id": "7602562888422722825",
+      "source_strategy": "dy-plugin-search",
+      "relevance_score": 0.85,
+      "status": "cached"
+    },
+    {
+      "content_id": "7627498652400104185",
+      "source_strategy": "dy-plugin-search",
+      "relevance_score": 0.83,
+      "status": "cached"
+    },
+    {
+      "content_id": "7670388784588897635",
+      "source_strategy": "dy-plugin-search",
+      "relevance_score": 0.68,
+      "status": "cached"
+    }
+  ],
+  "recommendations": {
+    "copied": 9,
+    "initial_serve_count": 5,
+    "copy_and_serve_elapsed_seconds": 16.532,
+    "persisted_after_normal_HTTP_topups": 9,
+    "records": [
+      {
+        "recommendation_id": 1,
+        "item_key": "douyin:7700183632895561014",
+        "expression_length": 90,
+        "source_strategy": "dy-plugin-hot-related",
+        "relevance_score": 0.73
+      },
+      {
+        "recommendation_id": 2,
+        "item_key": "douyin:7602562888422722825",
+        "expression_length": 105,
+        "source_strategy": "dy-plugin-search",
+        "relevance_score": 0.85
+      },
+      {
+        "recommendation_id": 3,
+        "item_key": "douyin:7700107217294396698",
+        "expression_length": 81,
+        "source_strategy": "dy-plugin-hot-related",
+        "relevance_score": 0.76
+      },
+      {
+        "recommendation_id": 4,
+        "item_key": "douyin:7670388784588897635",
+        "expression_length": 87,
+        "source_strategy": "dy-plugin-search",
+        "relevance_score": 0.68
+      },
+      {
+        "recommendation_id": 5,
+        "item_key": "douyin:7700159166832276047",
+        "expression_length": 88,
+        "source_strategy": "dy-plugin-hot-related",
+        "relevance_score": 0.85
+      },
+      {
+        "recommendation_id": 6,
+        "item_key": "douyin:7564749677233442099",
+        "expression_length": 89,
+        "source_strategy": "dy-plugin-hot-related",
+        "relevance_score": 0.66
+      },
+      {
+        "recommendation_id": 7,
+        "item_key": "douyin:7700442454318891978",
+        "expression_length": 83,
+        "source_strategy": "dy-plugin-hot-related",
+        "relevance_score": 0.62
+      },
+      {
+        "recommendation_id": 8,
+        "item_key": "douyin:7700438326674722074",
+        "expression_length": 80,
+        "source_strategy": "dy-plugin-hot-related",
+        "relevance_score": 0.62
+      },
+      {
+        "recommendation_id": 9,
+        "item_key": "douyin:7627498652400104185",
+        "expression_length": 89,
+        "source_strategy": "dy-plugin-search",
+        "relevance_score": 0.83
+      }
+    ],
+    "desktop_http_validation": {
+      "http": 200,
+      "httpCount": 8,
+      "domCount": 8,
+      "rows": [
+        {
+          "id": "7700438326674722074",
+          "item_key": "douyin:7700438326674722074",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-hot-related"
+        },
+        {
+          "id": "7700442454318891978",
+          "item_key": "douyin:7700442454318891978",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-hot-related"
+        },
+        {
+          "id": "7564749677233442099",
+          "item_key": "douyin:7564749677233442099",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-hot-related"
+        },
+        {
+          "id": "7700159166832276047",
+          "item_key": "douyin:7700159166832276047",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-hot-related"
+        },
+        {
+          "id": "7670388784588897635",
+          "item_key": "douyin:7670388784588897635",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-search"
+        },
+        {
+          "id": "7700107217294396698",
+          "item_key": "douyin:7700107217294396698",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-hot-related"
+        },
+        {
+          "id": "7602562888422722825",
+          "item_key": "douyin:7602562888422722825",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-search"
+        },
+        {
+          "id": "7700183632895561014",
+          "item_key": "douyin:7700183632895561014",
+          "source_platform": "douyin",
+          "idMatches": true,
+          "titleMatches": true,
+          "expressionMatches": true,
+          "urlMatches": true,
+          "coverLoaded": true,
+          "feedback": [
+            {
+              "action": "like",
+              "enabled": true
+            },
+            {
+              "action": "dislike",
+              "enabled": true
+            },
+            {
+              "action": "dismiss",
+              "enabled": true
+            },
+            {
+              "action": "watch-later",
+              "enabled": true
+            },
+            {
+              "action": "favorite",
+              "enabled": true
+            }
+          ],
+          "source_strategy": "dy-plugin-hot-related"
+        }
+      ],
+      "at": "2026-10-25T13:21:01.221Z"
+    },
+    "rendered_native_hot": 6,
+    "rendered_search": 2,
+    "feedback_buttons_clicked": false,
+    "screenshot_local_only": "outputs/issue332-native-hot-search-cards-full.png",
+    "limit_note": "normal desktop HTTP window contains 8 of 9 persisted recommendations; no recommendation insertion or response interception"
+  },
+  "audio_fix": {
+    "source_commit": "86dd00b217b3ec08fba86f5a8b5a4a019c9a9748",
+    "initial_red_tests": {
+      "navigation_before_mute": true,
+      "mute_failure_continued": true,
+      "recovery_missing_mute": true,
+      "recovery_missing_close_on_mute_failure": true
+    },
+    "chrome_build": "PASS",
+    "loaded_service_worker_sha256": "2717afe522724602c4176185512cc11b5ecaf3c543159317bcfb0fb8c23e70df",
+    "reload": {
+      "http": 200,
+      "result": {
+        "ok": true,
+        "delivered": true
+      },
+      "oldWorkerClosed": true,
+      "newWorker": "chrome-extension://oegfehdndnlolhgmbbiibkilonegcndi/dist/background/service-worker.js",
+      "loaded": {
+        "id": "oegfehdndnlolhgmbbiibkilonegcndi",
+        "hash": "2717afe522724602c4176185512cc11b5ecaf3c543159317bcfb0fb8c23e70df",
+        "endpoint": {
+          "host": "127.0.0.1",
+          "port": 52445
+        }
+      },
+      "at": "2026-10-25T13:22:19.793Z"
+    },
+    "source_probe": {
+      "received": 6,
+      "outcome": "used",
+      "elapsed_seconds": 8.05,
+      "enqueued_business_candidates": false,
+      "task_id": "e74460ee-23ca-425d-98c2-f41eaa7e5f83",
+      "task_status": "completed"
+    },
+    "event_summary": {
+      "total_events": 24,
+      "upstream_events": 19,
+      "all_upstream_events_muted": true,
+      "all_upstream_events_inactive": true,
+      "unmuted_audible_upstream_events": 0,
+      "task_tab_closed": true,
+      "foreground_tab_unchanged": true
+    },
+    "events": [
+      {
+        "type": "created",
+        "id": 1016547445,
+        "scheme": "about:",
+        "host": "",
+        "hasTaskMarker": false,
+        "isBlank": true,
+        "muted": false,
+        "audible": false,
+        "active": false,
+        "at": 1792934687461
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "about:",
+        "host": "",
+        "hasTaskMarker": false,
+        "isBlank": true,
+        "muted": false,
+        "audible": false,
+        "active": false,
+        "at": 1792934687535
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "about:",
+        "host": "",
+        "hasTaskMarker": false,
+        "isBlank": true,
+        "muted": false,
+        "audible": false,
+        "active": false,
+        "at": 1792934687537
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "about:",
+        "host": "",
+        "hasTaskMarker": false,
+        "isBlank": true,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934687537
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934687762
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934687764
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934688653
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934688658
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934688664
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934689198
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934689401
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934689504
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934689508
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934689642
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934690315
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": true,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934691429
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934692325
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934692327
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934692418
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934692614
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934693901
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934693903
+      },
+      {
+        "type": "updated",
+        "id": 1016547445,
+        "scheme": "https:",
+        "host": "www.douyin.com",
+        "hasTaskMarker": false,
+        "isBlank": false,
+        "muted": true,
+        "audible": false,
+        "active": false,
+        "at": 1792934693971
+      },
+      {
+        "type": "removed",
+        "id": 1016547445,
+        "at": 1792934695439
+      }
+    ],
+    "archive": "outputs/issue332-extension-muted-review.zip",
+    "archive_sha256": "6f4f731f06477a7cbef8e61585920ba57e45163ab446d9bf822726b99ae7d023",
+    "private_probe_note": "First diagnostic attempt omitted Database.initialize and created no task; corrected harness then executed the recorded real source task. No business candidates were enqueued by this audio probe.",
+    "manual_probe_audio_note": "Earlier ordinary native-hot inspection tab did not use the task-tab helper; it is closed. We cannot identify retrospectively which page produced the reported sound."
+  },
+  "final_checks": {
+    "python_source_scoped_passed": 58,
+    "extension_full_total": 1842,
+    "extension_full_passed": 1840,
+    "extension_full_failed": 2,
+    "existing_main_failures": [
+      "all visible clients hydrate and reconnect the pending-confirmation badge",
+      "settings tabs use stable compact panels"
+    ],
+    "first_presence_change_backend_full_passed": 11969,
+    "first_backend_full_scope_note": "before subsequent port/partial/hot/audio fixes; latest Python scoped suite repeated, full backend suite not repeated for extension-only audio fix",
+    "ruff": "PASS",
+    "mypy_source_files": 363,
+    "git_diff_check": "PASS"
+  },
+  "final_preservation": {
+    "original_health": 200,
+    "test_health": 200,
+    "original_config_sha256_matches": true,
+    "original_profile_files_equal": {
+      "soul.json": true,
+      "preference.json": true,
+      "profile_overrides.json": true
+    },
+    "store_service_worker_unchanged": true,
+    "store_manifest_unchanged": true,
+    "all_test_tasks_terminal": true,
+    "test_tasks_by_status": [
+      [
+        "completed",
+        3
+      ],
+      [
+        "failed",
+        4
+      ]
+    ]
+  },
+  "cleanup": {
+    "completed_at_utc": "2026-10-25T13:31:54.993817+00:00",
+    "owned_api_and_worker_stopped": true,
+    "owned_browser_closed": true,
+    "private_config_credentials_profile_database_and_raw_logs_deleted": true,
+    "raw_playwright_traces_deleted": true,
+    "temporary_dependency_symlink_removed": true,
+    "original_service_health_after_cleanup": 200,
+    "original_config_unchanged": true,
+    "preserved": "sanitized evidence, source commits, public review builds and local card screenshots"
+  }
+}

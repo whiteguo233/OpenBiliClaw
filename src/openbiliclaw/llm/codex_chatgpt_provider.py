@@ -350,6 +350,7 @@ class CodexChatGPTProvider(LLMProvider):
         """Build a Codex Responses API body (streaming SSE contract)."""
         instructions = ""
         input_items: list[dict[str, Any]] = []
+        input_mentions_json = False
         for msg in messages:
             role = str(msg.get("role") or "").strip()
             content = str(msg.get("content") or "")
@@ -358,11 +359,29 @@ class CodexChatGPTProvider(LLMProvider):
                 continue
             if role not in {"user", "assistant"}:
                 continue
+            if "json" in content.lower():
+                input_mentions_json = True
             content_type = "output_text" if role == "assistant" else "input_text"
             input_items.append(
                 {
                     "role": role,
                     "content": [{"type": content_type, "text": content}],
+                }
+            )
+
+        # The Codex backend validates ``text.format=json_object`` against the
+        # ``input`` items only and ignores ``instructions`` (the same contract
+        # the Platform Responses flavor compensates for, #265). Structured
+        # callers keep their "output strict JSON" rule in the system message,
+        # so a prompt whose user payload has no ``json`` token aborts the
+        # already-200 SSE stream with "Response input messages must contain the
+        # word 'json' ..." (#334). Append the marker at the tail so the cached
+        # prefix (instructions + caller-owned messages) stays byte-identical.
+        if json_mode and not input_mentions_json:
+            input_items.append(
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Return valid json."}],
                 }
             )
 

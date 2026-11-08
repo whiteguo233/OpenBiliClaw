@@ -8,12 +8,22 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def test_installers_link_optional_director_without_enabling_or_probing_it() -> None:
+    for path in ("scripts/install.sh", "scripts/install.ps1"):
+        source = _read(path)
+        assert "Optional recommendation director / Jev filter (disabled by default):" in source
+        assert "Configure TOML only after opting in; fully restart the backend." in source
+        assert "Jev routes need the configured key environment variable in the backend." in source
+        assert "config.md#director" in source
+    assert "TOML-only" in _read("docs/agent-install.md")
+
+
 def test_shell_installers_recommend_same_default_llm_provider() -> None:
     install_sh = _read("scripts/install.sh")
     install_ps1 = _read("scripts/install.ps1")
     config_example = _read("config.example.toml")
 
-    expected_default = "Choose your LLM chat provider (default: deepseek):"
+    expected_default = "Open the setup wizard for the recommended free Qwen + BGE-M3 option."
     expected_supported = (
         "Supported: deepseek | openai | gemini | claude | openrouter | requesty | "
         "api_route | cheaperinference | openai_compatible"
@@ -105,7 +115,10 @@ def test_docker_docs_promote_human_one_line_installer_contract() -> None:
 
     assert "MODE=docker curl -fsSL .../install.sh | bash" in install_sh
     assert "MODE=docker curl -fsSL https://raw.githubusercontent.com" in docker_doc
-    assert "human Docker one-line installer asks the same LLM provider first" in docker_doc
+    assert (
+        "human Docker one-line installer asks language first, then the same LLM provider"
+        in docker_doc
+    )
     assert "http://ollama:11434/v1" in docker_doc
     assert "127.0.0.1:8420/api/bilibili/cookie" in docker_doc
     assert "init` 是 v0.3.20+ 的交互式向导" not in docker_doc
@@ -139,7 +152,7 @@ def test_human_installers_run_full_terminal_wizard_before_init() -> None:
     assert "--interactive-confirm" in install_sh
     assert "--interactive-confirm" in install_ps1
     assert "human_install_choices_set" in bootstrap
-    assert "human one-line installer asks LLM provider first" in agent_doc
+    assert "human one-line installer asks language first, then LLM provider" in agent_doc
     assert "openai_compatible" in bootstrap
     assert "GetPassWarning" in bootstrap
 

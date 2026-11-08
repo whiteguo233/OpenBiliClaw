@@ -25,6 +25,38 @@ def _load_build_module():
 build_module = _load_build_module()
 
 
+@pytest.mark.parametrize("library", ["libssl.3.dylib", "libcrypto.3.dylib"])
+def test_macos_packaging_rejects_dynamic_crypto_dependency(monkeypatch, library: str) -> None:
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        build_module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: f"_rust.abi3.so:\n\t/usr/local/opt/openssl@3/lib/{library}\n",
+    )
+    with pytest.raises(RuntimeError, match="OPENSSL_STATIC=1"):
+        build_module.validate_macos_crypto_linkage()
+
+
+def test_macos_packaging_accepts_static_crypto_binding(monkeypatch) -> None:
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        build_module.subprocess,
+        "check_output",
+        lambda *args, **kwargs: "_rust.abi3.so:\n\t/usr/lib/libSystem.B.dylib\n",
+    )
+    build_module.validate_macos_crypto_linkage()
+
+
+def test_non_macos_packaging_does_not_require_otool(monkeypatch) -> None:
+    monkeypatch.setattr(build_module.platform, "system", lambda: "Windows")
+
+    def unexpected_command(*args, **kwargs):
+        pytest.fail("non-macOS packaging must not run otool")
+
+    monkeypatch.setattr(build_module.subprocess, "check_output", unexpected_command)
+    build_module.validate_macos_crypto_linkage()
+
+
 def test_make_archive_name_includes_platform_and_version() -> None:
     assert build_module.make_archive_name("v0.1.1", "macos") == "OpenBiliClaw-macos-v0.1.1.zip"
 
@@ -604,6 +636,32 @@ def test_developer_id_signing_covers_nested_code_but_not_symlinks_or_data(tmp_pa
     assert all("--deep" not in cmd for cmd in calls if "--sign" in cmd)
     assert all("--timestamp" in cmd and "runtime" in cmd for cmd in calls if "--sign" in cmd)
     assert "--verify" in calls[-1]
+
+
+@pytest.mark.parametrize("identity", ["-", "Developer ID Application: Test (TEAM)"])
+def test_app_signing_preserves_independently_signed_runtime(tmp_path, monkeypatch, identity):
+    from openbiliclaw.runtime import sponsored_bundle
+
+    app = tmp_path / "OpenBiliClaw.app"
+    directory = app / "Contents/Resources/sponsored"
+    directory.mkdir(parents=True)
+    binary = directory / "obc-sponsored-runtime"
+    binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"signed executable")
+    before = binary.read_bytes()
+    verified = []
+    calls = []
+    monkeypatch.setattr(sponsored_bundle, "verify_bundle", lambda p: verified.append(p))
+    monkeypatch.setattr(build_module.shutil, "which", lambda _name: "/usr/bin/codesign")
+    monkeypatch.setattr(build_module.subprocess, "check_call", lambda cmd: calls.append(cmd))
+    if identity == "-":
+        build_module.repair_macos_ad_hoc_signature(app)
+    else:
+        build_module.sign_macos_app(app, identity)
+    assert verified == [directory, directory]
+    assert binary.read_bytes() == before
+    signed = [cmd for cmd in calls if "--sign" in cmd]
+    assert [Path(cmd[-1]) for cmd in signed] == [app]
+    assert all("--deep" not in cmd for cmd in signed)
 
 
 @pytest.mark.parametrize("status", ["Accepted", "Invalid", "Rejected"])

@@ -66,8 +66,9 @@ Supported commands:
 - `capabilities` — negotiate `agent-bridge/v2` and the complete capability list before caching tools
 - `sync-account`
 - `get-profile`
-- `recommend --limit 5 [--source-platform <platform>] [--exclude-item-id <id>] [--realtime]`
+- `recommend --limit 5 [--source-platform <platform>] [--exclude-item-id <id>] [--request-id <stable-id>] [--stream-ref <stream>] [--realtime]`
 - `reshuffle` / `append` — replace or append precomputed recommendation pages
+- `restore` / `present` — restore a Director screen, then acknowledge only cards actually shown by the host
 - `get-delight` / `respond-delight` — view, like, dislike, dismiss or chat about a surprise
 - `activity-feed` / `platform-availability`
 - `next-probe` — get the next speculative-interest hypothesis to ask the user about
@@ -83,6 +84,12 @@ Supported commands:
 - `listen` — long-running WebSocket stream for real-time push events (see below)
 
 The complete source of truth is `openbiliclaw_get_capabilities` / `emit-skill-descriptors`; do not hard-code an older subset.
+
+### Director screen protocol
+
+When Director mode is enabled, create one stable request ID for each `recommend` / `append` / `reshuffle` action and reuse it with the same parameters on retries. Use a stable stream for one reading session. `append` advances the screen; `reshuffle` retains its current direction. Use `restore` to recover without generating or consuming another screen. Mode configuration is TOML-based; restart the complete backend after changes.
+
+Preserve the returned `batch_ref`, `item_key`, and exact `recommendation_id`. Tool delivery alone is not exposure. After the host confirms which cards it actually displayed, call `present --batch-ref <batch> --ack-id <stable-ack> --item-key <shown-key>` (repeat `--item-key` for the displayed subset). Retry with the same ACK identity. If the host cannot confirm visibility, leave presentation unacknowledged; explicit user click/feedback provides its own evidence. Associate feedback with the exact recommendation and optional `--batch-ref`, never the newest row for the same content.
 
 ## Proactive Push (WebSocket)
 

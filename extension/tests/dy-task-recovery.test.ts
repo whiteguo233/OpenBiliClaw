@@ -158,6 +158,43 @@ test("a fresh worker restores the persisted search task and reports a late resul
   }
 });
 
+test("recovery re-mutes the recorded owned task tab", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    state.sessionStorage[DY_TASK_STATE_SESSION_KEY] = persistedSearchRecord();
+    state.tabById.set(42, { id: 42, url: "https://www.douyin.com/search/test" });
+    resetDyTaskStateForTest();
+
+    await ensureDyTaskRecovery();
+
+    assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }]);
+  } finally {
+    resetDyTaskStateForTest();
+    state.restore();
+  }
+});
+
+test("recovery closes its task tab when muting is rejected", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    state.sessionStorage[DY_TASK_STATE_SESSION_KEY] = persistedSearchRecord();
+    state.tabById.set(42, { id: 42, url: "https://www.douyin.com/search/test" });
+    globalThis.chrome.tabs.update = async () => { throw new Error("mute failed"); };
+    resetDyTaskStateForTest();
+
+    await ensureDyTaskRecovery();
+    await settleSessionWrites();
+
+    assert.deepEqual(state.removedTabs, [42]);
+    assert.equal(taskResultPosts(state)[0]?.error, "task_tab_mute_failed");
+  } finally {
+    resetDyTaskStateForTest();
+    state.restore();
+  }
+});
+
 test("recovery settles an expired persisted task as task_timeout and closes its tab", async () => {
   const state = installChromeMock();
   installAlarmsMock();

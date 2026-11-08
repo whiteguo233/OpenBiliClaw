@@ -1,0 +1,52 @@
+name: Sponsored relay deployment smoke
+on:
+  pull_request:
+    paths:
+      - "deploy/sponsored-relay/**"
+      - "src/openbiliclaw/sponsored_relay.py"
+      - "src/openbiliclaw/llm/relay_auth.py"
+      - "src/openbiliclaw/llm/sponsored_relay_client.py"
+      - ".github/workflows/sponsored-relay-smoke.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client:
+    name: Relay identity and transport (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Verify device identity, proof, quota and IPC transport
+        run: python -m pytest -q tests/test_sponsored_relay.py tests/test_metadata_repair.py
+  deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the server image without a provider credential
+        run: docker build -f deploy/sponsored-relay/Dockerfile -t obc-relay-test .
+      - name: Verify imports and absence of a key-bearing SDK
+        run: |
+          docker run --rm --entrypoint python obc-relay-test -c '
+          from pathlib import Path
+          from openbiliclaw.sponsored_relay import create_relay
+          assert not any(p.name in {"obc-sponsored-runtime", "obc-sponsored-runtime.exe"} for p in Path("/app").rglob("*"))
+          print("relay import and credential-free image: PASS")'
+      - name: Validate Compose and Caddy configuration
+        env:
+          OBC_RELAY_DOMAIN: relay.example
+          OBC_RELAY_SDK_DIR: /tmp/verified-runtime
+        run: |
+          docker compose -f deploy/sponsored-relay/compose.yaml config --quiet
+          docker run --rm -e OBC_RELAY_DOMAIN=relay.example \
+            -v "$PWD/deploy/sponsored-relay/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile

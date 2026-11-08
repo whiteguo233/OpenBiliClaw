@@ -24,6 +24,11 @@ guided init: signals → preferences → full profile commit → discover → ev
              Instagram: read-only liked/saved/following → init-owned topic/creator → small-batch eval/copy
                                                               └→ optional probes after terminal state
 
+optional full Jev evaluation: Web/popup/mobile connection → pinned model/dual limits → on-demand profile + whole-source excerpts
+                                                                                  → complete question groups → validation → admission
+optional Director (off by default): profile + latest 3 experienced screens → Agent horizon / recurrent Jev pairs / Agent+Jev repairs
+                                                                        → atomic screen commit → actual-visible ACK/feedback → future drafts
+
 Agent hosts (OpenClaw / Hermes / WorkBuddy)
         → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
         → integrations.agent alias / integrations.openclaw compatibility adapter
@@ -184,3 +189,13 @@ Formal producer / inspiration → TikTok router → shared pacing / durable 429 
 ```
 
 An optional login cookie enables search attempts. Passport session verification and actual search availability are verified separately; account history and profile initialization are excluded.
+
+
+## Optional sponsored SDK (default off, unreleased)
+
+```text
+LLMService / Registry / evaluation / EmbeddingService -> shared fixed-operation SDK IPC
+ -> private Runtime -> SiliconFlow chat + embeddings
+```
+
+Covers text, JSON, tool interfaces via the existing prompt simulation, buffered stream interfaces, vision, and text/image embeddings. Signed policy and compiled rules constrain models, budgets and destinations. Core retains business prompts and tool execution. Jev remains an independent decision provider. See [coverage and limits](plans/2026-10-27-sponsored-all-tasks.md).

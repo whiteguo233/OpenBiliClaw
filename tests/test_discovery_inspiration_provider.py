@@ -1877,3 +1877,40 @@ async def test_mcporter_subprocess_env_follows_network_policy(
     env = received["env"]
     assert isinstance(env, dict)
     assert env.get("HTTPS_PROXY") == _GUARD_PROXY
+
+
+async def test_bing_rss_follows_regional_redirect() -> None:
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host == "www.bing.com":
+            return httpx.Response(
+                302,
+                headers={"location": str(request.url).replace("www.bing.com", "cn.bing.com")},
+            )
+        assert request.url.params["format"] == "rss"
+        return httpx.Response(
+            200,
+            content=(
+                b'<?xml version="1.0" encoding="utf-8"?>'
+                b'<rss version="2.0"><channel><title>Bing: test query</title>'
+                b"<item><title>Regional result</title>"
+                b"<link>https://example.test/regional</link>"
+                b"<description>regional snippet</description></item>"
+                b"</channel></rss>"
+            ),
+        )
+
+    provider = BingRssInspirationProvider(transport=httpx.MockTransport(handler))
+
+    items = await provider.search("test query", limit=2)
+
+    assert hosts == ["www.bing.com", "cn.bing.com"]
+    assert items == [
+        ExaPreviewItem(
+            title="Regional result",
+            url="https://example.test/regional",
+            highlights=("regional snippet",),
+        )
+    ]

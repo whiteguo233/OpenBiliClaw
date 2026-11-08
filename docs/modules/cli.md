@@ -1,5 +1,9 @@
 # CLI 命令参考
 
+## 手机访问与有效监听参数（2026-10-26）
+
+`start`、`serve-api`、安装脚本与内部 `_run_api_server()` 默认均为 `0.0.0.0`；显式配置 / 启动覆盖继续有效。实际 host / port 提供给 `GET /api/qr-info`，因此非默认端口也能生成手机链接。没有新 CLI 命令或配置字段，扫码入口位于桌面 Web / 插件「手机版」，参见[连接说明](../mobile-connection.md)。
+
 > 所有已实现的 `openbiliclaw` CLI 命令。
 >
 > 当前 CLI 已统一使用 Rich 输出：
@@ -18,6 +22,44 @@ CLI `chat` 仍使用 legacy 单轮对话；网页搜索、链接阅读与聊天�
 ```bash
 openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 ```
+
+## Jev 本机开发验证脚本
+
+`config-show` 还显示 Jev 原生 API URL 和本机是否保存 Token，但不回显 Token，不读取
+环境变量秘密或联网探测。完整连接配置可在 Web/插件/移动设置页填写；直接编辑 TOML
+仍需重启，页面/API 保存走既有后台应用流程。开发 fake runner 不读取生产连接配置。
+
+在包含脚本的源码 worktree 根目录运行：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake --model jev-1.14.0
+```
+
+`--fake` 与 `--live` 互斥，不读取真实 key，不用生产配置/数据库；自动启动临时回环
+HTTP 服务，以合成画像/三条候选跑标准和较小预算两个隔离场景，结束即关闭服务。
+报告的 `passed` 仅表示协议/完整评估/入池通过，`backend=local_fake` 和
+`usage_is_synthetic=true` 明确模型答案及 token 用量为假数据。模型 ID 由 `--model`
+显式选择，不自动切换。省略两种模式仍为无 HTTP 的 preview；真实服务运行仍需
+`--live --confirm-free-credits` 与本机 `TYPESAFE_API_KEY`。
+也可显式读取新设置页保存的连接（不合并其它 TOML/环境配置覆盖；只有选定凭据环境变量会按 factory 规则读取）：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --config /absolute/path/config.toml
+# 先自行确认账户已有可用促销额度；该命令会向所配置的服务发送合成测试数据。
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-credits --config /absolute/path/config.toml
+```
+
+`--config` 沿用保存的原生 URL、Token（优先于 env）、固定模型、该型号双容量及评估打包参数。
+首条命令只做 preview，不创建 HTTP client 或读取 Token 环境值；未知模型必须登记容量。
+如果同时传 `--model`，必须与配置完全相同，否则零请求退出；不会更改文件、自动换模型或启用被禁用的连接。
+`--fake` 禁止与 `--config` 同用，避免误用真实凭据。配置不存在/不合法、无凭据、无额度确认则拒绝实请求。
+真实模式通过原生产 provider factory 构造连接，但把最大尝试数收紧为 1、超时不高于配置及 15 秒；
+整次最多 6 次 POST，第一次远端失败后停止发送，无摘要/分段评估或隐式聊天 LLM fallback。
+两种预算使用独立临时 SQLite 与合成三候选 cohort；这是验收对比，不是生产中的重复评估。
+显式配置返回 `backend=configured`、`usage_is_synthetic=null`，不认证中转/自建服务的模型及用量真实性，
+更不能凭回环服务成功声称官方 Jev 已验收。脚本从不打开配置的生产数据库或输出 URL/Token/原始响应。
+这不是新增 `openbiliclaw` 产品命令或 UI provider；不改变安装流程和四端设置。
 
 ## 命令一览
 
@@ -38,7 +80,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `tailnet disable` | 持久关闭应用内 Tailnet，保留本机节点身份 | ✅ |
 | `tailnet status` | 查看开关、节点名、helper 路径、最近事件、MagicDNS / Tailnet IP | ✅ |
 | `tailnet build-helper` | 源码安装用 Go 1.26.6 构建并安装当前平台 helper | ✅ |
-| `set-password` | 设置 / 修改局域网访问密码（`--disable` 关闭门禁 / `--logout-all` / `--rotate-secret`） | ✅ |
+| `set-password` | 设置 / 修改局域网访问密码（`--disable` 恢复仅可信本机访问 / `--logout-all` / `--rotate-secret`） | ✅ |
 | `ext-key generate` | 生成并保存一个扩展设备访问密钥（明文只显示一次） | ✅ |
 | `ext-key enable` | 开启远程扩展设备认证（默认关闭） | ✅ |
 | `ext-key disable` | 关闭新会话交换但保留密钥摘要 | ✅ |
@@ -52,7 +94,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `tls-proxy enable [--san HOST_OR_IP]...` | 持久开启可选 LAN/self-managed HTTPS 入口 | ✅ |
 | `tls-proxy disable` | 持久关闭 TLS 入口（不删除证书） | ✅ |
 | `tls-proxy status` | 显示开关、端口、证书目录与 SAN | ✅ |
-| `init` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
+| `init [--language locale]` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
@@ -76,6 +118,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `keyword-inspiration-preview` | `keyword-inspiration-dry-run` 的等价别名；支持 `--persist-axes` | ✅ |
 | `keyword-inspiration-report` | 输出 inspiration / merged 关键词 cohort 对比和 replace 启用门禁判定 | ✅ |
 | `profile-consolidate` | LLM 整理合并画像里重复的喜欢 / 讨厌主题；也支持一级分类词表迁移（默认 dry-run；`--apply` 写入；`--revert <run_id>` 回滚） | ✅ |
+| `profile-repair-provenance` | ✅ | 一次性修复被错误来源污染的画像数据：① 删除 insight `evidence` 里把 MBTI 类型当证据的条目，删空则作废该假设（confidence ≤0.2、`invalidated_reason`）；② 校验觉察笔记的「同一天 / 快速切换」断言——用事件真实交互时间（`view_at`/`fav_time`/`mtime`/`interaction_time`…）重算，跨度 >36h 的**证实为假**才隔离到 `quarantined_notes`，无法验证的保留并计数；③ 把对话来源、且名字是复合运维短语（「系统配置与测试」）的兴趣移到 `archived_interests`、避雷移到 `archived_disliked_topics`，单个运维词（「软件测试」）只列为待人工确认。默认 dry-run，`--apply` 前先把三层文件备份到 `data/memory/provenance_repair_runs/<ts>/`；写入前需停掉后端 |
 | `discover` | 手动触发发现 | ✅ |
 | `probe-web <URL>` | 只读探测公开 URL，预览 Feed / Sitemap / 静态列表 recipe 草稿；不保存或启用来源 | ✅ |
 | `discover-web --recipe-id <id>` | 只读预览一个已保存的公开 Web recipe；不写候选、seen、cursor 或 memory | ✅ |
@@ -122,6 +165,15 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 
 ## 详细说明
 
+GitHub 初始化补池修复（2026-11-05）：`openbiliclaw init` 保留 GitHub 来源选择，并通过正式 producer、同步评估和文案建立首轮库存；GitHub HTTP client 随本轮关闭，不依赖后台调度开启。命令参数不变。
+
+### 初始化语言选择
+
+`openbiliclaw init` 在交互终端首先显示 `简体中文 / 繁體中文 / English`，接受编号或 locale，
+默认当前配置语言；选择写回 `[general].language` 后才检查模型与认证。
+`openbiliclaw init --language zh-Hant` 可跳过提问（接受 `zh-TW`、`en-US` 等别名），非法值退出 2。
+非交互调用未提供该参数时保留当前语言，不读 stdin。语言选择不会翻译所有历史 CLI 提示。
+
 ### `openbiliclaw language`
 
 ```bash
@@ -137,6 +189,21 @@ OPENBILICLAW_LANG=en openbiliclaw recommend   # 单次覆盖，不写配置
 ### `openbiliclaw config-show`
 
 显示当前加载的配置、已注册的 LLM 端点实例、全局调用链和最终生效的默认实例。旧格式仍显示等价结果；v2 会额外区分实例 ID 与 Provider 类型，因此两个同类型渠道不会被合并。
+
+独立 Jev 决策配置也展示开关、模型、API key 环境变量名、总超时和最大尝试次数。
+同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
+另显示候选完整评估器、Jev 纯文本 / 受控分类的实验状态及两个 UTF-8 字节护栏（非 token 数）。
+`config-show` 也显示每批候选数、题数和单题字节护栏；后两项 0 表示仅受双容量限制。
+候选数默认上限改为 64，由双预算决定实际批量；旧手动 4 等值保留。自动字节上限不再额外扣 25%，
+标准窗口显示 64,000/32,000 bytes，仍不把字节数冒称为精确 token 计数。命令及凭据边界不变。
+`config-show` 还显示精确模型的已登记 token 容量、容量来源与自动工程字节护栏；评估字段
+为 0 表示 auto，旧显式数值表示额外收紧，未知容量明确显示不可用，不自动挑选替代模型。
+`eval_scorer="jev"` 时 CLI discovery 与旧池补评共用纯 Jev 评估合同；每次请求关闭 transport，
+不跨 asyncio loop 复用连接、不隐式回退 LLM；配置失败在构建时直接报告。
+这里不读取或打印实际 key，不创建 provider 或探测。配置见[决策配置](config.md#decisionprovidersjev)。
+
+导演启用时，`recommend` 支持 `--request-id`（128 字符内，重试复用）、`--stream-ref`（默认 cli）、`--intent NEXT|STAY`、`--restore`、`--limit 1..20`、`--direction`（500 字符内）。恢复仅打印同一批次；成功打印后确认 presentation，provider 在同一事件循环内关闭。CLI feedback 投影原 ingress event，不重复写学习事件。独立 `discover*` 也注入语义过滤，按 loop 管理并发、每请求关闭 transport，不跨 `asyncio.run()` 复用连接。导演 off 保持旧路径。见[导演合同](director.md)。
+
 配置概览会直接显示「停止后台 LLM 请求」是否启用、「浏览器断开后暂停」是否启用和当前宽限秒数、「开机自启动」配置 / 系统注册状态、海外网络模式与自定义代理地址，以及默认关闭的「收藏自动同步」解析状态，方便确认实际网络路由和 `[saved_sync].auto_sync_enabled` 是否已经写入后端配置。
 推荐引擎构造同样读取 `[discovery]` 的 `keyframe_max_frames`、`keyframe_fetch_limit`、
 `danmaku_fetch_limit` 和 `danmaku_max_chars`；手动 `recommend` 的预热范围与 daemon/API 使用同一配置。
@@ -1673,7 +1740,7 @@ openbiliclaw discover-v2ex-hot --limit 10
 openbiliclaw discover-v2ex-latest --limit 10
 ```
 
-正式来源补货使用 `openbiliclaw discover --source v2ex`。该命令要求 `[sources.v2ex].enabled=true`，使用 `search / node / tab / hot / latest` 配置和共享候选 pipeline；PAT 配置后会优先使用 API 2.0，401/403 自动回落匿名。`search` 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel`）做 `site:v2ex.com/t` 召回，再用官方 Topic 详情补全；provider 不可用时回退 latest/hot，先做整句精确匹配，再对 planner 长词做最多 8 个非通用核心词的有界匹配。Search provider 是否启用不受 legacy / hybrid / inspiration 关键词生成模式影响。所有 V2EX 结果都是 Topic 文字卡，Reply 不单独进入候选池；浏览器登录态仅用于四个只读 bootstrap / incremental scope，不参与公开 discovery 鉴权。
+正式来源补货使用 `openbiliclaw discover --source v2ex`。该命令要求 `[sources.v2ex].enabled=true`，使用 `search / node / tab / hot / latest` 配置和共享候选 pipeline；PAT 配置后会优先使用 API 2.0，401/403 自动回落匿名。`search` 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel` / `keenable`）做 `site:v2ex.com/t` 召回，再用官方 Topic 详情补全；provider 不可用时回退 latest/hot，先做整句精确匹配，再对 planner 长词做最多 8 个非通用核心词的有界匹配。Search provider 是否启用不受 legacy / hybrid / inspiration 关键词生成模式影响。所有 V2EX 结果都是 Topic 文字卡，Reply 不单独进入候选池；浏览器登录态仅用于四个只读 bootstrap / incremental scope，不参与公开 discovery 鉴权。
 
 ### `openbiliclaw search-douyin`
 
@@ -1825,3 +1892,23 @@ Ego 的登录状态留在私有宿主 profile，后端仅保存自己的任务�
 TikTok full-source 初始化在后台标签页顺序读取喜欢、收藏、关注三个默认 scope（网页历史可选）；默认等待 480 秒，覆盖扩展最多 360 秒绝对 deadline 和领取/回传余量，可用 `OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 调整。明确登录的空列表与登录失败分别显示，不再把未登录描述为 empty。
 
 TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历史数据标为“默认不采集”，避免把未请求历史写成成功采集 0 条。
+
+
+## 可选全项目 Sponsored SDK（未发布）
+
+业务CLI保持不变。启用配套全任务Runtime/Policy后，文本、JSON、工具、流式、视觉、向量与评测经统一SDK。源码默认关闭，无新增Rust编译或用户Key依赖。`generate_sponsored_policy.py` 生成无Key策略，`audit_sponsored_coverage.py` 生成调用清单；正式生产禁用mock/unsigned/外部公钥覆盖。见[设计](../plans/2026-10-27-sponsored-all-tasks.md)。
+
+
+### 免费模型初始化与显示
+
+| 已实现能力 | 公共命令 |
+| --- | --- |
+| 初始化模型 | `openbiliclaw init` 的引导从两个固定 `siliconflow_free` 实例中选择8B/4B并设为默认链，保留另一实例供后续选择，独立设置云端或本地 Embedding；无需用户 Key。 |
+| 独立向量 | `openbiliclaw setup-embedding` 增加 `free`（默认推荐）选项；本地 Ollama 保留已有模型/地址，切换 Provider 清除旧凭据。 |
+| 显示与验证 | `openbiliclaw config-show` 展示正常实例链和 Embedding，加当前凭据通知；运行时使用同一 registry 校验。 |
+
+不会创建额外全局免费开关，也不会自动把自有实例添加为付费备用。组件准备与本地模型拉取沿用原流程，签名/连接失败如实报告。
+
+安装器子命令 `python -m openbiliclaw.runtime.sponsored_bundle` 的 `--archive/--stage/--if-available` 见[Runtime API](runtime.md#免费模型组件安装与更新)。
+
+免费向量配置复用已配置的 Rust 组件或 HTTPS 中继；只有两者均未配置时才准备 SDK，准备失败保留原配置。

@@ -1,5 +1,15 @@
 # 📖 OpenBiliClaw 文档导航
 
+- [动态来源主线合并验证（2026-11-08）](testing/2026-11-08-dynamic-sources-main-merge.md)：后端／App 合并兼容修复、回归与工作区保护。
+
+- [免费 Provider 合并验收（2026-11-07—08）](testing/2026-11-07-unified-providers-merge.md)：main 集成检查、Embedding 现有边界与安装包发布状态。
+
+- [固定免费 Provider 实例验收（2026-11-07）](testing/2026-11-07-fixed-providers.md)：两 LLM 固定实例、独立 BGE-M3、只读保护与原有调用链切换。
+
+Provider 统一验证：[2026-11-06 实例、Embedding 与 Rust 接入](testing/2026-11-06-unified-providers.md)。
+
+- [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md) / [早期三端复验](verification/2026-11-06-jev-all-surfaces-real-e2e.md) / [时效修复及当前三端真请求复验](verification/2026-11-07-jev-temporal-joint-evidence.md)：三端可配置并显式测试的文本、受控分类模式；当前代码默认预算下 11 次真请求通过，不隐式回退 LLM，有限样本通过不代表真实中文质量认证。
+
 > 本页面是项目文档的一站式入口。用户看第一区块就够了；第二区块起面向开发者和贡献者。
 
 ## 👤 我是用户
@@ -10,13 +20,18 @@
 - [V2EX 验证与重复采集修复验收](testing/2026-11-06-verification-recovery.md) — 真实 Ego 验证恢复、原生聊天建源与重复列表选择器；哔哩轻小说直连阻断继续单独记录
 - [多站 Discovery 阻断修复验收](testing/2026-11-06-remaining-sites-fixes.md) — 上轮 BBC、Planet Python 真实接入与原生网站验证接管记录
 
+
+- [手机扫码连接](mobile-connection.md) — Web / 插件生成局域网、Tailscale、公网二维码，原生 App 扫码导入后端；[真实环境复测](verification/2026-11-05-mobile-qr-full-e2e.md)。
+- [v0.3.234 发布记录](testing/2026-10-30-release-v0.3.234.md) — 画像时间溯源、「用工具≠口味」、Codex 订阅修复与存量画像修复命令；扩展源码无变更，商店已提审同版本 `0.3.234` 复审。
+- [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md) — 抖音发现与后台静音、首屏体验、搜索灵感修复；仓库产物和浏览器商店状态分别记录。
+- [技术合作伙伴](partners.md) — 硅基流动（SiliconFlow）为项目提供免费模型额度，「Powered by SiliconFlow」同时出现在 GitHub 项目首页、文档站与 README
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
 - [Instagram main 集成交付](testing/2026-10-06-instagram-delivery.md) — README / 首页、最新主线整合、测试与保留的真实验收限制
 - [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw) — 把 OpenBiliClaw 装进 DeepSeek Harness：DSH 界面常驻第四栏（推荐 / 内容库 / 对话 / 画像 / 设置）+ 22 个 Agent Bridge 工具，Agent 也能读推荐、答探测、闭环学习
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [Gitee v0.3.229 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229) — Gitee 最近同步版本；v0.3.231 源码与安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231)，国内安装包镜像待上传；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)保留历史版本，请核对包名版本号
+- [Gitee v0.3.234 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.234) — 源码已同步至最新主线。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
@@ -28,10 +43,12 @@
 
 ## 🛠️ 我是开发者 / 贡献者
 
+- [#332 原模型完整链路复测](verification/2026-10-26-issue-332-full-pipeline.md) — 正式 producer 真实取回并评估 42 条、准入 6 条，实际 HTTP / DOM 热榜 2 张 + 搜索 2 张；保留画像过滤，修复跨客户端热词轮换。
+- [#332 抖音多热词流式发现与失败退避验收](verification/2026-10-25-douyin-discovery-resilience.md) — 真实双词热榜 12 条、普通搜索 6 条、跨进程冷却、静音与官方资料边界；与原模型正向卡证据分开记录。
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [多语言（i18n）](modules/i18n.md) — 简体 / 繁體 / English 的 locale 契约、UI 目录、模型输出语言与新增语言清单
-- [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — 逐对编排、Agent+Jev 局部修正、纯 Agent 与独立过滤 provider；设计阶段，尚未实现
+- [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [实施进度](plans/2026-09-26-director-implementation-progress.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — [独立决策 Provider](modules/decision.md)与[三策略运行时](modules/director.md)已接线，包含 Agent 草稿 / 局部修补、独立过滤、原子屏提交与实际曝光反馈；默认关闭，质量待实测
 - [架构总览图](architecture-overview.md) / [English](architecture-overview.en.md) — 从 README 拆出的 ASCII 架构总览：runtime 并发闸门、Agent 编排层、多源适配与发现/推荐/保存链路
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
@@ -99,7 +116,9 @@
 | 聊天 Agent Loop | [modules/agent.md](modules/agent.md) | `src/openbiliclaw/agent/` | 🧪 M1–M7 后端完成（工具注册表 / 原生 FC / 多跳 loop / SSE 真流式 / v1 工具集 / skill / 会话 / 任务中心 / 审批门）；M8/M9 三端前端已交付 |
 | 桌面 Web | [modules/desktop-web.md](modules/desktop-web.md) | `src/openbiliclaw/web/desktop/` | 🧪 M8 聊一聊 agent loop 前端：流式过程折叠展示、会话侧栏、skill 切换、审批卡、任务中心 |
 | 内容发现引擎 | [modules/discovery.md](modules/discovery.md) | `src/openbiliclaw/discovery/` | ✅ v0.3.x 多源 + 统一待评估池 + 跨源跨轮 topic 配额 |
+| 独立决策 Provider | [modules/decision.md](modules/decision.md) | `src/openbiliclaw/decision/` | ✅ Jev typed 判断、独立配置、并发／熔断治理；默认关闭，供导演与独立过滤调用 |
 | 推荐引擎 | [modules/recommendation.md](modules/recommendation.md) | `src/openbiliclaw/recommendation/` | ✅ v0.3.x 双轴 fatigue + per-group 候选窗口 + reshuffle 0.6s |
+| 推荐导演 | [modules/director.md](modules/director.md) | `src/openbiliclaw/recommendation/director/` | ✅ 默认关闭：三策略、滚动草稿、局部修补、原子屏提交与实际反馈；效果待实测 |
 | 存储层 | [modules/storage.md](modules/storage.md) | `src/openbiliclaw/storage/` | ✅ SQLite schema + discovery candidates / pool readiness + 去除 API auth 的 `.obcbackup` 快照、暂存 / 取消、重启应用与回滚 |
 | 原生保存同步 | [modules/saved-sync.md](modules/saved-sync.md) | `src/openbiliclaw/saved_sync/` | ✅ canonical API + runtime + B 站 direct adapter + 六平台 extension adapter/executor + 三端后端状态驱动保存界面；GitHub repository 与微博保持 typed identity 的 local-only 保存 |
 | 灵魂管线架构 | [modules/soul-pipeline-architecture.md](modules/soul-pipeline-architecture.md) | `src/openbiliclaw/soul/` | ✅ 完成 |
@@ -136,3 +155,18 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 - [v0.3.227 发布与商店审核记录](testing/2026-10-06-release-0.3.227.md) — macOS 签名公证、Instagram 实验性来源与各渠道回执。
 
 - [2026-11-08 动态来源真实环境复验](testing/2026-11-08-real-dynamic-sources-e2e.md)：Ego 后台、原生 App／PC 聊天、RSS、异常提醒及真实评估。
+
+
+- [Sponsored 全项目 SDK](plans/2026-10-27-sponsored-all-tasks.md) · [验收](testing/2026-10-27-sponsored-all-tasks.md)
+- [免费模型断线、互备与持久恢复验收](testing/2026-11-05-sponsored-resilience.md)
+- [免费方案全面复测：四种配置、四端与真进程恢复](testing/2026-11-05-sponsored-comprehensive.md) — 56项基础业务通过，保留长文本、认知证据和本地高负载探测限制。
+- [已申请模型经 Rust SDK 的实测](testing/2026-10-28-sponsored-granted-models.md) — Qwen3-8B / Qwen3.5-4B、BGE-M3 的真实签名 release 调用、延迟、失败及质量限制。
+- [评测模块](modules/evaluation.md)
+
+
+- [免费双模型用户流程与发行边界](plans/2026-11-04-sponsored-user-flow.md)
+- [免费模型真实调用与四端验收](testing/2026-11-04-sponsored-user-flow.md)
+- [免费凭据轮换通知与云端/本地向量切换](testing/2026-11-05-sponsored-renewal.md)
+
+- [免费中继部署与抓包边界](sponsored-relay.md)
+- [2026-11-06 中继与主应用验收](testing/2026-11-06-relay-delivery.md)

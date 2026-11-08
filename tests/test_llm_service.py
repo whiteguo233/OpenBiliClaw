@@ -399,7 +399,7 @@ def test_describe_llm_failure_model_not_found() -> None:
         )
     )
     assert reason is not None
-    assert "404" in reason
+    assert "找不到所配置的模型" in reason
     assert "ollama pull" in reason.lower() or "拉取" in reason
 
 
@@ -1253,3 +1253,13 @@ async def test_llm_service_default_dialogue_tone_prompt_leaves_prompt_untouched(
     await service.complete_socratic_dialogue(user_message="最近看点啥？", history=[])
 
     assert "- 信息密度" in registry.calls[0][0]["content"]
+
+
+def test_remote_model_missing_does_not_blame_local_ollama() -> None:
+    reason = describe_llm_failure(
+        LLMProviderError("remote gateway HTTP 404: model 'configured-model' not found")
+    )
+    assert reason is not None
+    assert "Ollama" not in reason
+    assert "ollama pull" not in reason
+    assert "模型" in reason

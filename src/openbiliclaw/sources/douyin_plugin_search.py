@@ -186,13 +186,15 @@ class DouyinPluginSearchClient:
         if not keyword or limit <= 0:
             self.last_search_outcome = "empty"
             return []
+        if self._discovery_is_cooling():
+            self.last_search_outcome = "failed"
+            return []
 
         plugin_items = await self._search_via_plugin(keyword, limit=max(1, limit))
         if plugin_items:
-            self.last_search_outcome = "used"
             return plugin_items[:limit]
 
-        if self._allow_direct_fallback:
+        if self._allow_direct_fallback and not self._discovery_is_cooling():
             logger.info("douyin plugin search empty; falling back to direct-cookie search")
             fallback_items = await self._direct_client.search_aweme(keyword, limit=limit)
             self.last_search_outcome = "used" if fallback_items else "empty"
@@ -205,15 +207,20 @@ class DouyinPluginSearchClient:
         if limit <= 0:
             self.last_hot_outcome = "empty"
             return []
+        if self._discovery_is_cooling():
+            self.last_hot_outcome = "failed"
+            return []
 
         hot_terms = await self._load_hot_terms(limit=_HOT_SEED_POOL_LIMIT)
+        # Prioritize actionable seeds across the whole board before truncating
+        # the rotation window; sorting only the selected rows loses later seeds.
+        hot_terms = _normalize_hot_task_items(hot_terms)
         hot_terms = self._rotate_hot_terms(hot_terms, seed_count=_hot_seed_count(limit))
         plugin_items = await self._hot_via_plugin(hot_terms, limit=max(1, limit))
         if plugin_items:
-            self.last_hot_outcome = "used"
             return plugin_items[:limit]
 
-        if self._allow_direct_fallback:
+        if self._allow_direct_fallback and not self._discovery_is_cooling():
             logger.info("douyin plugin hot empty; falling back to direct-cookie hot")
             fallback_items = await self._direct_client.get_hot_board(limit=limit)
             self.last_hot_outcome = "used" if fallback_items else "empty"
@@ -235,14 +242,16 @@ class DouyinPluginSearchClient:
         if limit <= 0:
             self.last_feed_outcome = "empty"
             return []
+        if self._discovery_is_cooling():
+            self.last_feed_outcome = "failed"
+            return []
 
         plugin_items = await self._feed_via_plugin(limit=max(1, limit))
         if plugin_items:
-            self.last_feed_outcome = "used"
             return plugin_items[:limit]
 
         fallback = getattr(self._direct_client, "get_recommend_feed", None)
-        if self._allow_direct_fallback and callable(fallback):
+        if self._allow_direct_fallback and callable(fallback) and not self._discovery_is_cooling():
             logger.info("douyin plugin feed empty; falling back to direct-cookie feed")
             typed_fallback = cast(
                 "Callable[..., Awaitable[list[dict[str, object]]]]",
@@ -253,6 +262,13 @@ class DouyinPluginSearchClient:
             return fallback_items
         logger.info("douyin plugin feed empty; direct-cookie fallback disabled")
         return []
+
+    def _discovery_is_cooling(self) -> bool:
+        retry_at = DyTaskQueue(self._database).discovery_retry_at()
+        if retry_at is None:
+            return False
+        logger.info("douyin discovery paused until %s after browser failure", retry_at.isoformat())
+        return True
 
     async def _search_via_plugin(self, keyword: str, *, limit: int) -> list[dict[str, object]]:
         try:
@@ -284,13 +300,10 @@ class DouyinPluginSearchClient:
             self._kick()
 
         result, outcome = await self._wait_for_task(queue, task_id)
-        if outcome != "used":
-            self.last_search_outcome = outcome
-            return []
         videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
         awemes = [plugin_search_item_to_aweme(video) for video in videos]
         items = [item for item in awemes if item is not None]
-        self.last_search_outcome = "used" if items else "empty"
+        self.last_search_outcome = ("used" if items else "empty") if outcome == "used" else outcome
         return items
 
     async def _load_hot_terms(self, *, limit: int) -> list[dict[str, object]]:
@@ -316,11 +329,20 @@ class DouyinPluginSearchClient:
         self._prune_recent_hot_seeds()
         if seed_count <= 0:
             return []
+        # The runtime deliberately recreates this client on every round.
+        # Hydrate from enqueued choices so that lifecycle cannot reset the
+        # existing six-hour rotation policy (including across processes).
+        recent_ids = set(self._recent_hot_sentence_ids)
+        recent_ids.update(
+            DyTaskQueue(self._database).recent_hot_sentence_ids(
+                within_seconds=_HOT_SEED_REUSE_TTL_SECONDS
+            )
+        )
         fresh: list[dict[str, object]] = []
         recent: list[dict[str, object]] = []
         for term in hot_terms:
             sentence_id = _hot_term_sentence_id(term)
-            if sentence_id and sentence_id in self._recent_hot_sentence_ids:
+            if sentence_id and sentence_id in recent_ids:
                 recent.append(term)
             else:
                 fresh.append(term)
@@ -375,13 +397,10 @@ class DouyinPluginSearchClient:
             self._kick()
 
         result, outcome = await self._wait_for_task(queue, task_id)
-        if outcome != "used":
-            self.last_hot_outcome = outcome
-            return []
         videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
         awemes = [plugin_search_item_to_aweme(video) for video in videos]
         items = [item for item in awemes if item is not None]
-        self.last_hot_outcome = "used" if items else "empty"
+        self.last_hot_outcome = ("used" if items else "empty") if outcome == "used" else outcome
         return items
 
     async def _feed_via_plugin(self, *, limit: int) -> list[dict[str, object]]:
@@ -409,13 +428,10 @@ class DouyinPluginSearchClient:
             self._kick()
 
         result, outcome = await self._wait_for_task(queue, task_id)
-        if outcome != "used":
-            self.last_feed_outcome = outcome
-            return []
         videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
         awemes = [plugin_search_item_to_aweme(video) for video in videos]
         items = [item for item in awemes if item is not None]
-        self.last_feed_outcome = "used" if items else "empty"
+        self.last_feed_outcome = ("used" if items else "empty") if outcome == "used" else outcome
         return items
 
     async def _wait_for_task(
@@ -424,6 +440,7 @@ class DouyinPluginSearchClient:
         task_id: str,
     ) -> tuple[dict[str, Any], DouyinTaskOutcome]:
         deadline = asyncio.get_running_loop().time() + self._wait_seconds
+        outcome: DouyinTaskOutcome = "used"
         try:
             while True:
                 task = queue.get(task_id)
@@ -436,7 +453,9 @@ class DouyinPluginSearchClient:
                         error="wait_timeout",
                         debug={"wait_seconds": self._wait_seconds},
                     ):
-                        return {}, "timeout"
+                        task = queue.get(task_id)
+                        outcome = "timeout"
+                        break
                     # A terminal callback may have won the race with the timeout
                     # transition. Re-read it instead of misreporting success as
                     # a timeout.
@@ -461,15 +480,17 @@ class DouyinPluginSearchClient:
                 )
             raise
 
-        if not task or task.get("status") != "completed":
+        if not task:
             return {}, "failed"
+        if task.get("status") != "completed" and outcome != "timeout":
+            outcome = "failed"
         try:
             result = json.loads(str(task.get("result_json") or "{}"))
         except json.JSONDecodeError:
             return {}, "failed"
         if not isinstance(result, dict):
             return {}, "failed"
-        return result, "used"
+        return result, outcome
 
     def _expire_stale_discovery_tasks(self, queue: DyTaskQueue) -> None:
         expire = getattr(queue, "expire_stale_pending", None)
@@ -485,9 +506,16 @@ class DouyinPluginSearchClient:
 
 
 def kick_douyin_task_dispatcher() -> None:
-    """Best-effort wake-up for the extension dispatcher."""
+    """Best-effort wake-up on the configured local API port."""
+    daemon_port = 8420
+    with suppress(Exception):
+        from openbiliclaw.config import load_config
+
+        configured_port = int(load_config().api.port)
+        if 1 <= configured_port <= 65535:
+            daemon_port = configured_port
     req = request.Request(
-        "http://127.0.0.1:8420/api/sources/dy/kick",
+        f"http://127.0.0.1:{daemon_port}/api/sources/dy/kick",
         method="POST",
         data=b"",
     )

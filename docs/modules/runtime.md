@@ -14,9 +14,67 @@
 不在启动时重放旧推送。当前提醒仍由 attention 接口从数据库实时投影。读取不会启动 Ego。
 
 
+
+## 固定实例切换（2026-11-07）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `RuntimeContext.try_apply_llm_instance_config(config)` | 仅默认链顺序改变时通过已有 registry 原地发布，新请求使用新链，API 进程已开始的请求和后台任务对象保留；独立 worker 仍按配置代际重载并恢复持久任务。实例配置或模块链改变时返回 false，走完整重建。 |
+
+
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 路由决定本地依赖与通知 | `ollama_required()` / `effective_ollama_endpoint()` 只考虑有效默认/模块链和独立 Embedding；未使用的旧 Ollama 表不会覆盖向量端口。`sponsored_status()` 只展示实际选中能力的故障；各能力独立恢复。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
+Docker 认证提示（2026-11-06）：bootstrap 等待扩展 Cookie 时明确提示先在容器设置密码、生成/启用设备密钥并重启配对；公开命令参数与状态结构不变。容器映射端口按远程访问处理，见[首次认证步骤](../docker-deployment.md#远程认证变更2026-11-06)。
+
+## 免费组件随包强制集成（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 固定发行必须齐全 | `stage_runtime_bundle(destination)` 缺失平台发行或摘要、目录与固定manifest不符、验签失败均抛错；先在临时目录验证，再落到新目标。 |
+| 新安装包优先 | 本地已有多个有效SDK时，先选择与当前Core固定摘要一致的组件，防止旧active指针遮住新包凭据。 |
+
+公开API与调用约定：`stage_runtime_bundle` 成功返回 `True`，不能用 `False` 表示漏包后继续构建。`installed_runtime_command()` 保持签名验证；旧组件仅作为不匹配当前pin时的可用候选。Docker和桌面构建强制成功，源码安装的显式 `--if-available` 兼容选项保留。
+
+## Jev 矛盾答案不重复收费（2026-11-06）
+
+已实现：`CandidateEvalCoordinator.status_payload()` 新增
+`candidate_eval_invalid_evidence_blocked`，读取 durable 停放数；与
+`candidate_eval_input_budget_blocked` 分开。两类 refusal 均通过 pipeline 在上下文变更后
+有界恢复；同配置的启动、手动刷新和保存不触发重评。已付费返回的矛盾时效证据不再
+折叠为 missing response，不修改评分或准入规则；暂态服务错误继续原有退避。
+2026-11-07 起 native INVALID 也走该路径。`status_payload()` 提示无效／矛盾答案；
+正式 runtime 将配置端点传入 evaluator 的证据身份，修正网关可恢复，单换 Token 不复活。
+后台 Jev 候选的纯本地打包改在线程执行，避免与配置／候选入队共用的事件循环被长文
+试装占住。数据先快照，provider 仍在原协程中按顺序调用；取消打包等待不会触发远端请求。
+
+## Jev 输入预算失败恢复（2026-10-27）
+
+| 能力 / 公共接口 | 合同 |
+|---|---|
+| `CandidateEvalCoordinator` 唤醒/安全扫描 | 在 work-allowed 门控后、claim 前交由 pipeline 检查有效上下文；画像/负例/所选模型容量或 scorer 改变后有界恢复预算停放项 |
+| `status_payload().candidate_eval_input_budget_blocked` | 从 durable `failed_eval` 预算原因读取数量，coordinator 重建/重启后仍可观察 |
+| `status_payload().candidate_eval_last_error` | 预算停放显示 `input_budget_exhausted` 及扩大容量/减少必需输入建议；不是远端故障熔断 |
+
+相同设置的 startup/manual/config 唤醒不复活预算失败，不增加 batch/provider attempts；
+模型身份保持用户选择，不自动换模型或偷偷转 LLM。混合批次其它有效项继续入池。
+暂态远端故障仍沿用既有重试/退避；停放不是内容不相关，也不代表已完成评估。
+
+## 封面显示副本缓存（2026-10-23）
+
+`image_cache.render_cover_for_display(data, content_type)` 在线程中生成 640px JPEG 显示副本，并按原始字节 SHA-256 与媒体类型存入线程安全 LRU；最多 128 项、16 MiB，只持有显示副本、不保留大尺寸原图。字节变化自动失效，超限淘汰最旧项，进程退出即释放。小图及解码失败继续返回原始字节，不改变原图磁盘缓存、CDN 抓取/SSRF 校验或预取策略。API 与独立 image_service 复用同一实现。
 Instagram 普通“换一批”现在通过 `force_refresh()` 执行一个有界 producer → `drain_pending(flush=True)` → 推荐文案波次。它复用来源锁、任务准入、配额和日预算，不依赖 scheduler；失败使用安全的 Instagram 提示进入 `refresh.failed`，已有部分结果保留。CLI `discover --source instagram --force` 仍可独立使用。
 
 Instagram 显式初始化的第 4 阶段通过 `run_init_backfill(sources=..., register_instagram_task=...)` 调用正式 producer、候选评估和同步推荐文案，共享 refresh 锁。API 在 kick 前把新建及恢复的发现任务登记到当前 InitCoordinator；初始化期间其它 pending task 仍不能领取。`build_instagram_discovery_producer(manual=True)` 允许来源已启用、scheduler 关闭时的显式 init；后台 tick 仍受原 scheduler/init/presence 门控。仅选 Instagram 不运行 B 站固定策略，旧的非 Instagram init 路径本次未重构。
+
+## 可选导演运行时
+
+`RuntimeContext.configure_director()` 按配置创建 `DirectorRuntime`，把同一独立 decision provider 借给屏编排和 discovery 过滤；全部关闭时不创建 provider、读取 key 或建立导演表。配置重载先构造组件，切换所有者时激活新 epoch，再取消／关闭旧 runtime；旧提案不能提交，已提交屏保留。前台 `recommendation.director.plan` 走交互车道，后台 `recommendation.director.preplan` 有截止时间、最多八个流计划任务。decision 闸门与聊天 LLM 闸门分离，含排队预算、熔断和受控关闭。公开生成／恢复合同见 [导演](director.md)。
 
 每个 **API daemon** runtime generation 只拥有一个 expression copy coordinator：8 条立即、尾批固定 3 秒、单轮最多 60，零进展退避 15 秒，60 秒仅作 safety wake。停止 generation 会取消 collector、gate waiter 与运行中的 provider callback；状态接口暴露 pending/state/deadline/last completed/error。OpenClaw direct composition 不启动 daemon loop，故不创建该 coordinator；它在 inline admission 后同步 drain 最多 4 条 durable copy，且不在同一交互请求内做 split retry：有效 subset 立即入 canonical pool，剩余行保持 pending 供下次请求处理，返回前没有遗留 provider/copy task。参数来自 2026-07-12 生产日志校准。
 
@@ -40,6 +98,16 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 已实现功能
 
+| 本轮修复 | 行为 |
+|---|---|
+| GitHub 显式初始化补池 | 与 Instagram 共用来源 producer → 同步 flush 评估 → 推荐文案的完成边界；不以未选择的 B站替代。 |
+
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 免费模型组件安装/升级 | 已实现，SDK组件已发布 | Core固定信任根、验签后自检、版本目录原子激活，Git/Docker/桌面共用；失败保留原组件。 |
+| 抖音 partial 失败与共享冷却 | ✅ | 有有效视频也保留 failed / timeout，不能清掉退避。`produce_if_due()` 在关键词领取前读取同一 `dy_tasks` 冷却，进程重启和 `min_interval_minutes=0` 都不会消耗新关键词后才发现暂停。 |
+| 抖音正式入口热词轮换 | ✅ | `build_douyin_discovery_producer()` 每轮仍安全重建 direct/plugin client，但新 client 会读取既有 hot 任务选择记录，6 小时轮换不再仅依赖单个 transport 对象。 |
+
 多进程补池配置恢复：主 API 成功完成完整 runtime handoff 后发布进程内配置 generation；桌面入口与 `start` / `serve-api` 共用 supervisor，设置队列完全结束后在下一次 5 秒巡检停止旧子进程并重新构建 worker、discovery worker、推荐服务与图片服务。配置修好后不再让补池 evaluator 永久使用旧 provider。启动时重新领取 durable 候选，并复用已有失败候选复活策略；不降低评分或可推荐文案门槛。已知聊天设置的局部应用不重启后台。
 
 2026-10-21 本机真实请求验收已覆盖主 API + 四个子进程、B 站自动抓取、模型评分、推荐文案、本地 embedding、HTTP 推荐消费与再次自动补池，canonical available 为 `0 → 3 → 0 → 1`。原主备模型的批量请求另有 429/500 服务端阻塞，成功轮次切换了实际可用模型，详见 [条件与证据](../testing/2026-10-21-empty-pool-live-requests.md)。
@@ -58,6 +126,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 公开 HTTP 来源代理 | ✅ | Feed / 旧公开 recipe 遵循 `[network]`，复用公共 DNS 与数字 IP 隧道；robots 和 origin 限制保持，文章引用不产生额外请求。 |
 | 合成 DNS 验证 | ✅ | 公开 Web / Ego 识别全部为 `198.18.0.0/15` 的系统答案后复用固定 DoH，仍拒绝私网、混合答案和解析失败；不改变网站出口。 |
 | 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
+| 封面默认 TLS 上下文复用 | ✅ | 默认 certifi CA 按进程、trust_env 和证书包文件状态存入最多 4 项 LRU，避免每张冷封面重复解析证书；自定义 SSL_CERT_FILE/SSL_CERT_DIR 保留每次重载。连接和 DNS/IP 验证仍逐 hop 独立。 |
 | Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
 | 应用内 Tailnet helper supervisor | ✅ | `[tailnet].enabled=true` 时，`start` / `serve-api` / 冻结桌面入口发现并托管独立 Go `tsnet` helper；节点状态写 `data/tailnet/`，Auth Key 从父环境取出后只经 stdin bootstrap 传入。JSONL 事件脱敏后原子写 `status.json` 并驱动首次浏览器登录 / ready 提示；关闭先 EOF、再有界 terminate/kill。helper 固定反代 `127.0.0.1:<当前入口有效端口>`，显式 `--port` 或桌面 `OPENBILICLAW_PORT` 可覆盖磁盘 `api.port`；远程入口失败不阻止本机 API。构建固定省略 logtail / Web UI，macOS 12 以下只降级此 helper。 |
 | Windows 后台子进程不再弹控制台窗口 | ✅ | 新增 `openbiliclaw/proc.py::no_window_kwargs()`：Windows 下返回 `creationflags=CREATE_NO_WINDOW`，其它平台返回空 dict，可无条件 splat。后端自行发起的全部外部命令都已接入——Reddit 的 `rdt` / `opencli`（含状态探测与每个关键词一条的发现命令）、自动更新的 `git`、`agent-browser` 版本探测与命令、mcporter 灵感检索、SQLite 修复用的 `sqlite3` / `lsof`、托管 ollama 退出用的 `taskkill`。用户在终端主动敲的命令（`openbiliclaw` CLI、`codex login`、dev 用 optimizer）保持原样，它们本来就有自己的控制台且需要交互提示。`tests/test_proc_no_window.py` 用 AST 扫描 `src/` 全量守住这条约定：任何新的 `subprocess.run` / `Popen` / `create_subprocess_exec` 漏掉该 kwarg 即测试失败（`os.name == "nt"` 分支的 else 支路自动豁免）。第三方库自己起的孙进程不在该 flag 覆盖范围内，已知的一处是 rdt-cli 凭据超 TTL 时的 `uv run --with browser-cookie3`，靠 `_RDT_CREDENTIAL_TTL_SECONDS` 比 rdt 阈值提前 6 小时判过期来规避（见 `sources/reddit_tasks.py` 常量注释）。X 的 twitter-cli 与 YouTube 的 yt-dlp 均为进程内库调用，不起子进程。 |
@@ -101,7 +170,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 惊喜永久消费 | ✅ | `mark_delight_sent()` 只表示通知已送达并维护冷却，不置 `delight_seen`，因此已推送但未看过的候选仍可被 popup 重灌；`mark_delight_seen()` 供用户主动叉掉时委托 storage 写 canonical `seen_items` 并置 `delight_seen`，随后更新主动惊喜冷却。两种动作分开，避免“通知出现过”被误当成“用户看过”。 |
 | Durable 对话失败原子性 | ✅ | `/api/chat/turns` 只把显式无效/空回复持久化为 `status="failed", reply="", error=<安全分类文案>`；provider、限流、配置、超时、service 瞬态失败与 shutdown cancellation 都保持 `pending` 并在队头原位有界退避。真实回复以 `WHERE status='pending'` completion CAS 发布；重复 completion、迟到 failure 与重启重放不能覆盖首个可见终态。回复完成后的 11-kind learning/settlement 由独立 `DialogueSettlementQueue` 处理，不计入 SQLite reply backlog。 |
 | Durable event consumer 调度 | ✅ | app-owned `EventProcessingScheduler` 同时调度 generic 与 content-feedback owner；`FeedbackBatchScheduler` 仅是兼容 import/injection alias。所有 event ingress 只 commit+wake，5 秒 debounce 合并 burst；单 owner pass 先运行 `SoulEngine.process_profile_events_if_needed()`，再运行 `process_feedback_batch_if_needed()`。两者都通过 `checkpointed_enqueue_batch()` 把 buffer+cursor 原子发布到同一 `pipeline_state.json`，随后调用 `tick_if_buffered()`；只有独立周期画像维护调用 `tick()`。5 秒 periodic scan 与 startup recover 覆盖 commit 后丢 wake；处理中又有新 event 会补跑下一轮。热重载 pause+drain 旧 owner，重绑 resolver 后先 recover 再恢复周期扫描。`event_lane_depth` 只是 dirty wake 的 `0/1`，不是 SQLite backlog。 |
-| 浏览器 presence / 初始化 gate | ✅ | `background_llm_work_allowed()` 结合 `scheduler.enabled` 与 `pause_on_extension_disconnect` 控制 daemon-owned 后台 LLM / embedding 工作；首个完整画像尚未落盘或 guided init 活跃时也一律返回 false，防止 account-sync 在用户点击初始化前先导入、分析并重复写入同一批 bootstrap 历史。guided init 自身绕过该 gate。 |
+| 浏览器 presence / 初始化 gate | ✅ | API 通过 `data/runtime/extension_presence.json` 原子发布在线租约，full/discovery worker 共享在线判断；抖音、Instagram、B 站插件搜索与周期账号回拉复用该 tracker。`background_llm_work_allowed()` 继续结合 `scheduler.enabled` 与 `pause_on_extension_disconnect` 控制 daemon-owned 后台 LLM / embedding 工作；首个完整画像尚未落盘或 guided init 活跃时也返回 false。guided init 自身绕过该 gate。 |
 | Runtime event stream | ✅ | `/api/runtime-stream` 向扩展推送状态、Cookie sync 请求、配置重载、候选池快照和 presence 事件；background 连接时会请求小红书 / 知乎立即回传一次本地 Cookie 存在性的布尔心跳，X 启用时还会请求当前完整 Cookie，均不打开或请求平台页面。`RuntimeEventHub.publish()` 会返回是否至少有一个订阅者接收，供一次性事件判断是否真正投递。 |
 | WebSocket 运行时依赖 | ✅ | 默认安装显式携带 `websockets>=13`，PyInstaller spec 显式收集 `uvicorn.protocols.websockets.websockets_impl` 与 `websockets`，避免源码 / Docker / 桌面包只安装裸 `uvicorn` 时 `/api/runtime-stream` 缺协议实现。 |
 | Activity feed 状态摘要 | ✅ | `/api/activity-feed` 在线程中聚合认知更新、反馈、推荐池补货和 live summary，并通过单入口复用缓存，避免阻塞换批代理；未初始化且还没有推荐 / 可换池 / 补货产物时，普通 `/api/events` 不会新写入 pending signals，旧的 `pending_signal_events` 也不会抢占初始化提示。初始化后 pending 文案统一为“已记下 N 个新动作，下一轮补货会拿来参考”，表示 discovery refresh 水位，不表示画像待处理队列。 |
@@ -129,11 +198,12 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 避雷探针投递与仲裁 | ✅ | `avoidance.probe` 与 `interest.probe` 共用 proactive push 循环；每轮最多投递一个 probe，并用 `last_probe_kind` 在正向/负向都有候选时轮流选择，避免探针频率翻倍。 |
 | 图片代理 API | ✅ | `/api/image-proxy` 为移动 Web 和浏览器插件代理白名单 CDN 封面图，逐跳校验 redirect，并在返回前完成类型和 10MB 大小校验；成功封面写入 `data/image-cache/`（小红书 token 归一化），并按「已消费且未保存」定期清理、保护无法重抓的封面；多模态 discovery 评估也复用同一缓存，命中时不再重新请求 CDN。新浪图床请求按当前 redirect host 附 `Referer: https://weibo.com/`，跳往其它 CDN 时立即移除，满足真实防盗链且不跨域泄漏。 |
 | 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、`/api/runtime-status` 更新摘要、手动 check/apply、跨配置热重载存活的进程级 apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。dirty worktree guard 把 staged 修改 / 新增视为脏，同时继续豁免 `uv.lock`、未跟踪文件和本地 `ollama-models/`；apply 前会重置 `uv.lock` 再快进。git 命令通过 `asyncio.create_subprocess_exec` 执行，避免 Windows 长时间运行后线程池 `subprocess.run` 卡死或异常返回；tag fetch 使用 `git fetch --force --tags origin`，避免本地旧 tag 被远端重打后卡在 `would clobber existing tag`。`[network].mode=custom` 时 git 显式使用 `-c http.proxy=<url>`，uv/pip 显式叠加 `HTTP_PROXY/HTTPS_PROXY`；`direct/system` 的继承行为保持不变。**依赖同步按 daemon 的真实工具能力选择**：`uv.lock` 存在且 PATH 可解析 `uv` 时运行 `uv sync --no-install-project --inexact`；没有 `uv` 的官方 pip/venv 安装从 `pyproject.toml` 读取 runtime requirements，交给当前 `sys.executable -m pip`。两条路径都只同步依赖、保留 editable 项目与用户 extras，避免 Windows 后端运行时重装/替换被锁定的 console entry；完成后统一用 `python -m openbiliclaw.cli <原参数>` 跨平台重启。依赖工具缺失、300 秒超时和非零退出会把完整诊断写入本地日志，并在 `last_error` 留下工具/退出码/真实错误摘要。GitHub tags API 的 403/429 或传输异常会尝试 GitHub tags Atom feed 兜底；TLS 校验失败绝不以 `verify=False` 降级，直接上报 `tls_verification_failed` 并提示配置可信 CA。`detect_install_mode()` 上报 `frozen / docker / git / unsupported` 安装形态，桌面 Web 与扩展 popup 据此禁用非 git 安装的自动应用控件。**可信 remote 校验 git 实际使用的全部地址**：同时读取 `git ls-remote --get-url origin` 与 `git remote get-url --all origin`，任一地址不在 allowlist 即拒绝；`url.insteadOf` 改写后的非可信主机不能借原配置地址放行，也绝不自动改写用户 git 配置。规范化大小写与可选 `.git` 后缀，并把 GitHub 官方 `ssh.github.com[:443]` / scp 形态等价为 `github.com`；镜像/代理包装 URL 不会自动折算成官方地址。**守卫拒绝不再静默**：每条 guard 拒绝都 `logger.warning` 写明细，并把真实原因写入 `last_error`；修复命令中的仓库路径始终带双引号，含空格的 Windows / POSIX 路径可直接复制。apply 在任何 git 变更前验证 backend tag 通道与 prerelease 策略，`extension-v*` / `desktop-v*` / 畸形 tag 一律拒绝；候选排序按 SemVer §11 处理 prerelease：同号 stable 胜过任何 prerelease、`rc.10 > rc.9 > rc1`，且 UI 展示保留 prerelease 后缀（不再把 `0.4.0-rc1` 显示为 `0.4.0`）。**展示面范围**：桌面 Web 支持检查 / 应用并在 error 状态优先显示 `last_error`，扩展 popup 展示状态且禁用非 git 自动应用；移动 Web 更新面板与 CLI update 命令明确不在当前功能范围。**冻结守卫**：冻结包与 Docker 只运行 check-only 提醒循环，分别引导下载新版安装包或执行 `docker compose pull && docker compose up -d`。降级模式（LLM 注册表不可用）仍放行 update-status / check / apply，便于拉取修复版本恢复。 |
-| 开机自启动管理 | ✅ | `runtime.autostart` 提供 macOS LaunchAgent、Windows HKCU Run、Linux XDG autostart 三套当前用户作用域 manager；Windows 源码安装使用 `pythonw + .pyw`，冻结桌面包直接注册 `OpenBiliClaw.exe` 并兼容识别旧双路径项。`reconcile()` 由 CLI 与桌面包入口共用，`/api/autostart-status`、`/api/autostart/apply`、`openbiliclaw autostart` 和设置页共用 env / shadow guard 与方向化 enable/disable 事务。 |
+| 开机自启动管理 | ✅ | `runtime.autostart` 提供 macOS LaunchAgent、Windows HKCU Run、Linux XDG autostart 三套当前用户作用域 manager；Windows 源码安装使用 `pythonw + .pyw`，冻结桌面包直接注册 `OpenBiliClaw.exe` 并兼容识别旧双路径项。`reconcile()` 由 CLI 与桌面包入口共用，`/api/autostart-status`、`/api/autostart/apply`、`openbiliclaw autostart` 和设置页共用 env / shadow guard 与方向化 enable/disable 事务。冻结程序每次启动重新发现的内置SDK路径不属于外部配置；源码、外部路径和缺失组件仍受env guard保护。 |
 | API 双栈监听 | ✅ | `runtime.api_server` 在默认 `0.0.0.0` 配置下显式创建 IPv4 `0.0.0.0` 与 `IPV6_V6ONLY` 的 IPv6 `[::]` listener，并交给同一个 uvicorn server；CLI、Docker 命令入口与 Windows/macOS 桌面包共用，系统不支持 IPv6 或 IPv6 bind 失败时记录 warning 并保留 IPv4。 |
-| Ollama 启动预检与生命周期 | ✅ | `runtime.ollama_supervisor` 统一提供 `ollama_required()`、endpoint 归一化、loopback 判定和 `_ollama_is_running()` / `_ollama_start_serve_background()`；`start` 仅在默认 `localhost:11434` 需要本机 Ollama 时尝试后台拉起，远端 / 自定义端口不强行 `serve`。托管启动会给子进程默认传入 `OLLAMA_KEEP_ALIVE=24h`（若用户已设置则保留用户值），减少 `bge-m3` / `llama-server` 在 UI 请求间隔中卸载再冷启动。Windows 模型路径编码故障自愈使用 `ollama_models_relocation_candidate()` 选 `%PROGRAMDATA%\OpenBiliClaw\ollama-models`（路径含非 ASCII 时放弃自动迁移），目录存在即视作 `managed_models_dir()` 持久迁移标记；后续托管启动用 `env.setdefault("OLLAMA_MODELS", managed_models_dir)`，显式用户环境变量优先。`restart_managed_ollama_with_models_dir()` 只重启本进程管理的 Ollama；若检测到外部启动的 daemon（运行中但没有 `_managed_proc`）则返回 `external_ollama`，避免杀掉用户自己开的官方 App / 服务。`_ollama_start_serve_background()` 现在记录**亲手拉起**的 `Popen` 句柄（复用外部已运行实例时句柄留空），`stop_managed_ollama()` 据此在退出时停掉整棵进程树（Windows `taskkill /T`、类 Unix 进程组 `SIGTERM`），对外部托管的 Ollama 一律不动 —— 桌面托盘「退出」经此调用，clean quit 不再遗留孤儿 `ollama serve` / `llama-server` runner。macOS 桌面包构建必须使用官方 `Ollama.app/Contents/Resources/ollama`，并同时打入同目录 `llama-server`、`llama-*`、`lib*.dylib`、`lib*.so` 和 `mlx_metal_*`；如果只发现 Homebrew 风格单独主程序或缺关键动态库，打包会失败，避免随包 daemon `/api/version` 正常但真实 embedding 500。v0.3.206+：当 `OPENBILICLAW_PROJECT_ROOT` 已设置（桌面包入口），托管 `ollama serve` 的 stdout/stderr 改写入 `<project>/logs/ollama-managed.log`（stderr 合并到 stdout，`stop_managed_ollama()` 负责关闭句柄），让 `llama-server` 崩溃日志可查；未设置时保持 DEVNULL（CLI / dev / 测试）。 |
+| Ollama 启动预检与生命周期 | ✅ | 免费方案默认云端向量跳过本地预热；选择本地向量或显式允许Ollama聊天回退时预备daemon。`runtime.ollama_supervisor` 统一提供 `ollama_required()`、endpoint 归一化、loopback 判定和 `_ollama_is_running()` / `_ollama_start_serve_background()`；`start` 仅在默认 `localhost:11434` 需要本机 Ollama 时尝试后台拉起，远端 / 自定义端口不强行 `serve`。托管启动会给子进程默认传入 `OLLAMA_KEEP_ALIVE=24h`（若用户已设置则保留用户值），减少 `bge-m3` / `llama-server` 在 UI 请求间隔中卸载再冷启动。Windows 模型路径编码故障自愈使用 `ollama_models_relocation_candidate()` 选 `%PROGRAMDATA%\OpenBiliClaw\ollama-models`（路径含非 ASCII 时放弃自动迁移），目录存在即视作 `managed_models_dir()` 持久迁移标记；后续托管启动用 `env.setdefault("OLLAMA_MODELS", managed_models_dir)`，显式用户环境变量优先。`restart_managed_ollama_with_models_dir()` 只重启本进程管理的 Ollama；若检测到外部启动的 daemon（运行中但没有 `_managed_proc`）则返回 `external_ollama`，避免杀掉用户自己开的官方 App / 服务。`_ollama_start_serve_background()` 现在记录**亲手拉起**的 `Popen` 句柄（复用外部已运行实例时句柄留空），`stop_managed_ollama()` 据此在退出时停掉整棵进程树（Windows `taskkill /T`、类 Unix 进程组 `SIGTERM`），对外部托管的 Ollama 一律不动 —— 桌面托盘「退出」经此调用，clean quit 不再遗留孤儿 `ollama serve` / `llama-server` runner。macOS 桌面包构建必须使用官方 `Ollama.app/Contents/Resources/ollama`，并同时打入同目录 `llama-server`、`llama-*`、`lib*.dylib`、`lib*.so` 和 `mlx_metal_*`；如果只发现 Homebrew 风格单独主程序或缺关键动态库，打包会失败，避免随包 daemon `/api/version` 正常但真实 embedding 500。v0.3.206+：当 `OPENBILICLAW_PROJECT_ROOT` 已设置（桌面包入口），托管 `ollama serve` 的 stdout/stderr 改写入 `<project>/logs/ollama-managed.log`（stderr 合并到 stdout，`stop_managed_ollama()` 负责关闭句柄），让 `llama-server` 崩溃日志可查；未设置时保持 DEVNULL（CLI / dev / 测试）。 |
 | Embedding 初始化进度单例 | ✅ | `runtime.embedding_progress` 是进程全局、线程安全的无依赖状态源，供桌面包首启自动拉取、guided init 自动拉取、API 一键修复和 Ollama supervisor 共享。各生产路径调用 `mark_pull_running()` / `report_pull()` / `mark_pull_done()`，`/api/init-status` 再把它合并到 `embedding_check="repairing"`、`embedding_repair_*` 和 `embedding_pull_status`；`_ollama_start_serve_background()` 同步报告 `ollama_phase` 为 `starting` / `ready` / `down`。`reset()` 仅供测试隔离进程级状态。 |
 | 账号同步 | ✅ | `AccountSyncService` 同步 B 站账号历史、收藏和关注等信号；历史按 `view_at + 同秒 bvid 集合` 增量导入，收藏 / 关注只把新增 ID 转成画像事件，避免重放旧信号；但每轮会把**完整收藏快照**经 `Database.mark_items_seen("bilibili", bvids)` 直接写进 `seen_items`（2026-07-26+）——只认新增的话，装 OpenBiliClaw 之前收藏的内容永远进不了去重、会被当新内容推回；快照标记幂等且不产生事件，因此不会重复计入偏好信号，失败只 debug 日志不影响本轮同步。每文件夹收藏上限与总预算一致（500，与 init 同口径），否则大收藏夹的尾部永远覆盖不到。收藏事件与 init 同口径携带播放量 / 发布时间 / 时长，并按 `favorite_item_is_dead()` 丢弃失效视频。新增事件先经 48h 跨源去重（扩展已上报的同一行为不再双计，`exclude_source="account_sync"` 防自压制），画像就绪后走 `ProfileUpdatePipeline` 增量管线而非整层重算；画像分析（管线及回退路径）默认受 360 秒墙钟上限保护，超时会取消并记录可见原因，不会把账号同步循环永久占住，文案明确模型服务 6 分钟未返回、Base URL / 模型名 / 网络 / 代理 / 响应过慢等常见原因，并经 `/api/init-status.detail` 同步给三端。每轮失败会持久化有界的 `last_sync_issues=[{stage,kind}]`，按 B 站历史 / 收藏 / 关注、X 点赞 / 书签和画像分析精确定位，并由 runtime-status 统一生成安全中文文案与严重度供桌面 Web 展示。X 来源启用且 Cookie 存在时同周期增量拉取 likes/bookmarks（tweet ID 集合去重，首轮从 events 表播种），并与 discovery producer 共用 `XSourceHealthStore`：冷却/登录失效/403 时不出网，首个 429 后不再紧接第二个请求。 |
+| 账号同步事件时间与存量标记 | ✅ | B 站三条 producer 把上游真实时间写进 canonical `metadata.timestamp`：历史 `view_at`、收藏 `fav_time`、关注 `mtime`（`BilibiliAPIClient.get_following` 从 `/x/relation/followings` 解析，CLI guided init 采集同样保留）。此前这些值只存在源私有 key，认知链路只认 `metadata.timestamp`，于是整页导入共用 `events.created_at`——本机实测 89,866 条观看落在 950 个秒、2,429 条关注落在 93 个秒，被读成「同一秒关注四十多人」。首次同步（无 `last_*_sync_at` / 历史游标）给事件标 `metadata.snapshot=true`，供认知层按存量处理；上游缺时间时不补造，保持未知 |
 | 多源 bootstrap 去重 | ✅ | `/api/sources/{xhs,dy,yt,zhihu,reddit,linuxdo,v2ex,weibo}/task-result` 会用原子的 `source_bootstrap_state.json` 过滤跨任务旧 identity key；每源按响应顺序保留最新 5,000 个，任务首份 canonical 结果仍完整保留，只有新增项进入 durable event / profile owner 路径。 | GitHub 不进入扩展 task-result staging。
 | 扩展任务 claim / 复用 | ✅ | XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博 bootstrap 任务在扩展 poll 时用短生命周期 SQLite 连接标记 `in_progress`，CLI 默认复用 6 小时内近期可复用任务，避免重复打开任务 tab 全量扫描。Linux.do 的 `failed/degraded` 明确不参与复用：已取到的 degraded 事件保留，下次仍新建任务补齐失败 scope。周期调度、CLI fetch 与 guided init 共用 enqueue decision core：进程锁防线程交叠，SQLite `BEGIN IMMEDIATE` 把八表全局 active scan 与选中来源 insert 置于同一事务；`force` 只绕过近期终态复用，不能制造并行账号任务。 |
 | XHS 自动发现停止门与平台熔断 | ✅ | XHS `/next-task` 每次领取 legacy search / creator / bootstrap 前现读热重载后的来源开关和全局 scheduler；关闭时旧任务保持 pending、扩展只得到 204，不再打开自动抓取页面。search / creator 默认以 20 分钟为中心做 ±25% 稳定抖动，领取水位与平台冷却写入 `xhs_task_runtime_state`，跨后端 / MV3 重启生效；搜索默认每天 20 条，producer 每 20 分钟检查且只把 pending + in-progress 队列补到 5 条。安全验证、操作频繁或 429 触发 `1h → 2h → 4h … → 24h` 连续轮次冷却，同一冷却内重复报告不加轮次，冷却后的正常任务成功才重置；producer 同步停产，`/api/sources/status` 显示 `rate_limited/feed_paused`、连续轮次与剩余时间。明确由用户发起的 native-save 独立于 discovery 开关，但不会越过安全冷却。 |
@@ -185,6 +255,14 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 `ContinuousRefreshController.custom_source_producer_provider(source_id)` 负责构造轻量 `CustomWorkflowProducer`；实际执行沿用来源锁、可用库存缺额和 raw headroom。单个网站失败保留诊断并继续其它来源。API/发现 worker 用 generation-owned evaluator；OpenClaw standalone 没有常驻循环，`refresh_if_needed()` 在有界 one-shot 模式先执行关键词规划，再运行来源 producer，复用原先最多 4 条的 inline admission 与 awaited copy 路径。两种装配都把 `source_share_targets` 绑定到 controller。OpenClaw 推荐 DTO 也携带 `source_id/source_name`，`source_platform` 筛选参数可接受已注册实例 ID；scope 校验不会开放任意未注册 key。
 
 `KeywordPlanner` 仅把启用来源中 active `query_mode=interest` 的流程纳入普通和探索词池，HTTP feed / 固定查询流程不消耗动态关键词。提示词带网站名称、origin 与用途，不带 session 引用或执行步骤；关键词按当前画像生成，claim/rollback/yield 仍走共享 `discovery_keywords` 生命周期。探索词池需要既有 inspiration 开关和可用 provider；无查询可领取时 producer 保持 `keyword_unavailable`。
+
+`ContinuousRefreshController.run_init_backfill(..., sources={"github"})` 在初始化暂停后台期间直接调用正式 GitHub producer，尊重来源预算和限流，至少一条候选完成评估与文案后才成功；空结果保留 `InitialPoolUnavailableError`。Instagram 的任务归属/取消行为不变。
+
+### PresenceTracker
+
+`PresenceTracker(*, now=time.monotonic, shared_path=None, wall_now=time.time)` 保留原进程内计数、启动宽限和 `snapshot()` 语义；配置 `shared_path` 后，`is_present(grace_seconds)` 还能读取 API 的有效租约。`on_connect()` / `on_disconnect()` 立即原子发布本地计数，`heartbeat()` 仅在本地仍有连接时按 20 秒节流续约。跨进程时间戳使用 wall clock；未来时间、非有限值、非法计数、损坏或不可读的共享文件不提供在线证据。写失败记录 WARNING，不中断本地连接。正常及降级 `build_*_runtime_context()` 固定绑定启动数据目录，热重载保留同一 tracker；无新配置或依赖。
+
+在线状态链路：`API runtime-stream → PresenceTracker → 原子 extension_presence.json → full/discovery worker → 浏览器任务 producer`。活动 API 是单一写者，headless worker 为读者；租约不是账号登录或来源执行能力的证明。API 异常退出后最多保留 60 秒最后在线证据；正常断开使用调用方传入的宽限，共享文件缺失时仍保留原进程启动宽限。桌面、源码 CLI 和 Docker 复用该组合根，显式 CLI/OpenClaw 的纯进程内 tracker 保持原行为。验证与边界见 [issue #332 验收](../verification/2026-10-25-issue-332-shared-presence.md)。
 
 `proc.ChildProcessSupervisor(..., config_generation_provider=...)` 接受返回 `int | None` 的进程内版本读取器；`None` 表示设置队列尚未完成，暂缓配置驱动的重启。`proc.backend_config_generation(app)` 读取 API 成功 handoff 后递增的 `app.state.backend_config_generation`，并在 `config_apply_task` 仍运行时返回 `None`，合并排队修订与失败回滚期间不会拉起中间配置。旧 child 的 terminate / kill 均需确认退出后才能启动替代 claim owner；无法停止时保留旧指针并在下次巡检重试。`proc.backend_child_env(app, **overrides)` 把父进程锁定的 active data path 传给所有子进程，数据目录变更仍需完整应用重启。
 
@@ -462,6 +540,8 @@ TikTok 的 curl_cffi 图片传输通过 `network.curl_cffi_proxy_kwargs()` 物�
 
 `runtime.image_network.resolve_public_addresses(host, *, proxy=None, use_public_dns=False)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
 
+TLS 初始化只复用默认 certifi CA 的 `SSLContext`：进程内最多 4 项，以 PID、`trust_env`、证书包路径及设备/inode/大小/mtime/ctime 标识，升级或原地改写证书包后重建，证书包不可读取时沿用 HTTPX 的失败行为。启用 `trust_env` 且配置 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 时绕过缓存，保留自定义证书和目录内证书的每次重载；CN direct 仍忽略环境 CA。CDN TLS、HTTPS 代理握手与 DoH 复用这项内部优化，不改变公开 API、不缓存 DNS 答案，也不复用逐 hop 的连接池。`certifi` 从 HTTPX 已有的传递依赖提升为显式声明，现有打包清单已包含它，不增加安装步骤。
+
 封面直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。公开 Web / Ego 另在域名的本机答案全部为 `198.18.0.0/15` 时显式启用相同公共 DNS 验证；不会将合成地址直接视为公网。仅发送域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。Ego 只使用预检结果，不固定其原生 socket。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
 
 实现依据：[HTTPCore network backends](https://www.encode.io/httpcore/network-backends/) 与 [Cloudflare DNS JSON](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。`httpcore>=1.0,<2` 从 HTTPX 的传递依赖提升为显式依赖，`httpx[socks]>=0.28` 支持 `socks5h`；git、Docker、桌面打包通过现有 Python 依赖安装，不增加本机守护进程或手工安装步骤。
@@ -487,7 +567,7 @@ warning = autostart.reconcile(config)
 
 - `AutostartStatus(supported, registered, platform, mechanism, reason, detail)`：API、CLI 和插件 UI 共享的状态模型。`mechanism` 固定为 `launchd` / `windows_run` / `xdg_autostart` / `none`。
 - `build_launch_spec(config)`：生成登录项执行命令，固定为当前 Python 解释器执行 `-m openbiliclaw.cli start`，并注入 `OPENBILICLAW_PROJECT_ROOT`；如果能找到 `ollama`，会把其目录加入登录项 `PATH`。
-- `active_env_managed_inputs(config)`：检测会在桌面登录会话里丢失的环境变量来源（`OPENBILICLAW_*`、provider API key env、抖音 Cookie env），用于拒绝开启自启动。
+- `active_env_managed_inputs(config)`：检测会在桌面登录会话里丢失的环境变量来源（`OPENBILICLAW_*`、provider API key env、抖音 Cookie env），用于拒绝开启自启动。仅冻结程序中与实际随包目录一致且存在的 `OPENBILICLAW_SPONSORED_BUNDLE` 被视为可重建的内部路径；任意外部路径仍阻止注册。
 - `autostart_shadowed(intended)`：写后 reload effective config，检测 `config.local.toml` 或环境变量是否覆盖了 `[autostart].enabled`。
 - `reconcile(config)`：让配置 intent 与当前用户 OS 登录项对账；`enabled=false` 时移除残留项，`enabled=true` 且登录项缺失时在 env guard 通过后补注册。CLI daemon 与冻结桌面入口使用同一实现，失败返回可记录的警告而不阻断启动。
 
@@ -598,6 +678,15 @@ search / hot / feed 每条分支都有结构化终态 `used / empty / timeout / 
 
 API daemon 构造 producer 时会注入共享 extension presence：扩展离线且超过 `extension_disconnect_grace_seconds` 后，`produce_if_due()` 在创建浏览器任务前直接返回 `extension_absent`，不会先入队再等待 180 秒；显式 CLI / smoke 未注入 presence，仍可用于人工诊断。每次真正尝试都会记录进程内 cadence：真实空结果遵循来源 `min_interval_minutes`，`timeout / failed` 使用 15 分钟基础设施退避，预算耗尽使用 60 分钟退避；有产出的轮次仍写共享 productive ledger。该分层同时避免离线 pending 堆积和在线故障时的分钟级重试风暴。
 
+抖音公开 producer 行为补充：`produce_if_due()` 的 `throttled` 也覆盖持久发现冷却，
+优先于关键词 claim；`_result_reason()` 先看失败 outcome，再看 items 数量。
+有效 partial 仍入候选池，但 `error / timeout` 不会被 productive 轮次清除。
+共享冷却见 [Discovery API](discovery.md#抖音发现冷却-api)；原成功 cadence、日预算和评分门槛不变。
+
+热词轮换也读取同一数据库中的已入队选择，不能只在长寿命诊断客户端上验证。
+正式 factory 的两轮回归在修复前得到 `1/2 → 1/2`，修复后为 `1/2 → 3/4`；
+生产入口仍按原生命周期关闭 direct client，不保留跨轮次的旧 Cookie 对象。
+
 ### YoutubeDiscoveryProducer
 
 ```python
@@ -680,7 +769,7 @@ from openbiliclaw.runtime.v2ex_producer import V2EXDiscoveryProducer
 result = await producer.produce_if_due(limit=20)
 ```
 
-V2EX producer 是公开只读 discovery 的正式 runtime / CLI 入口。它按 `[sources.v2ex].source_modes` 轮转 `search / node / tab / hot / latest`，使用统一关键词 planner、Node/Tab 配置、分支预算和持久化节流。`search` 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel`）发送 `site:v2ex.com/t` 查询并用官方 Topic 详情补全；provider 无结果或失败时回退官方 latest/hot 有界匹配。PAT 只增强 API 2.0 访问，401/403 会清除本轮 PAT、对应已验证身份并继续匿名；所有 Topic 通过共享 `DiscoveryCandidatePipeline` 入 `discovery_candidates(pending_eval)`，不在 producer 内联调用 evaluator。每日预算只按共享池全局去重 / 预筛后真正保留的候选扣费，HTTP 请求、详情增强和已知重复不扣。producer 会在共享评估前用 `detail_fetch_limit` 有界补齐不完整 Topic，并仅在 PAT 可用时用 `reply_enrichment_limit` 读取 Reply 第一页生成确定性讨论摘要；`max_topic_chars` / `max_reply_digest_chars` 在 normalizer 边界裁剪，Reply 不单独入池。浏览器 bootstrap 由 `V2EXTaskQueue` 负责领取和 staged 完成，事件入口聚合用户自己的 Reply；runtime 只读取 active profile identity 的 Node Affinity，不能被刚观察到的另一账号替换。`v2ex_incremental_hours` 排队增量任务，首次完整 guided 快照种下收藏基线，后续完整 scope 由 `V2EXFavoriteSnapshotStore` 执行连续两次缺失确认并通过 durable effect 生成 retraction / restore。
+V2EX producer 是公开只读 discovery 的正式 runtime / CLI 入口。它按 `[sources.v2ex].source_modes` 轮转 `search / node / tab / hot / latest`，使用统一关键词 planner、Node/Tab 配置、分支预算和持久化节流。`search` 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel` / `keenable`）发送 `site:v2ex.com/t` 查询并用官方 Topic 详情补全；provider 无结果或失败时回退官方 latest/hot 有界匹配。PAT 只增强 API 2.0 访问，401/403 会清除本轮 PAT、对应已验证身份并继续匿名；所有 Topic 通过共享 `DiscoveryCandidatePipeline` 入 `discovery_candidates(pending_eval)`，不在 producer 内联调用 evaluator。每日预算只按共享池全局去重 / 预筛后真正保留的候选扣费，HTTP 请求、详情增强和已知重复不扣。producer 会在共享评估前用 `detail_fetch_limit` 有界补齐不完整 Topic，并仅在 PAT 可用时用 `reply_enrichment_limit` 读取 Reply 第一页生成确定性讨论摘要；`max_topic_chars` / `max_reply_digest_chars` 在 normalizer 边界裁剪，Reply 不单独入池。浏览器 bootstrap 由 `V2EXTaskQueue` 负责领取和 staged 完成，事件入口聚合用户自己的 Reply；runtime 只读取 active profile identity 的 Node Affinity，不能被刚观察到的另一账号替换。`v2ex_incremental_hours` 排队增量任务，首次完整 guided 快照种下收藏基线，后续完整 scope 由 `V2EXFavoriteSnapshotStore` 执行连续两次缺失确认并通过 durable effect 生成 retraction / restore。
 
 ### InstagramDiscoveryProducer
 
@@ -851,3 +940,60 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 部分页面已取得内容、后续页面触发登录／验证时，即使候选队列容量不足或交接失败，
 也保留 `login_required` 和原验证原因，不能被一般队列异常覆盖为可自动重试的 degraded/failed。
+
+
+## Sponsored SDK 子进程（组件已发布，应用接线待发布）
+
+`ollama_required(config)` 按默认/模块实际链与独立 `llm.embedding` 判断本地需求。云端 BGE 不启动 Ollama；选择 `embedding.provider="ollama"` 后走本地准备/下载/播种。`effective_ollama_endpoint()` 不使用未被链引用的旧 Ollama 聊天表覆盖向量端点。
+
+同一事件循环内的 LLMService、Registry 和 EmbeddingService 复用子进程；既有应用并发 gate 不变。不同工作进程各自建 Runtime，私有安装账本只对记账事务加锁，网络期间不独占锁；预留与结算重读 HMAC 状态，不丢并发额度。`LLMService.aclose()` 等待请求结束后关闭子进程。覆盖和发行约束见[全项目 SDK](../plans/2026-10-27-sponsored-all-tasks.md)。
+
+
+### 免费模型组件安装与更新
+
+上一组件发行目录为 `sponsored-runtime-2026-11-06.1`：Linux x86_64/ARM64、Mac Intel/ARM64、Windows x86_64 五个归档均独立验签并核对GitHub摘要；Mac两架构已Developer ID签名并获Apple Accepted。组件更新TLS依赖、账本秘密文件/DPAPI保护，并兼容Mac旧钥匙串ACL，Core信任公钥、模型、额度和原到期时间不变。最终签名组件通过本机旧账本升级、公开下载/损坏包拒绝与两模型流式+BGE并发实测。正式应用是否已发布须与SDK组件分开判断；详见[安全发行及验收](../testing/2026-11-06-security-metadata.md)。
+
+公开入口：`verify_bundle(directory)` 在执行前检查 Core 固定 Ed25519 公钥、manifest/策略签名、文件hash、平台、兼容版本和任务契约；`install_archive(archive)` 拒绝路径穿越/链接/重复/超大成员，离线 `--check-policy` 成功后原子更新 `.sponsored/active`；`installed_runtime_command()` 只返回已验证组件；`ensure_runtime()` 从固定发行目录获取组件，已匹配manifest不重复下载；`stage_runtime_bundle(destination)` 供Docker与桌面打包使用。
+
+`python -m openbiliclaw.runtime.sponsored_bundle --if-available` 只允许“没有发行包”的状态返回成功，签名或内容损坏仍失败；`--archive <path>` 安装本机归档；`--stage <directory>` 验证后复制。数据位于项目数据根下 `.sponsored/`，不纳入git。源码更新在新依赖就绪后、重启前协调组件；旧目录保留，失败不改活动指针。Docker在构建时放到 `/opt/openbiliclaw-sponsored`，桌面放入资源目录；两者使用 `OPENBILICLAW_SPONSORED_BUNDLE` 定位。
+
+macOS应用重签必须跳过已由发行策略覆盖的SDK字节；Developer ID和本地ad-hoc路径都再次验签。五平台SDK产物已发布并进入Core固定目录；Mac完成签名公证，Windows采用独立manifest验签。在线下载/更新与容器按专门CI验收，应用整包另行验证。信任根和流程见[实现决策](../plans/2026-11-04-sponsored-user-flow.md)。
+
+Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel和PyInstaller资源清单都包含发行目录，普通安装不需Rust工具链。
+免费模型组件安装在执行原生离线自检时沿用后端的Windows隐藏控制台规则，设置页准备组件不会弹出终端窗口。
+
+组件下载在调用入口独立读取已保存的network策略（system/direct/custom），避免源码bootstrap和打包尚未初始化API/CLI网络全局状态时误用直连。此过程不改变业务请求的全局网络策略。
+
+
+### 免费凭据状态与轮换
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 撤销/授权到期识别 | Rust稳定错误码进入Core状态；有效签名策略已到期时，无需运行旧组件即可提示更新。未知网络/限流故障不推断Key过期。 |
+| 持久通知与恢复 | `<data_dir>/runtime/sponsored-status/{chat,embedding}.json` 原子保存错误码、时间、组件身份哈希，无Key/Prompt/上游正文；同错误去重，重启/独立worker可读。成功只清除对应能力，更新组件后旧证据失效；没有使用免费 LLM 时忽略旧聊天故障，未选择免费 Embedding 时忽略旧云端向量故障。 |
+
+公开API：`sponsored_status.configure_status_directory(data_path)` 由配置加载/registry绑定；`record_sponsored_outcome(command, capability, code="")` 观察实际请求；`sponsored_status(config)` 仅读本地状态，不探测上游。`BundleExpiredError` 区分已验签但到期的策略；`bundle_status()` 新增稳定 `code`，损坏/未签名文件不被当成可靠过期证据。
+
+轮换顺序：在私有发布环境替换上游Key → 编译并签名五平台Rust组件与有限期策略 → 发布组件 → 更新Core固定目录与摘要 → 发布对应OpenBiliClaw版本/安装包或容器镜像 → 再撤销旧Key。用户更新后需重启后端；源码更新代码及组件，Docker更新镜像，桌面更新安装包。不要让旧Core用“准备组件”重复下载同一固定版本来承诺恢复Key。
+
+通知是对真实调用失败或本地签名策略到期的检测，没有远端Key轮换推送。旧应用必须先升级到包含本功能的版本，才能在以后的轮换中显示新通知。实际AUTH_FAILED可能是撤销、过期或权限变更，UI不编造唯一原因；配额耗尽提示等待额度恢复或使用自有Key，更新包不保证解除限额。测试不撤销真实生产Key。
+
+### 免费请求持久恢复补充（2026-11-05）
+
+| 已实现能力 | 边界 |
+| --- | --- |
+| 对话故障恢复 | API处理器用 `TerminalChatReplyError` 终止持久故障；仅尚未输出/调用工具的临时免费故障进入原有1–30秒指数退避队列，最多两次追加重试。 |
+| 重启与重复连接 | pending消息的重试次数、首段/工具执行边界保存在agent_events；重启恢复不会回放已开始的工具。已完成消息直接读取结果。 |
+
+公开API仍为 `DurableChatReplyScheduler.schedule/start/close` 与 `DialogueExecutionCoordinator.lease`；调度器本体接口未变，免费错误分类和终止决定在API处理器完成。HTTP订阅断开后执行继续；服务重启后仅尚未开始的pending轮次自动恢复。真实Rust与云端故障验收见[报告](../testing/2026-11-05-sponsored-resilience.md)。
+
+2026-11-05 扩展验收：`scripts/sponsored_process_recovery_acceptance.py --source-root <隔离基线> --root <新目录>` 复制已完成基线，启动并仅终止自身 POSIX 进程组；分别验证已开始轮次停止重放和未开始轮次自动恢复。正式队列 API 不变，支持 macOS/Linux，完整场景与限制见[报告](../testing/2026-11-05-sponsored-comprehensive.md)。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| runtime | 官方默认中继地址经过部署验收后，`stage_runtime_bundle` 不再下载/复制含供应商 Key 的 SDK，并拒绝旧目录混入；冻结安装包自检验证此边界。兼容模式继续验证固定 SDK，两个模式不可静默互相回退。设备认证错误与组件策略到期分开提示。公开 API `official_relay_url()`、`stage_runtime_bundle(destination)`；部署条件见 [中继说明](../sponsored-relay.md)。 |
+
+Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安装包；五平台签名/版本匹配及Mac公证已验证。中继生产地址仍未设置。[实测与发行记录](../testing/2026-11-06-relay-delivery.md)。

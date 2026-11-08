@@ -1,8 +1,160 @@
 # 后端 API
 
+小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
+
+
+## 默认远程访问限制（2026-11-06）
+
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| 关闭密码时的私有接口 | 仅 trusted-local 可达；远程 HTTP `401 auth_setup_required`、runtime WebSocket `4401`。不触发模型或业务处理。 |
+| `GET /api/auth/status` | 关闭时增加 `setup_required`；authenticated 仅表示当前调用者是否可信本机。 |
+| 桌面 / 手机登录入口 | 未设置密码显示本机设置指引；重新检查后正常登录。 |
+
+详见 [API Auth](api-auth.md)。
+
+## 硅基流动固定实例（2026-11-07，待随应用发布）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 普通 LLM 实例 | Qwen3-8B 与 Qwen3.5-4B 各是一个固定实例，与自有渠道共用实例列表、默认链和模块链；卡片标注只读，只有测试入口，不能编辑、删除、停用或复制。 |
+| 独立 Embedding | 在原 Embedding Provider 下拉选择硅基流动 BGE-M3（1024维）或本地 Ollama；与聊天实例独立，不覆盖另一份隐藏配置。 |
+| 初始化与切换 | 初始化保存普通实例和向量配置；PC / 插件可把另一免费实例加入备用链，手机可选择主实例，完整链编辑通过 PC 设置。选择免费服务不隐式添加付费备用。 |
+| 安装、探测与通知 | 内置实例测试自动准备签名组件，普通实例探测只测该实例，Embedding 单独探测。凭据通知按实际启用能力保留，状态刷新保留恢复按钮和未保存草稿。 |
+
+公开接口：内置实例的 `read_only=true` 由后端计算；`PUT /api/config` 拒绝其任意字段修改及新建副本，整体替换实例列表时保留被省略的内置项；仅改变调用链可生效。`GET/PUT /api/config` 使用 `llm.instances`、`default_chain`、`routes` 与 `embedding`；`POST /api/config/probe-service` 使用 `kind=llm_instance`（带 `instance_id`）或 `kind=embedding`；模型发现返回获批的两个 ID。组件就绪和凭据通知仍通过兼容的 `llm.sponsored` 元信息输出，组件安装沿用 `POST /api/config/sponsored/prepare`，不向页面暴露共享 Key、路径或任意运行命令。
+
+共享前端 `syncInstance()` / `syncEmbedding()` 只控制普通字段；`renderNotice()` / `updateStatus()` 渲染无凭据通知。原 `mount()` 独立方案表单已移除。已有免费开关配置在后端迁移为实例和链。免费实例仅启用文本 / JSON / 工具能力，BGE 不支持图片向量；图片能力是可选能力，不影响初始化。
+
+## 抖音账号导入来源校验（2026-11-06）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/sources/dy/task-result` | ✅ | `bootstrap_profile` 回报非零 `debug.dom_items_harvested`，或携带视频却明确回报 `api_items_harvested=0` 时，在 staging / 事件入库前拒绝，任务记 failed，返回 HTTP 200 `{ok:true,rejected:"untrusted_bootstrap_source"}`。 |
+
+旧客户端可能在身份识别失败后，把同一批推荐卡片重复当作作品、收藏和喜欢。新扩展只返回本人 API 记录；后端额外阻止明确承认 DOM 回退或零 API 的结果。混合 DOM/API 包无法逐项辨别来源，整包拒绝；无 provenance 字段的历史协议保持兼容，因此该检查不等于验证任意客户端主张。既有终态重试仍 ignored，已冻结 final 的崩溃恢复仍使用原 canonical payload，后续回调不能推翻它。有效 API partial 和真实空列表保留原协议。
+
+## 手机连接地址发现（2026-10-26）
+
+| 已实现能力 / 公开 API | 行为 |
+| --- | --- |
+| `GET /api/qr-info` | 保留 `lan_ip`，新增 `api_host`、`api_port` 和 `tailscale_addresses: [{host, port, source}]`；`source` 为 `system` 或 `embedded`。 |
+| 独立网络 | LAN 探测排除 Tailscale 的 IPv4 / IPv6 地址；系统网卡枚举与 fresh LAN 探测在线程中并行，不运行模型探针。 |
+| 实际监听信息 | CLI / 桌面包将本次有效 host / port 写入 app state；扫码使用启动覆盖后的端口，应用内 helper 使用 ready 事件的端口。 |
+| `GET /m/` 手机入口 | 经反代去除部署前缀后仍使用原入口；手机页面从当前 `/m/` 位置解析 API、共享脚本、语言目录、封面与 WebSocket 地址，保留二维码中的协议、端口和路径前缀。无新增接口或配置。 |
+
+端点继续公开、降级模式可用，响应 `Cache-Control: no-store`；应用内节点仅在功能开启且状态为 `ready` 时公布。只返回地址，不返回入网凭据、登录 URL 或会话。新旧前端 / 后端兼容；详见[连接协议](../mobile-connection.md)。
+
+## Jev 草稿完整评估探测（2026-11-06）
+
+| 接口 / 能力 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/config/probe-service`，`kind="jev"` | ✅ | 对当前配置内存副本应用 `config.decision` / `config.discovery.jev_evaluation` 草稿，走真实 native provider 与完整 8 题评估；仅一次 HTTP 尝试，传输最长 15 秒、总计 20 秒 |
+| `api.jev_probe.probe_jev_config(config, update)` | ✅ | 固定合成画像与内容，不读取真实画像、不落候选、不写配置、不热重载；有效完整结果才返回 `ok=true` |
+| 三端草稿状态 | ✅ | 复用配置写鉴权；请求中禁止重复点击，编辑后旧成功状态失效；错误只返回安全原因码，不返回 Token 或远端正文 |
+| `GET /api/runtime-status` → `candidate_eval_invalid_evidence_blocked` | ✅ | 默认 0；统计时效矛盾及 native INVALID 的停放候选，不混入输入超限数；同上下文不重复付费，修正端点或有效上下文后有界恢复 |
+
+本地装不下返回 `input_budget_exhausted` 且不发送请求。测试使用固定模型及双预算，
+不会切换到 LLM；按钮提示可能计费。合成测试成功不代表真实大画像或模型质量均通过。
+后台 Jev 的候选本地打包不再同步占住 API 事件循环；接口、返回格式、请求次数和
+生产评估预算不变，取消等待不会继续派发模型请求。
+
+## Jev 预算停放诊断（2026-10-27）
+
+| 接口 / 字段 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/runtime-status` → `candidate_eval_input_budget_blocked` | ✅ | 新增整数，默认 0；表示持久化的输入预算停放数，读取不触发模型请求 |
+| `candidate_eval_last_error` | ✅ | 沿用已有字段，预算停放提供 `input_budget_exhausted` 原因及扩大容量/减少必需输入建议；不暴露画像、正文或 Token |
+
+现有 `PUT /api/config` / apply-status 仍是三端共用配置入口；保存不同容量后下一次有效唤醒重新检查停放项，
+保存相同设置不会重复付费评估。未新增配置字段、CLI 命令、安装依赖或付费探测开关。
+
+## 抖音发现冷却与失败回传（issue #332）
+
+| 行为 | 状态 | 说明 |
+|---|---|---|
+| 新发现任务领取暂停 | ✅ | 共享 `dy_tasks` 冷却生效时，`GET /api/sources/dy/next-task` 不领取 pending search / hot / feed；没有其它合格任务时仍返回 204。原已领取 lease / staged 修复和显式 bootstrap 按原协议处理。 |
+| 有效 partial 后失败 | ✅ | 扩展先 POST partial 并等 2xx，再 POST failed；新采集的视频因此能与错误一起保留。直接在 failed body 放 videos 不代替 partial 协议。 |
+
+公开路径与响应字段未变；冷却时刻由 `DyTaskQueue.discovery_retry_at()` 读取，并在客户端日志显示。
+不能把已连接、来源 ready 或 204 当作本轮上游取数成功，也不能把冷却当作登录凭据失效。
+
+热词的跨客户端轮换复用已有任务 payload，不增加 REST 字段或改变领取 / 终态协议。
+已入队的 `hot_items.sentence_id` 保留为 6 小时内的选择记录；其它类型和过期选择不参与。
+
+## 扩展在线心跳跨进程共享（issue #332）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `WS /api/runtime-stream` | ✅ | 连接和断开立即发布共享 presence；服务端 reader 在空闲时每 20 秒续约，正常与降级 API 共用同一 reader。保持既有握手鉴权、事件格式和多客户端计数。 |
+| `GET /api/sources/dy/next-task` | ✅ | worker 可依据共享在线状态正常入队后，仍通过现有原子 claim 返回任务；无可领取任务继续返回 204。 |
+
+组合根将正常与降级 `PresenceTracker` 固定绑定 `data/runtime/extension_presence.json`。full/discovery worker 读取原子替换的文件，不依赖 API 内存中的 WebSocket 计数，也不会用自己的零连接覆盖在线状态。活动租约超过 60 秒失效；正常断开按已有 grace 配置处理。HTTP/WS 客户端、扩展资源、登录态和四个产品面的协议不变，无客户端升级要求。独立的 direct-cookie HTTP 403 仍由 `douyin direct request returned HTTP 403` 日志识别；共享 presence 只修复插件任务生产准入，不声称解决上游风控或所有 `empty_signals` 原因。
+
+## 桌面首屏静态脚本（2026-10-23）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `GET /web`、`/web/`、`/web/index.html` | ✅ | 返回同一份 `no-store` 页面，将 12 个依赖脚本按原顺序替换为一次带内容版本的请求；主题和其他内联启动代码保持原位。 |
+| `GET /web/assets/desktop-bundle.js?v=<version>` | ✅ | 只拼接固定包内清单，不接受用户文件路径。应用内保留最近两个构建版本；命中版本返回对应的原始或预压缩 gzip 内容、表示相关的 ETag、`Vary: Accept-Encoding` 与一年 immutable 缓存。未知或已淘汰版本返回 `404 no-store`，不把新内容放进旧 URL。无版本请求使用 `no-cache`；不接受任何可用编码时返回 406。 |
+
+`api.desktop_assets.DesktopAssets` 检查 HTML、全部 15 个脚本和 5 个样式表的文件签名，输入变化才重建内容摘要及 gzip；构建由锁合并，压缩在同步路由工作线程执行。简体、聊天、来源管理、扫码、收藏同步等代码仍使用相同的独立源码；来源管理脚本与样式均参与版本失效，`/shared/*` 与原桌面脚本路径继续服务移动端、插件及开发工具。`gzip;q=0` 被正确保留，外层压缩中间件不会再次压缩已协商内容。静态脚本仍公开，业务 API 的密码门禁不变。无需 Node 构建、额外依赖或配置，安装包仍使用原包内资源。
+
+## 首屏健康查询不阻塞请求（2026-10-23）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/health` | ✅ | LAN 地址探测转到工作线程；并发冷查询合并一次探测，仍缓存 30 秒。慢 `ipconfig` / `ifconfig` 不再阻塞推荐、封面或 ping 的 HTTP 事件循环；探测异常不缓存，后续请求可重试。 |
+| `GET /api/qr-info` | ✅ | 每次强制重新探测地址，与健康探测串行发布结果；保留 `lan_ip`，新增有效监听参数与独立 Tailscale 地址。端点继续公开。 |
+
+网页、插件、移动端共用这些端点；不新增配置、依赖或 CLI 行为，git / Docker / 桌面安装均使用同一路径。并发 HTTP 回归覆盖慢探测期间 ping 可用、健康查询合并、二维码新地址胜出及失败后重试。
+
+## 封面转发与显示缓存（2026-10-23）
+
+`GET /api/image-proxy` 对独立图片服务复用 app-owned HTTPX 连接池，关闭应用时释放；内部连接不继承系统代理，连接超时 1 秒、读取超时 30 秒，服务不可用时仍回退进程内 coordinator，非 200 响应仍原样转发。成功响应与鉴权契约不变。独立服务和进程内模式共用 `image_cache.render_cover_for_display`，避免原图命中磁盘后重复缩图。
+
+扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
+
 `POST /api/recommendations/refresh` 的显式补库现包含 Instagram：来源启用且有配额缺口时运行一次有界 producer → eval → copy，不受后台 scheduler 开关影响。来源失败投影 `manual_refresh_state=failed` 和 `refresh.failed`，不再变成“成功但无候选”；部分已入库内容不回滚。`GET /api/image-proxy` 对每个重定向执行 DNS/IP 拒绝与数字连接地址固定，非公网目的地址返回 403，非标准端口返回 400；证书验证、大小和媒体类型限制保持。
 
 `POST /api/init` 选择 Instagram 时，第 4 阶段复用正式 topic/creator producer，任务在通知扩展前登记到该 init run（含恢复采用的任务），因此 `next-task` 的 init-only ID 过滤继续生效。未选择 B 站的 Instagram 初始化不再调用旧的 B 站四策略；关闭后台 scheduler 仍可显式执行。小批候选即时评估并同步生成文案，不改评分阈值；其它旧来源的第 4 阶段路由本次保持兼容。
+
+## Jev 完整候选评估配置
+
+`GET/PUT /api/config` 支持 `discovery.eval_scorer="jev"` 及
+`discovery.jev_evaluation` 的预算 / 受控词表。只读 `discovery.jev_provider` 报告
+provider 准备情况，不返回凭据。保存前校验启用状态、固定版本、凭据和多模态 / 预过滤
+冲突，失败不得写配置或留下表面成功的旧路由。运行时的完整评估器由共享独立 decision
+provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索与推荐表达保持原有 LLM 路由。
+
+`discovery.jev_provider.context_limits` / `context_budget` 分别只读暴露容量登记表与当前精确模型的
+生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
+完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
+改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+自动预算现在使用容量整数作为字节上限（标准 64,000/32,000 bytes），不再额外扣 25%；
+`JevEvaluationConfigOut.max_candidates_per_request` 默认 64，实际合批取决于双容量。
+三端读取同一合同并保留旧手动小上限，readiness 仍只说明配置就绪，不等于已联网测试。
+
+`PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
+（完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、
+`timeout_seconds`、`max_attempts`、`context_limits`。可与 `discovery.eval_scorer="jev"`
+原子保存；无效更新不写配置。`api_key` 省略/空串保留，`clear_api_key=true` 明确清除，
+不能同时替换和清除。URL 变化必须重新填写 Token；外部仅 HTTPS，回环测试可 HTTP，
+禁止 URL 账号密码/query/fragment 及重定向。容量表是完整替换，`{}` 恢复自动。
+共享表单提交其它模型条目的副本，避免编辑一个模型丢掉别的登记。
+
+只读 `discovery.jev_provider` 新增 `endpoint_url`、`api_key_configured`、
+`credential_source=config|environment|missing`、超时和重试次数。任何响应（包括旧
+`reveal_keys=true`）、校验失败和 CLI 都不回显 Token。保存值优先于环境变量；仅本机
+TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
+202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
+
+`decision.providers.jev.base_url` 是设置更新的可选输入别名，与 `endpoint_url` 互斥；
+解析为完整原生 endpoint 后持久化，读取仍返回 `endpoint_url`。服务根或代理前缀追加
+`/v1/systemone`，已有 `/v1` 只补 `/systemone`。完整 endpoint 不允许误填进 Base 模式；
+自定义原生路径走 `endpoint_url`。相同解析目标可沿用 Token，新目标必须同时提供新 Token。
+只读 `discovery.jev_provider.base_url_supported=true` 声明此写入能力；旧后端未声明时
+共享表单保留完整地址模式，不发送可能被旧后端忽略的 Base 字段。协议、HTTPS 和凭据规则不变。
 
 ## 概述
 
@@ -20,6 +172,23 @@
 | 初始化 / embedding 诊断 | ✅ | 正式请求与诊断共享 CPU 选择，CPU 也失败时保留具体故障；不把 `/api/version` 成功当作模型可用。 |
 
 ## 推荐通知测试生命周期
+
+### 默认关闭的导演屏协议
+
+启用 `[director]` 后，`GET /api/recommendations?stream_ref=default` 仅恢复精确屏，不 top-up、不请求模型；空屏返回 `director.requires_generation=true`。关闭时不增加空 director/batch 字段，保持旧响应形状。
+
+| 端点 | 合同 |
+|---|---|
+| `GET /api/recommendations/director/status` | enabled / mode / strategy，无模型请求 |
+| `POST /api/recommendations/director/generate` | request_id、stream_ref、intent=NEXT/STAY、limit=1..20、source_platform、explicit_intent、excluded_bvids；稳定 ID 幂等，返回精确屏及 post-commit 库存 |
+| `GET /api/recommendations/director/restore` | stream_ref 对应最新屏，纯恢复 |
+| `POST /api/recommendations/director/present` | batch_ref、ack_id、item_keys，只 ACK 实际可见子集；重试去重，错批次／卡片 409 |
+| 既有 `append` / `reshuffle` | 启用时 NEXT / STAY，接受稳定 request_id / stream_ref / explicit_intent；首次无根 STAY 返回 409，由客户端显式 NEXT |
+| 既有 `feedback` / `recommendation-click` | 可选 batch_ref；先核对 exact recommendation ID，canonical ingress 后投影同一事件，不重复写学习事件 |
+
+状态改变、候选失效、计划 CAS 或配置换代冲突返回 409，不能部分提交。三端共用 `shared/director-client.js`，区分恢复、生成、可见 ACK；隐藏页和预加载不是曝光。新前缀仍走既有推荐进程代理和鉴权。配置使用 TOML，未增加图形设置／付费探测。详见 [导演](director.md)。
+
+### 通知回归约定
 
 `POST /api/recommendations/append` 会在响应关键路径外安排推荐池状态通知。验证该通知的测试使用 `httpx.AsyncClient` + `ASGITransport`，让请求和有界异步等待共享 pytest 的事件循环；不得在请求级同步 `TestClient` portal 已关闭后用阻塞等待验证后台任务。追加推荐回归覆盖无延迟及 50ms 状态读取延迟，并保持完整响应与通知内容断言。生产接口、通知调度及应用启动流程不变。
 
@@ -131,6 +300,8 @@ guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST 
 配置、SQLite、画像、白名单 UI 偏好和其它数据都要等下一次 `openbiliclaw start`、`openbiliclaw serve-api` 或桌面包启动取得 migration runtime lock 并成功 apply 后才生效；status 的 staged / applied 响应都只可能携带白名单 `frontend`，桌面端会忽略 staged 值。`state="applied"` 后，每个浏览器会把 `migration_id` 记为本地一次性交接回执，只应用该迁移的偏好一次；之后用户修改主题或滚动设置，即使旧 applied status 仍持久存在也不会再次覆盖。详见[存储层的可移植数据迁移](storage.md#可移植数据迁移)。再次提交合法迁移包会替换尚未应用的暂存包，也可在重启前调用 `DELETE /api/migration/pending` 取消。
 
 ## GitHub 配置、初始化与推荐 DTO
+
+已实现修复（2026-11-05）：`POST /api/init` 的 GitHub 来源选择一直传递到正式补池入口；公开 Star 画像生成后，使用 GitHub producer、同步评估及推荐文案，不落入 B站旧发现计划。接口字段不变。
 
 `GET /api/config` 的 `sources.github` 返回启用状态、公开用户名、固定
 `token_env="OPENBILICLAW_GITHUB_TOKEN"`、三种 discovery mode、预算 / 节流和 bootstrap
@@ -436,8 +607,12 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 
 ## B 站与抖音浏览器任务边界
 
+`DyTaskQueue.fail()` 在原子终态转换中保留已接收的 `videos`、scope counts 和 debug，并追加失败原因。
+客户端可以继续评估已接收的发现候选，但任务状态仍为 `failed`；迟到回调不能覆盖终态或 staged final。
+
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
+| `POST /api/sources/dy/task-result` | ✅ | 接收 partial 后的失败保留原视频与 scope counts；原子 failed / staged final 仍阻止迟到结果覆盖，不把 partial 的可用性冒充任务整体成功。 |
 | `POST /api/sources/bili/task-result` | ✅ | B 站扩展搜索任务 payload 带 `discovery_lane="recent"` 时，结果仍以 `source_strategy="bili-extension-search"` 进入统一 evaluator，同时保存 `source_context="bili-extension-search:recent"` 和 raw lane provenance；该标记不改变相关性、阈值或 admission。 |
 | `GET /api/sources/dy/next-task` | ✅ | 对 legacy discovery 的 `dy_tasks` 执行 durable source-wide single-flight：`BEGIN IMMEDIATE` 内若已有未超过 15 分钟的 `in_progress` lease，则返回 bodyless 204，不让另一个扩展 ID/Profile 领取第二条任务；过期或缺失 `claimed_at` 的 lease 可按 FIFO 重领。此门禁不涵盖先于 legacy queue 检查的 native-save job。 |
 | `GET /api/sources/tiktok/next-task` | ✅ | 对 `tiktok_tasks` 执行与抖音相同的 durable source-wide single-flight 领取（`BEGIN IMMEDIATE` + 15 分钟 stale lease 重领）；无任务返回 bodyless 204。scheduler 增量任务在来源或总开关关闭时先被标记 `failed`，不参与领取。 |
@@ -589,6 +764,11 @@ popup、移动 Web 与桌面 Web 只有 durable 对话中的假设卡片保留 c
 批准/拒绝可以先于最终回复完成；保存整轮事件时会保留并去重此前落库的
 `approval_result`，使完成后的历史与重连保持执行结局。
 
+失败结算也在同一 lease 内完成，避免排队 worker 在失败尚未落盘时重复启动工具。
+首个模型输出或工具事件会持久标记已开始；中断后的恢复只报告失败，不重放这轮执行。
+只有无输出、无工具动作的免费实例瞬时错误允许最多两次持久重试，重试判定与失败写入
+只执行一次；已取得 lease 的失败和尚未准入的等待超时分别处理。
+
 ## Runtime stream 保活与重连
 
 `GET ws://.../api/runtime-stream` 在 20 秒没有业务事件时发送 `{"type":"runtime.heartbeat","sent_at":"..."}`。心跳与普通事件共用唯一 writer，避免并发 `send_json`；鉴权撤销仍在每次发送前和 15 秒 watchdog 中 fail closed。桌面 Web 收到心跳即确认“实时连接正常”，异常 close 则显示“实时流重连中”、记录 close code/reason，并按 3 秒节奏重连；页面进入后台时仍按 visibility 生命周期主动关闭，不把该主动关闭显示成后端离线。
@@ -687,3 +867,32 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 安装预算 1200 秒，初始化与连接独立预算 300 秒，未放宽签名、监听归属和握手校验。
 
 托管 Ego 状态约定：`setup_state=ready`、`installed=true` 且 `connection_state=offline` 是环境已准备但宿主因空闲退出，`available=false` 不代表需要重新安装。来源组件显示按需后台启动；外部宿主、失败或未验证状态不适用。
+
+
+### 普通实例探测与模型切换
+
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| `POST /api/config/probe-service` | `llm_instance` 构造以目标 ID 为首项的临时 registry，其他未配置的默认实例不拦截探测；不会用备用结果冒充目标成功。Embedding 与 LLM 独立探测。 |
+| `POST /api/config/discover-models` | 免费实例直接返回两个签名目录模型 ID，不请求任意上游 URL。 |
+| `PUT /api/config` | 免费实例与向量模型、维度、凭据和地址覆盖在保存前拒绝；切换 Embedding Provider 清除旧凭据和地址，避免跨服务携带。 |
+| `RuntimeContext.try_apply_llm_instance_config(new_config)` | 完整比较配置，仅默认实例链及其兼容别名变化时即时应用，实例本身不可编辑；仍经过原保存/修订/回滚锁。PC/插件整表保存附带未修改的 Tailnet 字段也可进入此路径，不等待学习队列。实际网络/凭据修改仍走重建或重启。新请求查普通 registry，独立 worker 通过现有 generation 重启同步。 |
+
+旧 `kind=sponsored` 草稿探针保留兼容用途；新客户端统一使用普通探针。业务不再调用全局 sponsored 拦截器，内部 SDK 设置不覆盖模块路由。
+
+### 免费聊天恢复的 SSE 与持久状态契约
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| 免费实例错误链识别 | 流式入口和后台回复 worker 都通过 `find_sponsored_error()` 识别 adapter / registry / service 包装中的实际错误码；仅无输出、无工具动作的瞬时错误允许最多两次持久重试，鉴权/策略等错误立即终止。 |
+
+`POST /api/chat/agent/stream` 对尚未开始的免费请求遇到瞬时故障时返回 `event: error`，附 `retrying: true`；消息保持 `pending`，现有 `GET /api/chat/turns/{turn_id}` 最终返回 completed/failed。后台最多两次附加尝试（SDK内部另有有界重试），失败次数以 `payload.agent_events` 中的 `sponsored_retry` 错误码事件保存，重启不清零。首个delta只保存 `execution_started` 边界，不保存内容片段；语义/工具事件照常保存。已有事件的未完成Agent轮次被显式终止，防止恢复时重复执行写操作。完成消息重连只回放；HTTP订阅断开不取消API持有的执行任务。未知事件可由旧客户端忽略。Key/策略等持久故障直接终止，并沿用设置/消息通知。
+
+四端范围：插件与手机API保留 `agentRetrying` 标记，页面继续轮询而不将消息本地标为failed；桌面已有历史刷新读取权威状态并显示后台重试提示；CLI复用SDK传输重试，不创建HTTP持久消息。[验收与限制](../testing/2026-11-05-sponsored-resilience.md)。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| api | 设置和连接探测识别配置的 HTTPS 免费中继，准备组件时不再下载本地 Key SDK。独立 `sponsored_relay.create_relay` 暴露 POST `/v1/session`、POST `/v1/task`、GET `/healthz`；它不挂在用户后端，不允许 URL/model/header 覆盖，不读取用户数据库。部署保持 worker loopback + Caddy HTTPS，详见 [部署](../sponsored-relay.md)。 |

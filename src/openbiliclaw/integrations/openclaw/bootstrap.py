@@ -72,6 +72,7 @@ class OpenClawAdapterServices:
     account_sync_service: AccountSyncService | Any
     event_ingress: EventIngressService | Any
     saved_sync_service: Any = None
+    director_runtime: Any = None
 
 
 def _build_account_sync_x_components(
@@ -272,6 +273,21 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         serve_outbox=ServeOutbox(config.data_path / "runtime" / "serve_outbox.jsonl"),
         reply_style=str(getattr(soul_cfg, "reply_style", "")),
     )
+    from openbiliclaw.recommendation.director.runtime import build_director_runtime
+
+    # Share the same controller/store/provider lifecycle as API and CLI. A
+    # configured route must either build successfully or report its real error.
+    director_mode = getattr(getattr(config, "director", None), "mode", "off")
+    filter_mode = getattr(
+        getattr(getattr(config, "discovery", None), "semantic_filter", None), "mode", "off"
+    )
+    director_runtime = (
+        build_director_runtime(config, database, recommendation_engine, llm_service)
+        if director_mode != "off"
+        or filter_mode != "off"
+        or getattr(config.discovery, "eval_scorer", "llm") == "jev"
+        else None
+    )
 
     from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
 
@@ -281,6 +297,14 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         search_budget_total=30,
     )
     discovery_cfg = getattr(config, "discovery", None)
+    semantic_filter_options: dict[str, Any] = (
+        {
+            "semantic_filter": director_runtime.semantic_filter,
+            "jev_evaluator": director_runtime.jev_evaluator,
+        }
+        if director_runtime
+        else {}
+    )
 
     discovery_engine = ContentDiscoveryEngine(
         llm_service=llm_service,
@@ -289,7 +313,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         concurrency=concurrency,
         eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
         eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
+        **semantic_filter_options,
     )
+    if getattr(discovery_cfg, "eval_scorer", "llm") == "jev":
+        recommendation_engine.bind_content_evaluator(discovery_engine)
     search_strategy = SearchStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
@@ -405,6 +432,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     if bool(getattr(discovery_cfg, "inspiration_search_enabled", False)):
         from openbiliclaw.config import derive_inspiration_breadth_params
         from openbiliclaw.discovery.inspiration_provider import (
+            InspirationGroundingKeys,
             build_inspiration_search_provider,
             build_platform_source_backends,
         )
@@ -415,9 +443,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         inspiration_provider = build_inspiration_search_provider(
             getattr(discovery_cfg, "inspiration_search_backends", None),
             database=database,
-            exa_api_key=str(getattr(discovery_cfg, "exa_api_key", "") or ""),
-            you_api_key=str(getattr(discovery_cfg, "you_api_key", "") or ""),
-            serply_api_key=str(getattr(discovery_cfg, "serply_api_key", "") or ""),
+            grounding_keys=InspirationGroundingKeys.from_discovery_config(discovery_cfg),
             platform_backends=build_platform_source_backends(
                 config,
                 database=database,
@@ -620,6 +646,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         account_sync_service=account_sync_service,
         event_ingress=event_ingress,
         saved_sync_service=saved_sync_service,
+        director_runtime=director_runtime,
     )
 
 

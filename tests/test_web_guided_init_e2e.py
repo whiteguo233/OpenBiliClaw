@@ -270,6 +270,10 @@ def guided_init_server() -> tuple[str, GuidedInitStub]:
 
         def do_GET(self) -> None:  # noqa: N802
             path = self.path.split("?", 1)[0]
+            if path == "/m/icon-maskable-192.png":
+                return self._serve_file(ROOT / "src/openbiliclaw/web/icon-maskable-192.png")
+            if path.startswith("/i18n/ui/"):
+                return self._serve_file(ROOT / "src/openbiliclaw/i18n/ui" / path.rsplit("/", 1)[-1])
             if path.startswith("/shared/"):
                 # The desktop page and the setup wizard both load the shared
                 # source-status module from the backend's /shared mount. Without
@@ -1667,3 +1671,223 @@ def test_web_e2e_bangumi_only_renders_backend_rejection_naming_the_extension(
     # The extension tier is named, not just token / username.
     assert "bgm.tv" in text
     assert start.is_enabled()
+
+
+@pytest.mark.parametrize("locale", ["en", "zh-Hant", "zh-Hans"])
+def test_setup_language_persists_and_translates(
+    guided_init_server: tuple[str, GuidedInitStub], chromium_page: Any, locale: str
+) -> None:
+    base_url, state = guided_init_server
+    page = chromium_page
+    page.goto(f"{base_url}/setup/")
+    page.wait_for_function("document.querySelector('#model').value === 'compat-model'")
+    page.locator("#setupLanguage").select_option(locale)
+    page.wait_for_function("setupLocaleSaved && setupLocaleTouched")
+    page.wait_for_function("locale => document.documentElement.lang === locale", arg=locale)
+    assert state.config_puts[-1] == {"language": locale}
+    assert page.locator("#setupLanguage option").all_text_contents() == [
+        "简体中文",
+        "繁體中文",
+        "English",
+    ]
+    catalog = json.loads((ROOT / f"src/openbiliclaw/i18n/ui/{locale}.json").read_text())
+    assert page.locator('[data-panel="0"] h2').inner_text() == catalog["messages"]["连接 AI 大脑"]
+    page.reload()
+    page.wait_for_function("locale => document.documentElement.lang === locale", arg=locale)
+    assert page.locator("#setupLanguage").input_value() == locale
+
+
+def test_setup_language_save_failure_is_visible_and_retryable(
+    guided_init_server: tuple[str, GuidedInitStub], chromium_page: Any
+) -> None:
+    base_url, state = guided_init_server
+    state.config_put_status = 403
+    page = chromium_page
+    page.goto(f"{base_url}/setup/")
+    page.locator("#setupLanguage").select_option("en")
+    page.wait_for_function(
+        "document.querySelector('#setupLanguageStatus').textContent.includes('Could not save')"
+    )
+    assert page.evaluate("setupLocaleSaved") is False
+    state.config_put_status = 200
+    page.evaluate("ensureSetupLocaleSaved()")
+    assert page.evaluate("setupLocaleSaved") is True
+    assert not page.locator("#setupLanguageStatus").is_visible()
+
+
+def test_i18n_updates_dynamic_attributes_and_restores_source(chromium_page: Any) -> None:
+    page = chromium_page
+    page.set_content(
+        '<button title="开始初始化">开始初始化</button><p data-i18n-skip>开始初始化</p>'
+    )
+    page.add_script_tag(path=str(ROOT / "src/openbiliclaw/web/shared/i18n.js"))
+    page.evaluate("""async () => {
+      await OpenBiliClawI18n.init({locale: 'en', fetchCatalog: async locale => ({
+        messages: locale === 'en' ? {
+        '开始初始化': 'Start initialization', '重试初始化': 'Retry initialization'
+      } : {}})});
+      document.querySelector('button').title = '重试初始化';
+    }""")
+    page.wait_for_function("document.querySelector('button').title === 'Retry initialization'")
+    assert page.locator("p").inner_text() == "开始初始化"
+    page.evaluate("OpenBiliClawI18n.setLocale('zh-Hans')")
+    assert page.locator("button").get_attribute("title") == "重试初始化"
+    assert page.locator("button").inner_text() == "开始初始化"
+
+
+def test_i18n_last_language_wins_and_failed_catalog_can_retry(chromium_page: Any) -> None:
+    page = chromium_page
+    page.set_content("<p>开始初始化</p>")
+    page.add_script_tag(path=str(ROOT / "src/openbiliclaw/web/shared/i18n.js"))
+    result = page.evaluate("""async () => {
+      let release;
+      let attempts = 0;
+      await OpenBiliClawI18n.init({locale: 'zh-Hans', fetchCatalog: async locale => {
+        if (locale === 'en') {
+          attempts++;
+          if (attempts === 1) throw new Error('offline');
+          if (attempts === 2) await new Promise(resolve => { release = resolve; });
+          return {messages: {'开始初始化': 'Start initialization'}};
+        }
+        return {messages: {'开始初始化': locale === 'zh-Hant' ? '開始初始化' : '开始初始化'}};
+      }});
+      await OpenBiliClawI18n.setLocale('en');
+      const older = OpenBiliClawI18n.setLocale('en');
+      for (let n = 0; !release && n < 100; n++) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      if (!release) throw new Error("Failed catalog was cached instead of retried");
+      await OpenBiliClawI18n.setLocale('zh-Hant');
+      release();
+      await older;
+      return {locale: OpenBiliClawI18n.locale,
+              text: document.querySelector('p').textContent, attempts};
+    }""")
+    assert result == {"locale": "zh-Hant", "text": "開始初始化", "attempts": 2}
+
+
+def test_setup_late_config_does_not_override_language_choice(
+    guided_init_server: tuple[str, GuidedInitStub], chromium_page: Any
+) -> None:
+    base_url, state = guided_init_server
+    state.config_override = {
+        "config": {
+            "language": "zh-Hans",
+            "llm": {
+                "default_provider": "openai_compatible",
+                "openai_compatible": {"model": "late-model", "base_url": "https://example.test/v1"},
+            },
+        }
+    }
+    page = chromium_page
+    page.add_init_script("""(() => {
+      const original = window.fetch;
+      window.fetch = async (url, options) => {
+        if (url === '/api/config' && !options?.method) {
+          await new Promise(resolve => { window.releaseConfig = resolve; });
+        }
+        return original(url, options);
+      };
+    })();""")
+    page.goto(f"{base_url}/setup/")
+    page.locator("#setupLanguage").select_option("en")
+    page.wait_for_function(
+        "setupLocaleSaved && setupLocaleTouched && typeof window.releaseConfig === 'function'"
+    )
+    page.evaluate("window.releaseConfig()")
+    page.wait_for_function("document.querySelector('#model').value === 'late-model'")
+    assert page.locator("#setupLanguage").input_value() == "en"
+    assert page.evaluate("OpenBiliClawI18n.locale") == "en"
+    page.evaluate("""async () => {
+      await Promise.all([
+        applySetupLocale('zh-Hant', {persist: true}),
+        applySetupLocale('en', {persist: true}),
+        applySetupLocale('zh-Hans', {persist: true})
+      ]);
+    }""")
+    assert [item["language"] for item in state.config_puts] == ["en", "zh-Hant", "en", "zh-Hans"]
+    assert page.locator("#setupLanguage").input_value() == "zh-Hans"
+    assert page.evaluate("OpenBiliClawI18n.locale") == "zh-Hans"
+
+
+@pytest.mark.parametrize("width", [375, 768, 1024, 1440])
+def test_setup_language_picker_fits_viewport(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+    width: int,
+    tmp_path: Path,
+) -> None:
+    base_url, _ = guided_init_server
+    page = chromium_page
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(f"{base_url}/setup/")
+    page.locator("#setupLanguage").select_option("en")
+    page.wait_for_function("OpenBiliClawI18n.locale === 'en'")
+    bounds = page.locator("#setupLanguage").bounding_box()
+    assert bounds is not None and bounds["height"] >= 44
+    assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if width in {375, 1440}:
+        page.screenshot(path=str(tmp_path / f"setup-{width}.png"), full_page=True)
+
+
+def test_setup_failed_last_write_is_not_marked_saved_after_switching_back(
+    guided_init_server: tuple[str, GuidedInitStub], chromium_page: Any
+) -> None:
+    base_url, _ = guided_init_server
+    page = chromium_page
+    page.goto(f"{base_url}/setup/")
+    page.wait_for_function("document.querySelector('#model').value === 'compat-model'")
+    result = page.evaluate("""async () => {
+      const original = window.fetch;
+      let writes = 0;
+      window.fetch = async (url, options) => {
+        if (url === '/api/config' && options?.method === 'PUT') {
+          writes++;
+          return new Response('{}', {status: writes === 3 ? 500 : 200});
+        }
+        return original(url, options);
+      };
+      await Promise.all([
+        applySetupLocale('en', {persist: true}),
+        applySetupLocale('zh-Hant', {persist: true}),
+        applySetupLocale('en', {persist: true})
+      ]);
+      return {saved: setupLocaleSaved, writes};
+    }""")
+    assert result == {"saved": False, "writes": 3}
+
+
+@pytest.mark.parametrize(
+    "mode,label",
+    [
+        ("cloud", "硅基流动 BGE-M3 文本向量已就绪。"),
+        ("local", "本地 Ollama 文本向量已就绪。"),
+    ],
+)
+def test_setup_completion_reports_selected_embedding_mode(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+    mode: str,
+    label: str,
+) -> None:
+    base_url, state = guided_init_server
+    state.config_override = {
+        "config": {
+            "llm": {
+                "embedding": {
+                    "provider": "siliconflow_free" if mode == "cloud" else "ollama",
+                    "model": "BAAI/bge-m3" if mode == "cloud" else "bge-m3",
+                },
+                "sponsored": {
+                    "runtime_available": True,
+                },
+            }
+        }
+    }
+    state.set_initialized()
+    page = chromium_page
+    page.goto(base_url + "/setup/")
+    page.wait_for_selector('[data-panel="3"].active')
+    assert page.locator("#doneEmbedding").inner_text() == label
+    assert "已随包就绪" not in page.locator('[data-panel="3"]').inner_text()

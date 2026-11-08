@@ -1,0 +1,1106 @@
+{
+  "date": "2026-10-25",
+  "scope": "capability-increment",
+  "verdict": "incremental only",
+  "baseline": "7d613d9a",
+  "branch": "fix/issue-332-shared-presence",
+  "execution": {
+    "python_import": "/Users/white/workspace/OpenBiliClaw/.worktrees/issue332-shared-presence/src/openbiliclaw/__init__.py",
+    "isolated_api_port": 56625,
+    "api_worker_separate_processes": true,
+    "original_api_port": 18420,
+    "same_browser_profile_and_account": true,
+    "extension_id": "oegfehdndnlolhgmbbiibkilonegcndi",
+    "version": "0.3.231",
+    "store_release": false,
+    "runtime_evaluation_in_flight_during_restart": false,
+    "source_path": "DouyinDiscoveryService -> DouyinPluginSearchClient -> dy_tasks -> installed extension -> native requests -> callback -> normalizer -> candidate pipeline",
+    "producer_full_scheduler_e2e_this_phase": false
+  },
+  "preserved": {
+    "llm_route": true,
+    "discovery_config": true,
+    "score_threshold": 0.6,
+    "profile_files": [
+      {
+        "file": "memory/soul.json",
+        "unchanged": true
+      },
+      {
+        "file": "memory/preference.json",
+        "unchanged": true
+      },
+      {
+        "file": "memory/profile_overrides.json",
+        "unchanged": true
+      }
+    ],
+    "new_llm_calls": 0,
+    "model_evaluation_this_phase": false,
+    "upstream_social_mutations": []
+  },
+  "source_hashes": {
+    "phase_a": {
+      "extension/src/background/dy-task-dispatcher.ts": "6db929c99e3ef2028f5a969419604d8094ffb8811279ad09a18fded8b4cd271f",
+      "extension/src/content/douyin.ts": "76ed6bbbb8073a4d5fcd6d5a79b323c32c50c2f5e95c20936bbdf1ffa417a142",
+      "extension/src/main/dy-fetch-tap.ts": "dd2d796c86fcf8b18ac8a9f645554379a95df0c44762f8dc02259e763e92fb52",
+      "src/openbiliclaw/sources/dy_tasks.py": "05f8968438af2b75caa811601c357d175bede43929171b4f4defe48b48dd41de",
+      "src/openbiliclaw/sources/douyin_plugin_search.py": "59c68dd10f485f1fb29e0adf52e2c98ff1f2db88ca6bb2042564aadc525eacdd",
+      "src/openbiliclaw/runtime/douyin_producer.py": "daf98deaa7ef5e525c6833f874f5a9a0ddc1cc152c84b91ce60f099aa5137781"
+    },
+    "phase_b": {
+      "extension/src/background/dy-task-dispatcher.ts": "6db929c99e3ef2028f5a969419604d8094ffb8811279ad09a18fded8b4cd271f",
+      "extension/src/content/douyin.ts": "76ed6bbbb8073a4d5fcd6d5a79b323c32c50c2f5e95c20936bbdf1ffa417a142",
+      "extension/src/main/dy-fetch-tap.ts": "5ca76bc390993b08f4c0e60edd0a50836a9b2bd6120b476f9e523d5c3bf4d8a4",
+      "src/openbiliclaw/sources/dy_tasks.py": "05f8968438af2b75caa811601c357d175bede43929171b4f4defe48b48dd41de",
+      "src/openbiliclaw/sources/douyin_plugin_search.py": "59c68dd10f485f1fb29e0adf52e2c98ff1f2db88ca6bb2042564aadc525eacdd",
+      "src/openbiliclaw/runtime/douyin_producer.py": "a06acd08ae17983175bcb42645f9f5f6b94752e7e6288b1756411788a9988fda"
+    },
+    "final": {
+      "extension/src/background/dy-task-dispatcher.ts": "7228b2223eaf36ff3405cddfede6118b77999591fc94fcd8a1ca9ea1055381e0",
+      "extension/src/content/douyin.ts": "76ed6bbbb8073a4d5fcd6d5a79b323c32c50c2f5e95c20936bbdf1ffa417a142",
+      "extension/src/main/dy-fetch-tap.ts": "5ca76bc390993b08f4c0e60edd0a50836a9b2bd6120b476f9e523d5c3bf4d8a4",
+      "src/openbiliclaw/sources/dy_tasks.py": "05f8968438af2b75caa811601c357d175bede43929171b4f4defe48b48dd41de",
+      "src/openbiliclaw/sources/douyin_plugin_search.py": "59c68dd10f485f1fb29e0adf52e2c98ff1f2db88ca6bb2042564aadc525eacdd",
+      "src/openbiliclaw/runtime/douyin_producer.py": "a06acd08ae17983175bcb42645f9f5f6b94752e7e6288b1756411788a9988fda"
+    }
+  },
+  "build_hashes": {
+    "phase_a": {
+      "dist/background/service-worker.js": "57db227e2570760b44019ed065a7b1cc87dd91764468e685d5aa8847968ac53f",
+      "dist/content/douyin.js": "b624ec9548f5272642442103a0583e13672259e92b00e6e00238814c0ee80809",
+      "dist/main/dy-fetch-tap.js": "4b0e8fffdde089e27d6106390f6c99c7ec9a86464972433784a0a40ea685f435"
+    },
+    "phase_b": {
+      "dist/background/service-worker.js": "57db227e2570760b44019ed065a7b1cc87dd91764468e685d5aa8847968ac53f",
+      "dist/content/douyin.js": "b624ec9548f5272642442103a0583e13672259e92b00e6e00238814c0ee80809",
+      "dist/main/dy-fetch-tap.js": "e3ebcb9e48f795983023e8852bf5c6ce86a78d29c1e1b7dc49b928a6df753e4c"
+    },
+    "final": {
+      "dist/background/service-worker.js": "a32bb0d0f93b35c752cde0f84e7cf9d8dc30f2be21cbdf76d0f5c39f63e0531d",
+      "dist/content/douyin.js": "b624ec9548f5272642442103a0583e13672259e92b00e6e00238814c0ee80809",
+      "dist/main/dy-fetch-tap.js": "e3ebcb9e48f795983023e8852bf5c6ce86a78d29c1e1b7dc49b928a6df753e4c"
+    }
+  },
+  "reload_final": {
+    "http": 200,
+    "body": {
+      "ok": true,
+      "delivered": true
+    },
+    "oldWorkerClosed": true,
+    "loaded": {
+      "id": "oegfehdndnlolhgmbbiibkilonegcndi",
+      "hashes": {
+        "dist/background/service-worker.js": "a32bb0d0f93b35c752cde0f84e7cf9d8dc30f2be21cbdf76d0f5c39f63e0531d",
+        "dist/content/douyin.js": "b624ec9548f5272642442103a0583e13672259e92b00e6e00238814c0ee80809",
+        "dist/main/dy-fetch-tap.js": "e3ebcb9e48f795983023e8852bf5c6ce86a78d29c1e1b7dc49b928a6df753e4c"
+      }
+    },
+    "at": "2026-10-25T15:01:30.603Z"
+  },
+  "phase_a": {
+    "source": "hot",
+    "received": 10,
+    "enqueued": 10,
+    "ids": [
+      "7700580781021728041",
+      "7700578116552461608",
+      "7700586266643330041",
+      "7700593739534194408",
+      "7700579280077616895",
+      "7700582668685118755",
+      "7700579453264596264",
+      "7700582157357806259",
+      "7700583059388730659",
+      "7700585700605719275"
+    ],
+    "source_outcomes": {
+      "hot": "failed"
+    },
+    "thresholds": [
+      0.6
+    ],
+    "ok": true,
+    "elapsed_seconds": 70.021,
+    "sinks_at_end": {
+      "events": 0,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0,
+      "discovery_candidates": 10,
+      "content_cache": 0,
+      "recommendations": 0,
+      "llm_usage": 0
+    },
+    "task_id": "111162cd-1fb6-4ed9-be9a-df00aaf19547"
+  },
+  "cross_process_cooldown": {
+    "retry_at": "2026-10-25T14:36:51+00:00",
+    "received": [
+      0,
+      0,
+      0
+    ],
+    "new_task_count": 0,
+    "ok": true,
+    "elapsed_seconds": 0.019,
+    "sinks_at_end": {
+      "events": 0,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0,
+      "discovery_candidates": 10,
+      "content_cache": 0,
+      "recommendations": 0,
+      "llm_usage": 0
+    }
+  },
+  "phase_b": {
+    "source": "hot",
+    "received": 12,
+    "enqueued": 6,
+    "ids": [
+      "7700580781021728041",
+      "7700582668685118755",
+      "7700593739534194408",
+      "7700584742413017280",
+      "7700578116552461608",
+      "7700586266643330041",
+      "7700588089476073650",
+      "7700579280077616895",
+      "7700420447434706211",
+      "7700442454318891978",
+      "7700183632895561014",
+      "7700396063013768486"
+    ],
+    "source_outcomes": {
+      "hot": "used"
+    },
+    "thresholds": [
+      0.6
+    ],
+    "ok": true,
+    "elapsed_seconds": 22.519,
+    "sinks_at_end": {
+      "events": 0,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0,
+      "discovery_candidates": 16,
+      "content_cache": 0,
+      "recommendations": 0,
+      "llm_usage": 0
+    },
+    "task_id": "9aa35f92-8c83-4f7f-83f0-c19227619fcd"
+  },
+  "ordinary_profile_search": {
+    "source": "search",
+    "received": 6,
+    "enqueued": 6,
+    "ids": [
+      "7594059368577517678",
+      "7669785334221212934",
+      "7655293610463694118",
+      "7677527978351440817",
+      "7697640859240781455",
+      "7681181145463676411"
+    ],
+    "source_outcomes": {
+      "search": "used"
+    },
+    "thresholds": [
+      0.6
+    ],
+    "ok": true,
+    "elapsed_seconds": 5.554,
+    "sinks_at_end": {
+      "events": 0,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0,
+      "discovery_candidates": 22,
+      "content_cache": 0,
+      "recommendations": 0,
+      "llm_usage": 0
+    },
+    "task_id": "cb5951f9-d603-4cde-bbc7-20405cf80bf9"
+  },
+  "final_build_hot": {
+    "source": "hot",
+    "received": 12,
+    "enqueued": 12,
+    "ids": [
+      "7548288264873053492",
+      "7676370850752269578",
+      "7671237471086054699",
+      "7672711916594802161",
+      "7624836618477784371",
+      "7694126445441895716",
+      "7640384248566268069",
+      "6898537623774629127",
+      "6886287059443535118",
+      "6867360268029103372",
+      "7495646204768963867",
+      "6867360815205420295"
+    ],
+    "source_outcomes": {
+      "hot": "used"
+    },
+    "thresholds": [
+      0.6
+    ],
+    "ok": true,
+    "elapsed_seconds": 22.942,
+    "sinks_at_end": {
+      "events": 0,
+      "seen_items": 0,
+      "profile_update_ledger": 0,
+      "saved_memberships": 0,
+      "discovery_candidates": 34,
+      "content_cache": 0,
+      "recommendations": 0,
+      "llm_usage": 0
+    },
+    "task_id": "20019081-5f9d-494c-ab87-73293b4e39b4"
+  },
+  "offline_real_response_replay": {
+    "network": "offline actual-response replay",
+    "baseline": "7d613d9a",
+    "samples": [
+      {
+        "sha256": "4264c3e9ca86f51b4da10bfc6374ab801d7836e0ce08248ad1b1eae5e36cb654",
+        "bytes": 2588144,
+        "before": {
+          "frames": 0,
+          "uniqueItems": 0
+        },
+        "after": {
+          "frames": 2,
+          "uniqueItems": 8
+        }
+      },
+      {
+        "sha256": "72f99495636bc83a2c0b2161027badf598a6def954f64533d6618db540d25aae",
+        "bytes": 3221120,
+        "before": {
+          "frames": 0,
+          "uniqueItems": 0
+        },
+        "after": {
+          "frames": 2,
+          "uniqueItems": 7
+        }
+      }
+    ]
+  },
+  "native_stream_samples": [
+    {
+      "path": "/aweme/v1/web/general/search/stream/",
+      "http_status": 200,
+      "bytes": 2588144,
+      "sha256": "4264c3e9ca86f51b4da10bfc6374ab801d7836e0ce08248ad1b1eae5e36cb654",
+      "finished": true,
+      "hit_shark_observed": false,
+      "envelope_frames": [
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 1,
+          "has_more": 1,
+          "cursor": 10
+        },
+        {
+          "keys": [
+            "ack",
+            "time_cost"
+          ],
+          "status_code": null,
+          "data_type": "NoneType",
+          "data_count": null,
+          "has_more": null,
+          "cursor": null
+        },
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 9,
+          "has_more": 1,
+          "cursor": 10
+        }
+      ]
+    },
+    {
+      "path": "/aweme/v1/web/general/search/stream/",
+      "http_status": 200,
+      "bytes": 3221120,
+      "sha256": "72f99495636bc83a2c0b2161027badf598a6def954f64533d6618db540d25aae",
+      "finished": true,
+      "hit_shark_observed": false,
+      "envelope_frames": [
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 1,
+          "has_more": 1,
+          "cursor": 10
+        },
+        {
+          "keys": [
+            "ack",
+            "time_cost"
+          ],
+          "status_code": null,
+          "data_type": "NoneType",
+          "data_count": null,
+          "has_more": null,
+          "cursor": null
+        },
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 8,
+          "has_more": 1,
+          "cursor": 10
+        }
+      ]
+    },
+    {
+      "path": "/aweme/v1/web/general/search/stream/",
+      "http_status": 200,
+      "bytes": 1012851,
+      "sha256": "2626bbfc6c3e69fed17d6a8582b7a410680e2bbf8766c483c7474d5cd11e542a",
+      "finished": true,
+      "hit_shark_observed": false,
+      "envelope_frames": [
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 1,
+          "has_more": 1,
+          "cursor": 10
+        },
+        {
+          "keys": [
+            "ack",
+            "time_cost"
+          ],
+          "status_code": null,
+          "data_type": "NoneType",
+          "data_count": null,
+          "has_more": null,
+          "cursor": null
+        },
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 9,
+          "has_more": 1,
+          "cursor": 10
+        }
+      ]
+    },
+    {
+      "path": "/aweme/v1/web/general/search/stream/",
+      "http_status": 200,
+      "bytes": 1115997,
+      "sha256": "31c4f4abcc3a56d61e23df7943f14b333e8ec7f388ef562f2fd60d115d909fc1",
+      "finished": true,
+      "hit_shark_observed": false,
+      "envelope_frames": [
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 1,
+          "has_more": 1,
+          "cursor": 10
+        },
+        {
+          "keys": [
+            "ack",
+            "time_cost"
+          ],
+          "status_code": null,
+          "data_type": "NoneType",
+          "data_count": null,
+          "has_more": null,
+          "cursor": null
+        },
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 8,
+          "has_more": 1,
+          "cursor": 10
+        }
+      ]
+    },
+    {
+      "path": "/aweme/v1/web/general/search/stream/",
+      "http_status": 200,
+      "bytes": 1849275,
+      "sha256": "b8669fa59ee3d485c2d47f28b45cebd541dc59e6afcd7d177439507957488593",
+      "finished": true,
+      "hit_shark_observed": false,
+      "envelope_frames": [
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 1,
+          "has_more": 1,
+          "cursor": 10
+        },
+        {
+          "keys": [
+            "ack",
+            "time_cost"
+          ],
+          "status_code": null,
+          "data_type": "NoneType",
+          "data_count": null,
+          "has_more": null,
+          "cursor": null
+        },
+        {
+          "keys": [
+            "ad_info",
+            "cursor",
+            "data",
+            "douyin_ai_search_info",
+            "extra",
+            "global_doodle_config",
+            "guide_search_words",
+            "has_more",
+            "log_pb",
+            "multi_columns_info",
+            "ops",
+            "polling_time",
+            "qc",
+            "result_status",
+            "status_code"
+          ],
+          "status_code": 0,
+          "data_type": "list",
+          "data_count": 8,
+          "has_more": 1,
+          "cursor": 10
+        }
+      ]
+    }
+  ],
+  "observed_callbacks": [
+    {
+      "task_id": "111162cd-1fb6-4ed9-be9a-df00aaf19547",
+      "status": "partial",
+      "count": 10,
+      "scope_counts": {
+        "dy_hot": 10
+      },
+      "sentence_id": "2712876",
+      "requested_max_items": 12,
+      "navigation_resumed": false,
+      "search_navigation_resumes": 1,
+      "at": 1792938082565
+    },
+    {
+      "task_id": "111162cd-1fb6-4ed9-be9a-df00aaf19547",
+      "status": "failed",
+      "count": 0,
+      "requested_max_items": 2,
+      "navigation_resumed": false,
+      "error": "api_timeout",
+      "at": 1792938111713
+    },
+    {
+      "task_id": "9aa35f92-8c83-4f7f-83f0-c19227619fcd",
+      "status": "partial",
+      "count": 8,
+      "scope_counts": {
+        "dy_hot": 8
+      },
+      "sentence_id": "2712876",
+      "requested_max_items": 12,
+      "navigation_resumed": false,
+      "search_navigation_resumes": 1,
+      "at": 1792939333588
+    },
+    {
+      "task_id": "9aa35f92-8c83-4f7f-83f0-c19227619fcd",
+      "status": "partial",
+      "count": 4,
+      "scope_counts": {
+        "dy_hot": 12
+      },
+      "sentence_id": "2712021",
+      "requested_max_items": 4,
+      "navigation_resumed": false,
+      "search_navigation_resumes": 2,
+      "at": 1792939336687
+    },
+    {
+      "task_id": "9aa35f92-8c83-4f7f-83f0-c19227619fcd",
+      "status": "ok",
+      "count": 0,
+      "scope_counts": {
+        "dy_hot": 12
+      },
+      "at": 1792939336735
+    },
+    {
+      "task_id": "cb5951f9-d603-4cde-bbc7-20405cf80bf9",
+      "status": "partial",
+      "count": 6,
+      "scope_counts": {
+        "dy_search": 6
+      },
+      "requested_max_items": 6,
+      "navigation_resumed": false,
+      "search_navigation_resumes": 1,
+      "at": 1792939642605
+    },
+    {
+      "task_id": "cb5951f9-d603-4cde-bbc7-20405cf80bf9",
+      "status": "ok",
+      "count": 0,
+      "scope_counts": {
+        "dy_search": 6
+      },
+      "at": 1792939642706
+    },
+    {
+      "task_id": "20019081-5f9d-494c-ab87-73293b4e39b4",
+      "status": "partial",
+      "count": 7,
+      "scope_counts": {
+        "dy_hot": 7
+      },
+      "sentence_id": "2712925",
+      "requested_max_items": 12,
+      "navigation_resumed": false,
+      "search_navigation_resumes": 1,
+      "at": 1792940562261
+    },
+    {
+      "task_id": "20019081-5f9d-494c-ab87-73293b4e39b4",
+      "status": "partial",
+      "count": 5,
+      "scope_counts": {
+        "dy_hot": 12
+      },
+      "sentence_id": "2712071",
+      "requested_max_items": 5,
+      "navigation_resumed": false,
+      "search_navigation_resumes": 2,
+      "at": 1792940565361
+    },
+    {
+      "task_id": "20019081-5f9d-494c-ab87-73293b4e39b4",
+      "status": "ok",
+      "count": 0,
+      "scope_counts": {
+        "dy_hot": 12
+      },
+      "at": 1792940565370
+    }
+  ],
+  "muted_background_tabs": {
+    "phase_b_hot": {
+      "events": 24,
+      "upstream_events": 19,
+      "all_upstream_muted": true,
+      "all_upstream_inactive": true,
+      "any_audible": false,
+      "removed_events": 1
+    },
+    "final_build_hot": {
+      "events": 27,
+      "upstream_events": 22,
+      "all_upstream_muted": true,
+      "all_upstream_inactive": true,
+      "any_audible": false,
+      "removed_events": 1
+    },
+    "normal_search_pre_final_reload_observation": {
+      "total_events_with_phase_b_hot": 46,
+      "upstream_events_with_phase_b_hot": 36,
+      "all_upstream_muted": true,
+      "all_upstream_inactive": true,
+      "any_audible": false,
+      "evidence": "Earlier live Chrome API snapshot before final reload; raw logs are private and removed after verification."
+    },
+    "remaining_pages": [
+      {
+        "host": "extensions",
+        "path": "/"
+      }
+    ],
+    "acoustic_measurement": false
+  },
+  "candidate_identity_checks": {
+    "count": 34,
+    "keys_valid": true,
+    "bvids_valid": true,
+    "urls_valid": true,
+    "all_titles": true,
+    "all_authors": true,
+    "all_covers": true,
+    "statuses": {
+      "pending_eval": 34
+    },
+    "thresholds": [
+      0.6
+    ],
+    "platforms": {
+      "douyin": 34
+    },
+    "strategies": {
+      "dy-plugin-hot-related": 28,
+      "dy-plugin-search": 6
+    },
+    "in_progress_tasks": 0
+  },
+  "tests": {
+    "python_related": {
+      "passed": 111,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "python_full": {
+      "status": "stopped after main baseline confirmation",
+      "failure": "tests/test_desktop_web_issue_98_e2e.py::test_recommendations_and_runtime_recover_without_leaving_init_gate",
+      "assertion": "expected poolAvailable 30, actual 27",
+      "reproduced_on_main": true,
+      "main_baseline_seconds": 24.7,
+      "main_baseline_exit_code": 1,
+      "passed": 3464,
+      "failed": 1,
+      "skipped": 2,
+      "exit_code": 2,
+      "seconds": 1273.53
+    },
+    "ruff": {
+      "status": "PASS",
+      "exit_code": 0
+    },
+    "mypy": {
+      "files": 363,
+      "exit_code": 0
+    },
+    "config_show": {
+      "exit_code": 0,
+      "entrypoint": "worktree-imported openbiliclaw.cli:app"
+    },
+    "extension_related": {
+      "passed": 131,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "extension_full": {
+      "passed": 1855,
+      "failed": 2,
+      "total": 1857,
+      "exit_code": 1,
+      "pre_existing_on_main": [
+        "all visible clients hydrate and reconnect the pending-confirmation badge",
+        "settings tabs use stable compact panels"
+      ]
+    },
+    "build": {
+      "exit_code": 0,
+      "typescript_declarations": true,
+      "manifest_assets": 22
+    },
+    "python_backend_partitioned": {
+      "selected_count": 12033,
+      "completed_prefix": {
+        "passed": 3420,
+        "skipped": 0,
+        "count": 3420
+      },
+      "remaining_count": 8613,
+      "selection_sha256": "b5f17a16856c931a39e7158a46a31ef8650400936efa3174be99bbda61c57557",
+      "remaining_sha256": "7270cd2768619605e58d708e9d986b05daf3e4d826f22f70fa664fe9c7872651",
+      "status": "PASS after standard-entrypoint spawn recheck",
+      "suffix_first_run": {
+        "passed": 8565,
+        "failed": 2,
+        "skipped": 46,
+        "seconds": 1198.01,
+        "exit_code": 1,
+        "failed_ids": [
+          "tests/test_shared_presence.py::test_api_websocket_unblocks_spawned_worker_and_task_claim[False]",
+          "tests/test_shared_presence.py::test_api_websocket_unblocks_spawned_worker_and_task_claim[True]"
+        ],
+        "error": "spawned producer did not respond within the existing 30-second timeout",
+        "harness_issue": "temporary partition runner initially lacked multiprocessing main guard; child import could re-enter pytest"
+      },
+      "standard_entrypoint_recheck": {
+        "command": "PYTHONPATH=\"$PWD/src\" python -m pytest -q tests/test_shared_presence.py",
+        "passed": 18,
+        "failed": 0,
+        "seconds": 9.75,
+        "exit_code": 0,
+        "product_code_changed": false,
+        "test_timeout_changed": false
+      },
+      "unique_final_results": {
+        "passed": 11987,
+        "skipped": 46,
+        "failed_after_recheck": 0,
+        "total": 12033
+      },
+      "not_a_single_uninterrupted_full_suite_pass": true
+    }
+  },
+  "official_sources": [
+    {
+      "title": "抖音用户服务协议",
+      "url": "https://www.douyin.com/agreements/?id=6773906068725565448",
+      "updated": "2026-02-13",
+      "effective": "2026-02-20"
+    },
+    {
+      "title": "生活服务 OpenAPI 接口调用约定",
+      "url": "https://developer.open-douyin.com/docs/resource/zh-CN/local-life/develop/preparation/openapiinterfacecallconvention",
+      "scope": "authorized OpenAPI, not consumer-web safe rates"
+    },
+    {
+      "title": "抖音开放平台 FAQ",
+      "url": "https://open.douyin.com/platform/resource/docs/common-question/faq"
+    }
+  ],
+  "cleanup": {
+    "status": "complete",
+    "worker_exited": true,
+    "api_exited": true,
+    "browser_closed": true,
+    "original_service_health": 200,
+    "original_config_unchanged": true,
+    "profile_files_unchanged": true,
+    "store_manifest_and_service_worker_unchanged": true,
+    "all_tasks_terminal": true,
+    "in_progress_tasks": 0,
+    "private_data_retained": false,
+    "private_directory_removed": true,
+    "private_config_cookie_profile_database_and_raw_responses_removed": true,
+    "original_service_health_rechecked_after_tests": 200,
+    "store_hashes_rechecked_after_tests": true
+  },
+  "delivery": {
+    "merged": false,
+    "store_extension_replaced": false,
+    "production_service_updated": false,
+    "published": false,
+    "source_commit": "b7d7fe77ea040005fae9c136384befcc1f93ec04",
+    "package": {
+      "path": "outputs/issue332-extension-resilience-review.zip",
+      "sha256": "0f5605d225a9c330191c1b04c034ef4ccba16759b6cb06d365129eb90aed5559",
+      "bytes": 1693690,
+      "files": 190,
+      "archive_verified": true,
+      "store_release": false
+    }
+  },
+  "tasks": [
+    {
+      "id": "111162cd-1fb6-4ed9-be9a-df00aaf19547",
+      "type": "hot",
+      "status": "failed",
+      "created_at": "2026-10-25 14:20:42",
+      "claimed_at": "2026-10-25 14:20:42",
+      "completed_at": "2026-10-25 14:21:51",
+      "hot_item_count": 2,
+      "max_items": 12,
+      "video_ids": [
+        "7700580781021728041",
+        "7700578116552461608",
+        "7700586266643330041",
+        "7700593739534194408",
+        "7700579280077616895",
+        "7700582668685118755",
+        "7700579453264596264",
+        "7700582157357806259",
+        "7700583059388730659",
+        "7700585700605719275"
+      ],
+      "error": "api_timeout",
+      "debug": {
+        "search_navigation_resumes": 1,
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "timeout",
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "navigation_resumed": false,
+        "requested_max_items": 2,
+        "passive_items_harvested": 0,
+        "passive_responses_observed": 4,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1",
+        "hot_collection_method": "hot_word_search"
+      }
+    },
+    {
+      "id": "9aa35f92-8c83-4f7f-83f0-c19227619fcd",
+      "type": "hot",
+      "status": "completed",
+      "created_at": "2026-10-25 14:41:55",
+      "claimed_at": "2026-10-25 14:41:55",
+      "completed_at": "2026-10-25 14:42:16",
+      "hot_item_count": 2,
+      "max_items": 12,
+      "video_ids": [
+        "7700580781021728041",
+        "7700582668685118755",
+        "7700593739534194408",
+        "7700584742413017280",
+        "7700578116552461608",
+        "7700586266643330041",
+        "7700588089476073650",
+        "7700579280077616895",
+        "7700420447434706211",
+        "7700442454318891978",
+        "7700183632895561014",
+        "7700396063013768486"
+      ],
+      "error": null,
+      "debug": {
+        "search_navigation_resumes": 2,
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "",
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "navigation_resumed": false,
+        "requested_max_items": 4,
+        "passive_items_harvested": 21,
+        "passive_responses_observed": 6,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1",
+        "hot_collection_method": "hot_word_search"
+      }
+    },
+    {
+      "id": "cb5951f9-d603-4cde-bbc7-20405cf80bf9",
+      "type": "search",
+      "status": "completed",
+      "created_at": "2026-10-25 14:47:17",
+      "claimed_at": "2026-10-25 14:47:17",
+      "completed_at": "2026-10-25 14:47:22",
+      "hot_item_count": 0,
+      "max_items": 6,
+      "video_ids": [
+        "7594059368577517678",
+        "7669785334221212934",
+        "7655293610463694118",
+        "7677527978351440817",
+        "7697640859240781455",
+        "7681181145463676411"
+      ],
+      "error": null,
+      "debug": {
+        "search_navigation_resumes": 1,
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "",
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "navigation_resumed": false,
+        "requested_max_items": 6,
+        "passive_items_harvested": 27,
+        "passive_responses_observed": 6,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1"
+      }
+    },
+    {
+      "id": "20019081-5f9d-494c-ab87-73293b4e39b4",
+      "type": "hot",
+      "status": "completed",
+      "created_at": "2026-10-25 15:02:23",
+      "claimed_at": "2026-10-25 15:02:23",
+      "completed_at": "2026-10-25 15:02:45",
+      "hot_item_count": 2,
+      "max_items": 12,
+      "video_ids": [
+        "7548288264873053492",
+        "7676370850752269578",
+        "7671237471086054699",
+        "7672711916594802161",
+        "7624836618477784371",
+        "7694126445441895716",
+        "7640384248566268069",
+        "6898537623774629127",
+        "6886287059443535118",
+        "6867360268029103372",
+        "7495646204768963867",
+        "6867360815205420295"
+      ],
+      "error": null,
+      "debug": {
+        "search_navigation_resumes": 2,
+        "api_pages_fetched": 0,
+        "api_items_harvested": 0,
+        "api_error": "",
+        "ui_triggered": true,
+        "search_navigation_ok": true,
+        "navigation_resumed": false,
+        "requested_max_items": 5,
+        "passive_items_harvested": 42,
+        "passive_responses_observed": 12,
+        "inject_status": "ok_file=dist/main/dy-fetch-tap.js;results=1",
+        "hot_collection_method": "hot_word_search"
+      }
+    }
+  ]
+}

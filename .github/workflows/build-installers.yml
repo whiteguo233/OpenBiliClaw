@@ -67,11 +67,14 @@ jobs:
           cache-dependency-path: cmd/openbiliclaw-tailnet/go.sum
 
       - name: Install project + PyInstaller
+        env:
+          # Intel may compile cryptography; do not link against Homebrew libssl.
+          OPENSSL_STATIC: "1"
         run: |
           python -m pip install --upgrade pip
           # [packaging] pulls pyinstaller + pystray + Pillow + (on macOS) pyobjc
           # for the menu-bar tray desktop mode.
-          pip install -e ".[packaging]" "pytest>=8"
+          python -m pip install --no-cache-dir -e ".[packaging]" "pytest>=8"
 
       - name: Run macOS installer handoff E2E
         run: python -m pytest -q tests/test_macos_installer_e2e.py

@@ -79,7 +79,11 @@ test("all visible clients hydrate and reconnect the pending-confirmation badge",
     /const pendingConfirmationsPromise = refreshDesktopPendingConfirmations\(\);[\s\S]*const recommendationsPromise = shouldReadRecommendations\s*\? readRecommendationSnapshot\(\)/,
     "desktop must start the badge request before the recommendation-card request fan-out",
   );
-  assert.match(desktop, /const secondaryPromises = \[\s*pendingConfirmationsPromise,/);
+  assert.match(
+    desktop,
+    /await Promise\.allSettled\(\[\s*pendingConfirmationsPromise,\s*hydrateSecondaryWorker\(\),\s*hydrateSecondaryWorker\(\),/,
+    "badge hydration must still settle alongside the two bounded auxiliary workers",
+  );
   assert.match(desktop, /function handleRuntimeEvent\(event\)[\s\S]*scheduleDesktopPendingConfirmationRefresh\(\)/);
   assert.match(desktop, /socket\.addEventListener\("open"[\s\S]*scheduleDesktopPendingConfirmationRefresh\(\)/);
 

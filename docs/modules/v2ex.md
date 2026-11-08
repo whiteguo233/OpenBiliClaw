@@ -53,7 +53,7 @@ API 2.0 的正式响应按 `{"success": true, "result": ...}` 解包，失败 en
 
 producer 在共享 evaluator 之前做有界确定性增强：只对当前 run 中字段不完整的前 `detail_fetch_limit` 条 Topic 请求详情；配置 PAT 时，再对最多 `reply_enrichment_limit` 条有回复 Topic 读取 API 2.0 第一页，选取最多 3 条非空回复生成讨论摘要。该摘要只附着于 Topic，Reply 仍不成为独立候选，也不会逐条调用 LLM；无 PAT、额度耗尽或单条增强失败时保留已有 Topic 字段继续入池。
 
-V2EX 官方 API 表没有完整全文搜索端点。正式 `search` 优先复用用户已配置的外部搜索 provider（`[discovery].inspiration_search_backends` 中的 `bing_rss` / `exa` / `you` / `serply` / `parallel`），发送 `site:v2ex.com/t <query>` 做只读召回，解析 Topic ID 后再通过官方 Topic 详情补全并进入同一 normalizer。该召回配置与关键词的 legacy / hybrid / inspiration 生成模式相互独立：关闭 inspiration 生成不会顺带关闭正式 V2EX Search。外部 provider 未配置、失败或没有合法 Topic 时，才使用 latest/hot 的有界本地匹配。
+V2EX 官方 API 表没有完整全文搜索端点。正式 `search` 优先复用用户已配置的外部搜索 provider（`[discovery].inspiration_search_backends` 中的 `bing_rss` / `exa` / `you` / `serply` / `parallel` / `keenable`），发送 `site:v2ex.com/t <query>` 做只读召回，解析 Topic ID 后再通过官方 Topic 详情补全并进入同一 normalizer。该召回配置与关键词的 legacy / hybrid / inspiration 生成模式相互独立：关闭 inspiration 生成不会顺带关闭正式 V2EX Search。外部 provider 未配置、失败或没有合法 Topic 时，才使用 latest/hot 的有界本地匹配。
 
 latest/hot fallback 先保留完整 query 的精确命中；对统一 planner 产生的多段自然长词，再提取最多 8 个去重、非通用核心词做受限放宽，按“整句命中 → 命中核心词数量 → 命中字符数”排序后截断。没有核心词的泛化 query 不会扩召回，所有结果仍经过共享 evaluator 和 admission。fallback 不是页面爬虫，也不声称覆盖全站历史搜索。`keyword-inspiration-dry-run` / `keyword-inspiration-preview --platform v2ex` 在来源启用时会复用同一只读客户端做平台 grounding，并在命令结束时关闭连接。
 

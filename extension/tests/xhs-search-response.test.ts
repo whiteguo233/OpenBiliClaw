@@ -11,6 +11,32 @@ import {
   resetXhsSearchResponseNotesForTest,
 } from "../src/content/xhs/search-response-buffer.ts";
 
+test("keeps available note descriptions and tag names without raw response fields", () => {
+  const notes = extractXhsSearchResponseNotes({
+    items: [{
+      id: "69c7a7b000000000220030c9",
+      access_token: "never-forward",
+      note_card: {
+        display_title: "有正文的笔记",
+        desc: "正文中的条件和限制必须保留。",
+        tag_list: [{ name: "编程", id: "private-id" }, { name: "Rust" }, { name: "编程" }],
+      },
+    }],
+  });
+  assert.equal(notes[0]?.description, "正文中的条件和限制必须保留。");
+  assert.deepEqual(notes[0]?.tags, ["编程", "Rust"]);
+  assert.ok(!JSON.stringify(notes).includes("never-forward"));
+  assert.ok(!JSON.stringify(notes).includes("private-id"));
+  recordXhsSearchResponseNotes(notes);
+  notes[0]!.tags![0] = "mutated input";
+  const buffered = readXhsSearchResponseNotes();
+  assert.deepEqual(buffered[0]?.tags, ["编程", "Rust"]);
+  assert.equal(buffered[0]?.description, "正文中的条件和限制必须保留。");
+  buffered[0]!.tags!.push("mutated output");
+  assert.deepEqual(readXhsSearchResponseNotes()[0]?.tags, ["编程", "Rust"]);
+  resetXhsSearchResponseNotesForTest();
+});
+
 test("normalizes current snake_case XHS search response cards", () => {
   const notes = extractXhsSearchResponseNotes({
     data: {

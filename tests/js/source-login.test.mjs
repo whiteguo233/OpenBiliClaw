@@ -195,3 +195,13 @@ test("desktop takeover keeps its desktop return destination", async () => {
   const h = await setup();
   assert.equal(h.elements["return-to-app"].href, "/web/");
 });
+
+for (const suffix of ["/m/desktop/source-login.html", "/web/source-login.html"]) {
+  test(`prefixed takeover retains API and return paths: ${suffix}`, async () => {
+    const prefix = "/tenant/one";
+    const h = await setup(undefined, "?draft_id=prefix-test", prefix + suffix);
+    assert.ok(h.calls.length > 0);
+    assert.ok(h.calls.every(call => call.path.startsWith(prefix + "/api/custom-sources/drafts/prefix-test")));
+    assert.equal(h.elements["return-to-app"].href, prefix + (suffix.startsWith("/m/") ? "/m/#/chat" : "/web/"));
+  });
+}

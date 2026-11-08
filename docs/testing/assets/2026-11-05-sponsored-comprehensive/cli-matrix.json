@@ -1,0 +1,58 @@
+[
+  {
+    "combination": "cloud-8b",
+    "command": "config-show",
+    "exit_code": 0,
+    "stdout_chars": 3036,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "cloud-8b",
+    "command": "profile",
+    "exit_code": 0,
+    "stdout_chars": 1620,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "cloud-4b",
+    "command": "config-show",
+    "exit_code": 0,
+    "stdout_chars": 3036,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "cloud-4b",
+    "command": "profile",
+    "exit_code": 0,
+    "stdout_chars": 1599,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "local-8b",
+    "command": "config-show",
+    "exit_code": 0,
+    "stdout_chars": 3038,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "local-8b",
+    "command": "profile",
+    "exit_code": 0,
+    "stdout_chars": 1710,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "local-4b",
+    "command": "config-show",
+    "exit_code": 0,
+    "stdout_chars": 3038,
+    "stderr_chars": 0
+  },
+  {
+    "combination": "local-4b",
+    "command": "profile",
+    "exit_code": 0,
+    "stdout_chars": 1629,
+    "stderr_chars": 0
+  }
+]

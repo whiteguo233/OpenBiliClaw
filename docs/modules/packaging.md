@@ -1,11 +1,40 @@
 # Desktop packaging
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 预置服务与本地向量播种 | 桌面首次配置落为普通免费实例及独立 BGE-M3 Provider；自检按实际路由判断。云端向量不触发本地权重播种；本地自定义端口/模型保持。签名组件的固定版本、归档验签与 staging 入口不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
+## 免费组件构建门禁（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 自动纳入Rust组件 | PyInstaller完成后必须stage当前平台的固定签名SDK；缺失、摘要不符或验证失败直接终止。Docker也移除可选跳过。 |
+| 真实冻结自检 | Mac签名后和Windows安装后，`OPENBILICLAW_SELFTEST=1` 校验随包组件并运行原生 `--check-policy`；全新配置必须自动启用免费Provider。 |
+
+公开API与调用约定：构建接口仍为 `packaging/build.py`，无需另装Rust或人工复制SDK。`_verify_packaged_sponsored_runtime(resources)` 是冻结入口内部自检；不请求上游模型、不输出凭据。打包及签名后的文件保持SDK manifest字节一致。手动 `build-installers.yml` 只生成Actions附件，正式发布仍走独立release流程。
+
+
+## Phone access defaults (2026-10-26)
+
+| Feature | Status | Contract |
+| --- | --- | --- |
+| Consistent listener default | Implemented | Normal config and recovery fallbacks use `0.0.0.0`; explicit configured or `OPENBILICLAW_HOST` loopback bindings are preserved. |
+| Effective QR port | Implemented | The packaged entry records its effective host / port on FastAPI state before serving `/api/qr-info`, including `OPENBILICLAW_PORT` overrides. |
+
+The bundled desktop Web offers LAN, Tailscale and public scan targets. A browser opens `/m/`; the companion App can import the same URL. No packaging dependency or signing change; details: [phone connections](../mobile-connection.md).
+
 ## Implemented features
 
 | Feature | Status | Contract |
 | --- | --- | --- |
 | Ego native workflow resources | Implemented | The wheel includes `sources/ego_host.mjs` and `sources/ego_dom.mjs`. The desktop spec explicitly stages both under `openbiliclaw/sources`, beside `ego_executor.py`, so the native host's relative module import works from frozen paths. The upstream Ego Lite app is prepared automatically at macOS deployment startup, in a private managed directory outside the signed OpenBiliClaw bundle; it does not wait for the first chat. Bundling these modules does not itself establish an available host or successful website trial. |
 | Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
+| macOS crypto linkage | Implemented | `validate_macos_crypto_linkage()` rejects dynamically linked OpenSSL before PyInstaller; Mac CI installs with `OPENSSL_STATIC=1` and without wheel cache, avoiding a Homebrew/Python libssl collision. |
+| Verified free-model runtime | Implemented | Stage the Core-pinned native SDK after PyInstaller, preserve its independently signed bytes when signing the outer app, and verify the manifest again afterward. Frozen startup reconstructs its packaged SDK path, so it does not block login-item registration as a temporary external setting. |
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
 | Local experimental builds | Retained outside hosted CI | Without either signing option, retain ad-hoc signing and the existing installation helper/first-launch guidance. Partial signing configuration is an error. |
@@ -24,6 +53,8 @@
 Both must be supplied on macOS. Bundle version metadata uses numeric `X.Y.Z`; architecture, commit and variant labels remain in the artifact filenames. These are build settings, not `config.toml` fields or application CLI commands. Configure a local profile with `xcrun notarytool store-credentials openbiliclaw-notary --keychain "$HOME/Library/Keychains/login.keychain-db"`; use your **paid team's Team ID**, Apple ID and an app-specific password, stored in the macOS Keychain. Xcode login and an Apple Development certificate alone are insufficient. Without `--keychain`, Apple uses the data protection keychain, which was observed to become unreadable shortly after a successful save on the local build host. For automation, explicitly pass the same file keychain to both store and every subsequent operation; CI now uses its temporary signing keychain. Verify with `notarytool history --keychain-profile PROFILE --keychain PATH` in a new process before announcing success.
 
 All resource mutations (Ollama, Tailnet, model seed, compatibility links) must finish before `sign_macos_app`. Never alter the app after signing/stapling. Signing enumerates real files without following symbolic links; data and model files are sealed as resources, not signed as executable code. No blanket Hardened Runtime exceptions are enabled.
+
+Free-runtime packaging uses `openbiliclaw.runtime.sponsored_bundle.stage_runtime_bundle(destination)` and `verify_bundle(directory)`; the target is `Contents/Resources/sponsored` on Mac and `sponsored` under the Windows packaged root.
 
 Public helpers in `packaging/build.py`: `validate_macos_signing`, `sign_macos_app`, `notarize_macos_artifact`, `notarize_macos_app`, `staple_macos_artifact`; `make_macos_dmg(..., notarized=True)` selects the signed installation instructions after successful app notarization.
 
@@ -64,3 +95,18 @@ Automated checks cover nested-code ordering, symlink/data exclusion, incomplete 
 Official references: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
 Runner reference: [GitHub hosted runner images](https://github.com/actions/runner-images). Intel uses the supported `macos-15-intel` label instead of retired `macos-13`; arm64 uses `macos-15` to avoid the announced macOS 14 retirement.
+## 免费模型组件
+
+免费方案开启时，`_ensure_embedding_model_async()`和`_seed_bundled_embedding_model()`均跳过本地BGE下载/播种，不改变保留的本地向量配置。聊天允许用户provider回退也不会改变文本向量的云端BGE路由。
+
+打包时通过 `runtime.sponsored_bundle.stage_runtime_bundle` 纳入固定发行目录中的已验签组件。macOS主应用签名跳过组件可执行文件，保留其独立manifest中的字节摘要，并在主应用签名后再次验签；本机ad-hoc打包也采用逐层签名。新配置仅在组件可验证时启用免费方案，已有用户配置保留。详细发行与质量边界见[用户流程验收](../testing/2026-11-04-sponsored-user-flow.md)。
+
+`Sponsored runtime installation`工作流在五种原生runner下载Core固定归档、验签、执行离线自检、激活并验证损坏更新保留旧组件；Linux x86_64/arm64另用实际Dockerfile构建并在容器执行自检。`scripts/sponsored_install_smoke.py`使用隔离数据目录，不调用模型API。
+
+组件下载读取已保存的network策略，因此构建入口也能使用用户选择的系统或自定义代理，无需先启动API服务。
+
+冻结入口每次启动会重新发现随包的SDK。自启动守卫仅豁免与当前可执行文件旁的 `sponsored`（Mac为 `Contents/Resources/sponsored`）一致且存在的路径；源码启动、外部SDK路径和用户provider环境变量仍按外部配置处理。Windows整包验收覆盖配置开启、旧注册项迁移和关闭清理。
+
+Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runner对cryptography 50.0.2进行了源码编译，动态链接Homebrew OpenSSL；PyInstaller同时收集Python自己的旧libssl，导致已公证应用启动时报 `_SSL_get0_group_name` 缺失。两条Mac构建工作流现在以 `OPENSSL_STATIC=1` 安装依赖并禁用wheel缓存，构建入口在PyInstaller之前用otool拒绝动态libssl/libcrypto。已有环境需先执行 `OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography`；该配置只作用于构建，不改变用户配置或SDK签名。依据：[cryptography静态构建说明](https://cryptography.io/en/latest/installation/#building-cryptography-on-macos)。
+
+安全SDK目录更新为 `sponsored-runtime-2026-11-06.1`，后端/桌面/Docker沿用固定目录强制验签暂存流程；五个平台发行、Mac旧账本兼容、公开下载与损坏包拒绝的证据见[安全验收](../testing/2026-11-06-security-metadata.md)。SDK发行不等于主应用整包已发布。

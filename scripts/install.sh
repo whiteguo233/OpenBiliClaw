@@ -495,6 +495,8 @@ PY
     echo "================================================================"
     echo "Status:      $status"
     echo "Checkout:    $INSTALL_DIR"
+    echo "Free AI:     Choose the preconfigured SiliconFlow instance in LLM settings."
+    echo "             Select Qwen3-8B or Qwen3.5-4B; choose BGE-M3 separately under Embedding Provider."
     if [ -n "$REUSE_FROM" ]; then
         echo "Reused from: $REUSE_FROM"
         case "$missing" in
@@ -526,9 +528,16 @@ PY
         esac
     fi
     echo "Health URL:  $health_url"
+    echo "Phone:       Web / extension → 手机版 → LAN / Tailscale / public QR"
+    echo "Remote API:  Set an access password on the backend first; disabled auth is local-only."
+    echo "             Use HTTPS or an encrypted private network when connecting from other devices."
+    echo "             Phone camera opens Web; App Scan to connect imports the backend."
     echo "Setup wizard: $setup_url"
     echo "             (open in a browser to configure LLM / embedding and"
     echo "              run prerequisite checks — same guided page as the desktop app)"
+    echo "Free models: choose Qwen3-8B or Qwen3.5-4B in the setup wizard."
+    echo "             Choose cloud BGE-M3 (default) or local Ollama vectors; no shared key entry."
+    echo "             If unavailable, test the connection in Settings or choose your own provider."
     if [ -n "$missing" ]; then
         echo "Missing:     $missing"
     else
@@ -629,12 +638,13 @@ PY
     elif [ -n "$missing" ]; then
         echo "Next steps (credentials are missing):"
         echo ""
-        echo "  1. Choose your LLM chat provider (default: deepseek):"
+        echo "  1. Open the setup wizard for the recommended free Qwen + BGE-M3 option."
+        echo "     If this build has no verified runtime release, choose your own provider:"
         echo "     Supported: deepseek | openai | gemini | claude | openrouter | requesty | api_route | cheaperinference | openai_compatible"
         echo "     (Local Ollama is embedding-only here — not offered as a chat provider.)"
         echo ""
-        echo "  2. Ask which embedding service to use:"
-        echo "     Default: local Ollama bge-m3 (free/offline/no extra API key)."
+        echo "  2. Free chat offers cloud BGE-M3 (default) or local Ollama embedding."
+        echo "     For your own chat provider, default: local Ollama bge-m3 (free/offline)."
         echo "     Alternatives: Gemini embedding, OpenAI text-embedding-3-small,"
         echo "     or a custom OpenAI-compatible embedding endpoint."
         echo ""
@@ -754,6 +764,14 @@ PY
     echo "  Prepared Ego starts on demand; RSS/Atom/JSON Feed need no browser."
     echo "  Managed Ego setup and collection run without local browser windows; open the in-app takeover page when login is needed."
     echo "  See: $INSTALL_DIR/docs/modules/browser-workflows.md"
+
+    echo "Optional recommendation director / Jev filter (disabled by default):"
+    echo "  Configure TOML only after opting in; fully restart the backend."
+    echo "  Jev routes need the configured key environment variable in the backend."
+    echo "  See: $INSTALL_DIR/docs/modules/config.md#director"
+    echo ""
+    echo "Language: choose 简体中文 / 繁體中文 / English in the wizard or /setup/."
+    echo "  CLI: openbiliclaw init --language en (or zh-Hans / zh-Hant)"
     echo ""
     echo "Reference docs:"
     echo "  - $INSTALL_DIR/docs/agent-install.md     (install guide)"

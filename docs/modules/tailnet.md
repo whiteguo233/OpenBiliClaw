@@ -1,5 +1,14 @@
 # 应用内 Tailnet 模块
 
+## 手机二维码（2026-10-26）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 应用内节点扫码 | `GET /api/qr-info` 读取已启用 helper 的 `ready` IP 和实际 port，提供 `source=embedded` 地址；二维码用 `obc_connection=tailscale` 告知原生 App 选择内置连接。 |
+| 系统节点扫码 | 系统网卡中的 Tailscale IPv4 / IPv6 独立显示为 `source=system`，不混入 LAN 地址；手机已启用系统 Tailscale 时可用浏览器或 App 直接连接。 |
+
+二维码不注册节点、不携带 Auth Key / OAuth Secret，也不修改 ACL、Funnel 或 Serve。手机与目标节点仍需加入同一 tailnet 并允许互访；应用内 App 的 tsnet 连接不为手机浏览器提供 VPN。详见[手机扫码连接](../mobile-connection.md)。
+
 > Python 生命周期：`src/openbiliclaw/runtime/tailnet_supervisor.py`；Go helper：
 > `cmd/openbiliclaw-tailnet/`；配置见 [`[tailnet]`](config.md#tailnet)。
 

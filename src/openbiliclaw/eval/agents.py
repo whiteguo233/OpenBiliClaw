@@ -171,6 +171,11 @@ async def _collect_text_with_last(prompt: str, options: Any) -> tuple[str, str]:
     For multi-turn agents, the final JSON result is usually in the last
     assistant message, while earlier messages contain tool-use reasoning.
     """
+    from .sponsored_agents import sponsored_agent_text
+
+    sponsored = await sponsored_agent_text(prompt, options)
+    if sponsored is not None:
+        return sponsored
     from claude_agent_sdk import AssistantMessage, TextBlock, query
 
     all_parts: list[str] = []
@@ -210,7 +215,7 @@ async def collect_json(
     If *json_schema* is provided it is appended to the prompt as a
     human-readable schema hint so the model knows the expected shape.
     """
-    from claude_agent_sdk import ClaudeAgentOptions
+    from .sponsored_agents import agent_options
 
     # Append schema hint to prompt
     if json_schema is not None:
@@ -222,7 +227,7 @@ async def collect_json(
     # Patch options to enable JSON output mode.
     # output_format='json' only works with max_turns >= 2.
     original_system = getattr(options, "system_prompt", "") or ""
-    json_options = ClaudeAgentOptions(
+    json_options = agent_options(
         system_prompt=original_system + "\n只返回纯 JSON 对象，不要 code fence 或其他文字。",
         max_turns=max(getattr(options, "max_turns", 1), 2),
         output_format="json",
@@ -525,9 +530,9 @@ async def run_persona_agent(
     constraints: dict[str, str],
 ) -> OnionProfile:
     """Generate a ground truth persona using Claude Agent SDK."""
-    from claude_agent_sdk import ClaudeAgentOptions
-
     from openbiliclaw.soul.profile import OnionProfile
+
+    from .sponsored_agents import agent_options
 
     schema_text = json.dumps(ONION_PROFILE_SCHEMA, ensure_ascii=False, indent=2)
     prompt = (
@@ -541,7 +546,7 @@ async def run_persona_agent(
 
     text = await _collect_text(
         prompt=prompt,
-        options=ClaudeAgentOptions(
+        options=agent_options(
             system_prompt=("你是一个用户画像生成器。请只返回一个 JSON 代码块，不要有其他文字。"),
             max_turns=1,
         ),
@@ -555,7 +560,7 @@ async def run_event_agent(
     event_count: int = 100,
 ) -> list[dict[str, Any]]:
     """Generate simulated behavioral events using Claude Agent SDK."""
-    from claude_agent_sdk import ClaudeAgentOptions
+    from .sponsored_agents import agent_options
 
     persona_context = persona.to_llm_context()
     prompt = (
@@ -568,7 +573,7 @@ async def run_event_agent(
 
     text = await _collect_text(
         prompt=prompt,
-        options=ClaudeAgentOptions(
+        options=agent_options(
             system_prompt="你是行为模拟器。只返回一个 JSON 代码块，不要其他文字。",
             max_turns=1,
         ),
@@ -583,7 +588,7 @@ async def run_eval_agent(
     predicted: OnionProfile,
 ) -> dict[str, Any]:
     """Evaluate predicted vs expected profile using Claude Agent SDK."""
-    from claude_agent_sdk import ClaudeAgentOptions
+    from .sponsored_agents import agent_options
 
     prompt = (
         "请逐层逐字段对比以下两个用户画像，评估预测画像的准确性。\n"
@@ -599,7 +604,7 @@ async def run_eval_agent(
 
     text = await _collect_text(
         prompt=prompt,
-        options=ClaudeAgentOptions(
+        options=agent_options(
             system_prompt=(
                 "你是画像评估专家。严格对比两个画像，给出精确的逐层评分。"
                 "只返回一个 JSON 代码块。评分客观：完全匹配1.0，部分匹配0.5-0.8，不匹配0-0.3。"
@@ -623,9 +628,9 @@ async def run_optimizer_agent(
     This agent has Read/Grep/Glob tools — it can autonomously read code
     to understand both prompt templates and pipeline logic before proposing changes.
     """
-    from claude_agent_sdk import ClaudeAgentOptions
-
     from openbiliclaw.eval.optimizer import MODIFIABLE_FILES
+
+    from .sponsored_agents import agent_options
 
     report_text = json.dumps(eval_report, ensure_ascii=False, indent=2)[:4000]
     files_text = "\n".join(f"  - {f}" for f in MODIFIABLE_FILES)
@@ -665,7 +670,7 @@ async def run_optimizer_agent(
     try:
         all_text, last_text = await _collect_text_with_last(
             prompt=prompt,
-            options=ClaudeAgentOptions(
+            options=agent_options(
                 system_prompt=(
                     "你是画像系统优化专家。你可以修改 prompt 模板和 pipeline Python 代码。\n"
                     "先用 Read 工具阅读相关代码文件理解当前结构和数据流，\n"
@@ -719,7 +724,7 @@ async def run_optimizer_agent(
                 f"分析内容:\n{agent_analysis}\n\n"
                 '返回纯 JSON: {"changes": [...], "summary": "..."}'
             ),
-            options=ClaudeAgentOptions(
+            options=agent_options(
                 system_prompt=(
                     "你是 JSON 提取工具。从分析文本中提取代码修改方案。\n"
                     "只返回纯 JSON 对象，不要 code fence，不要解释。\n"
@@ -753,7 +758,7 @@ async def run_speculation_event_agent(
     where matching events should confirm speculations and non-matching
     events should NOT.
     """
-    from claude_agent_sdk import ClaudeAgentOptions
+    from .sponsored_agents import agent_options
 
     matching_count = max(1, int(event_count * matching_ratio))
     non_matching_count = event_count - matching_count
@@ -772,7 +777,7 @@ async def run_speculation_event_agent(
             f'返回 JSON: {{"matching_events": [{{"event_type": "view", "title": "..."}}], '
             f'"non_matching_events": [{{"event_type": "view", "title": "..."}}]}}'
         ),
-        options=ClaudeAgentOptions(
+        options=agent_options(
             system_prompt="你是 B站 行为事件模拟器。直接返回 ```json 代码块，不要有任何前置解释。",
             max_turns=1,
         ),
@@ -794,9 +799,9 @@ async def run_discovery_optimizer_agent(
     Similar to run_optimizer_agent but focused on discovery-specific prompts
     and pipeline code.
     """
-    from claude_agent_sdk import ClaudeAgentOptions
-
     from openbiliclaw.eval.discovery_optimizer import DISCOVERY_MODIFIABLE_FILES
+
+    from .sponsored_agents import agent_options
 
     report_text = json.dumps(eval_report, ensure_ascii=False, indent=2)[:4000]
     files_text = "\n".join(f"  - {f}" for f in DISCOVERY_MODIFIABLE_FILES)
@@ -840,7 +845,7 @@ async def run_discovery_optimizer_agent(
     try:
         all_text, last_text = await _collect_text_with_last(
             prompt=prompt,
-            options=ClaudeAgentOptions(
+            options=agent_options(
                 system_prompt=(
                     "你是发现系统优化专家。你的目标是提高 B 站内容发现的质量。\n"
                     "你可以修改 prompt 模板和发现策略 Python 代码。\n"
@@ -898,7 +903,7 @@ async def run_discovery_optimizer_agent(
                 '{"changes": [{"file_path": "...", "old_text": "...", '
                 '"new_text": "...", "reason": "..."}], "summary": "一句话总结"}'
             ),
-            options=ClaudeAgentOptions(
+            options=agent_options(
                 system_prompt=(
                     "你是 JSON 格式化工具。将输入的分析文本提取为指定的 JSON 结构。只返回纯 JSON。"
                 ),

@@ -537,7 +537,8 @@ async def test_account_sync_records_profile_analysis_error_without_advancing_cur
     # Failure reason is now user-visible.
     assert "画像分析失败" in str(memory.state["last_sync_error"])
     assert "找不到所配置的模型" in str(memory.state["last_sync_error"])
-    assert "ollama pull" in str(memory.state["last_sync_error"])
+    assert "ollama pull" not in str(memory.state["last_sync_error"])
+    assert "服务端" in str(memory.state["last_sync_error"])
     # The LLM-unavailability classification rides along so the status surface
     # can render actionable copy instead of a false "稍后会自动重试" promise.
     assert memory.state["last_sync_error_kind"] == "model_not_found"

@@ -78,11 +78,7 @@ import { initAuthControl } from "./popup-auth-control.js";
 import { initExtLogin } from "./popup-ext-login.js";
 import { clearPopupSession, readPopupSessionToken } from "./popup-device-auth.js";
 import { initAutostartControl } from "./popup-autostart-control.js";
-import {
-  createQrSvgMarkup,
-  getMobileQrViewState,
-  isLoopbackMobileHost,
-} from "./popup-qr.js";
+import { createQrSvgMarkup } from "./popup-qr.js";
 import {
   createSavedToggleRegistry,
   captureSavedFocus,
@@ -129,6 +125,7 @@ import {
   fetchProfileSummary,
   fetchProjectStats,
   fetchRecommendations,
+  observeRecommendationPresentation,
   fetchContentHistory,
   fetchDiagnosticsAlerts,
   fetchRuntimeStatus,
@@ -141,6 +138,7 @@ import {
   markDelightSent,
   openPendingConfirmation,
   probeConfigService,
+  prepareSponsoredRuntime,
   startEmbeddingRepair,
   startInit,
   readCachedConfigSnapshot,
@@ -426,6 +424,8 @@ const elements = {
   openWebButton: document.getElementById("openWebButton"),
   starButton: document.getElementById("starButton"),
   starCount: document.getElementById("starCount"),
+  mobileQrNetwork: document.getElementById("mobileQrNetwork"),
+  mobileQrPublicUrl: document.getElementById("mobileQrPublicUrl"),
   mobileQrButton: document.getElementById("mobileQrButton"),
   mobileQrOverlay: document.getElementById("mobileQrOverlay"),
   mobileQrBack: document.getElementById("mobileQrBack"),
@@ -2818,6 +2818,16 @@ async function handleStartInitClick() {
 }
 
 function renderPoolStatus(runtimeStatus) {
+  window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("cfgLlmProviderNotice"), runtimeStatus?.sponsored_status);
+  const messageList = elements.messagesList;
+  if (messageList) {
+    let notice = document.getElementById("sponsoredMessageNotice");
+    if (!notice) { notice = document.createElement("div"); notice.id = "sponsoredMessageNotice"; messageList.before(notice); }
+    window.OpenBiliClawSponsoredSettings?.renderNotice(notice, runtimeStatus?.sponsored_status, () => {
+      closeMessagesPanel(); document.getElementById("settingsGear")?.click();
+    });
+    updateMessageBadge();
+  }
   if (
     !(elements.poolStatus instanceof HTMLElement) ||
     !(elements.poolAvailable instanceof HTMLElement) ||
@@ -3811,7 +3821,7 @@ async function handleProbeResponse(responseType) {
 function updateMessageBadge() {
   const badge = elements.messageBadge;
   if (!(badge instanceof HTMLElement)) return;
-  const count = state.messages.length;
+  const count = state.messages.length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0);
   badge.textContent = String(count);
   badge.hidden = count === 0;
 }
@@ -3826,6 +3836,7 @@ async function openMessagesPanel() {
   // Render whatever we have synchronously so the panel doesn't open
   // empty while we refetch.
   renderMessagesList();
+  try { state.runtimeStatus = await fetchRuntimeStatus(); renderPoolStatus(state.runtimeStatus); } catch { /* Keep the last known notice while offline. */ }
   // Then force-refresh the profile so the inbox shows the *current*
   // active speculations.  Without this, probes that the speculator
   // rotated out (TTL, replacement, manual force_tick) can sit stale
@@ -3960,50 +3971,31 @@ function bindStarButton() {
   void loadStarCount();
 }
 
+let mobileQrPanel = null;
+let mobileQrRequest = 0;
 async function renderMobileQrPanel() {
+  const connection = globalThis.OBCMobileConnection;
+  if (!connection) return;
+  if (!mobileQrPanel) mobileQrPanel = connection.createPanel({
+    network: elements.mobileQrNetwork, publicInput: elements.mobileQrPublicUrl,
+    canvas: elements.mobileQrCode, url: elements.mobileQrUrl, hint: elements.mobileQrHint,
+    actions: [elements.mobileQrCopy, elements.mobileQrOpen], qr: { createQrSvgMarkup },
+    onUrlChange: (url) => { currentMobileWebUrl = url; },
+  });
+  const request = ++mobileQrRequest;
+  mobileQrPanel.loading();
   const endpoint = await getBackendEndpointConfig();
-
-  // When the configured host is loopback, ask the lightweight QR endpoint
-  // for the server's detected LAN IP. Unlike the full readiness endpoint,
-  // this endpoint does not wait for embedding readiness before the QR code can be rendered.
-  let effectiveEndpoint = endpoint;
-  if (isLoopbackMobileHost(endpoint.host)) {
-    try {
-      const scheme = endpoint.scheme === "https" ? "https" : "http";
-      const urlHost = endpoint.host.includes(":") && !endpoint.host.startsWith("[")
-        ? `[${endpoint.host}]`
-        : endpoint.host;
-      const base = `${scheme}://${urlHost}:${endpoint.port}`;
-      const resp = await fetch(`${base}/api/qr-info`, { signal: AbortSignal.timeout(2000) });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.lan_ip && !isLoopbackMobileHost(data.lan_ip)) {
-          effectiveEndpoint = { ...endpoint, host: data.lan_ip };
-        }
-      }
-    } catch {
-      // QR-info fetch failed — fall through with original endpoint.
-    }
+  let info = {};
+  try {
+    // Always discover both LAN and Tailscale, including on a public backend.
+    const base = connection.endpointUrl(endpoint);
+    const resp = await fetch(`${base}/api/qr-info`, { signal: AbortSignal.timeout(10000), cache: "no-store" });
+    if (resp.ok) info = await resp.json();
+  } catch {
+    // A reachable configured address remains usable when discovery is unavailable.
   }
-
-  const view = getMobileQrViewState(effectiveEndpoint);
-  currentMobileWebUrl = view.url;
-
-  if (elements.mobileQrCode instanceof HTMLElement) {
-    try {
-      elements.mobileQrCode.innerHTML = createQrSvgMarkup(view.url);
-    } catch (err) {
-      elements.mobileQrCode.textContent = "二维码生成失败";
-      console.error("Failed to render mobile QR:", err);
-    }
-  }
-  if (elements.mobileQrUrl instanceof HTMLElement) {
-    elements.mobileQrUrl.textContent = view.url;
-  }
-  if (elements.mobileQrHint instanceof HTMLElement) {
-    elements.mobileQrHint.textContent = view.hint;
-    elements.mobileQrHint.dataset.tone = view.tone;
-  }
+  if (request !== mobileQrRequest) return;
+  mobileQrPanel.update({ endpoint, info });
 }
 
 async function openMobileQrPanel() {
@@ -4069,7 +4061,7 @@ function bindMobileQr() {
   if (elements.mobileQrOpen instanceof HTMLButtonElement) {
     elements.mobileQrOpen.addEventListener("click", async () => {
       if (!currentMobileWebUrl) await renderMobileQrPanel();
-      openMobileWebUrl(currentMobileWebUrl);
+      if (currentMobileWebUrl) openMobileWebUrl(currentMobileWebUrl);
     });
   }
 }
@@ -4114,6 +4106,7 @@ function renderMessagesList() {
   container.replaceChildren();
 
   if (state.messages.length === 0) {
+    if (state.runtimeStatus?.sponsored_status?.notices?.length) return;
     const empty = document.createElement("div");
     empty.className = "messages-empty";
     empty.innerHTML = '<div class="messages-empty-icon">\u{1F4EC}</div><p>\u6682\u65F6\u6CA1\u6709\u65B0\u6D88\u606F\u3002<br>\u5174\u8DA3\u786E\u8BA4\u3001\u60CA\u559C\u63A8\u8350\u548C\u901A\u77E5\u90FD\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p>';
@@ -6105,6 +6098,11 @@ async function popupDriveAgentStream(turn, { onUpdate, onDone } = {}) {
     void refreshChatSessions();
   } catch (error) {
     popupStreamingTurnIds.delete(turn.turn_id);
+    if (error?.agentRetrying) {
+      popupAgentRuns.delete(turn.turn_id);
+      onUpdate?.({ ...turn, status: "pending" });
+      throw error; // Let the existing poll loop observe durable recovery.
+    }
     if (error?.agentStreamError) {
       const failed = { ...turn, status: "failed", error: String(error.message || "对话失败了") };
       activeChatPolls.delete(turn.turn_id);
@@ -8235,6 +8233,7 @@ function renderRecommendations(items, { append = false } = {}) {
 
     card.append(preview, actions, composer.wrapper, feedbackStatus);
     elements.list.append(card);
+    observeRecommendationPresentation(card, item);
   }
 }
 
@@ -9643,7 +9642,7 @@ function bindSettings() {
     dashscope: "留空 = https://dashscope.aliyuncs.com（国际站 dashscope-intl.aliyuncs.com）",
   };
 
-  function applyEmbeddingProviderUI() {
+  function applyEmbeddingProviderUI(event) {
     const select = document.getElementById("cfgEmbeddingProvider");
     if (!select) return;
     const provider = select.value;
@@ -9670,6 +9669,17 @@ function bindSettings() {
       }
       el.style.display = visible ? "" : "none";
     }
+
+    window.OpenBiliClawSponsoredSettings.syncEmbedding({
+      reset: event?.type === "change",
+      prepare: prepareSponsoredRuntime,
+      provider: document.getElementById("cfgEmbeddingProvider").value,
+      model: document.getElementById("cfgEmbeddingModel"),
+      key: document.getElementById("cfgEmbeddingApiKey"),
+      base: document.getElementById("cfgEmbeddingBaseUrl"),
+      dimension: document.getElementById("cfgEmbeddingOutputDimensionality"),
+      multimodal: document.getElementById("cfgEmbeddingMultimodalEnabled"),
+    });
   }
 
   const embeddingProviderSelect = document.getElementById("cfgEmbeddingProvider");
@@ -10100,6 +10110,7 @@ function bindSettings() {
   }, 30000);
 
   const LLM_PROVIDER_LABELS = {
+    siliconflow_free: "硅基流动（免费）",
     openai: "OpenAI",
     claude: "Claude",
     gemini: "Gemini",
@@ -10113,6 +10124,7 @@ function bindSettings() {
     openai_compatible: "OpenAI-compatible",
   };
   const LLM_PROVIDER_DEFAULTS = {
+    siliconflow_free: { model: "Qwen/Qwen3-8B", base_url: "" },
     openai: { model: "gpt-5-nano", base_url: "" },
     claude: { model: "claude-sonnet-4-6", base_url: "" },
     gemini: { model: "gemini-2.5-flash", base_url: "" },
@@ -10206,6 +10218,7 @@ function bindSettings() {
   }
 
   function llmEndpointSummary(instance) {
+    if (instance.provider_type === "siliconflow_free") return "内置服务 · 无需 Key";
     const raw = String(instance?.base_url || "").trim();
     if (!raw) return "官方默认地址";
     try {
@@ -10253,6 +10266,7 @@ function bindSettings() {
       return;
     }
     for (const [instanceId, instance] of entries) {
+      const fixed = instance.provider_type === "siliconflow_free";
       const references = llmInstanceReferences(instanceId);
       const probe = state.llmProbeResults.get(instanceId);
       const card = document.createElement("article");
@@ -10271,7 +10285,7 @@ function bindSettings() {
       title.append(name, id);
       head.append(
         title,
-        createLlmBadge(instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
+        createLlmBadge(fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
       );
 
       const badges = document.createElement("div");
@@ -10302,7 +10316,7 @@ function bindSettings() {
 
       const actions = document.createElement("div");
       actions.className = "settings-llm-instance-actions";
-      for (const [action, label] of [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]]) {
+      for (const [action, label] of (fixed ? [["probe", "测试"]] : [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]])) {
         const button = document.createElement("button");
         button.className = "settings-secondary-btn";
         button.type = "button";
@@ -10510,7 +10524,7 @@ function bindSettings() {
       name: getVal("cfgLlmInstanceName").trim() || current.name || instanceId,
       provider_type: providerType,
       enabled: true,
-      api_key: apiKey,
+      api_key: providerType === "siliconflow_free" ? "" : apiKey,
       model: getVal("cfgLlmInstanceModel").trim(),
       base_url: getVal("cfgLlmInstanceBaseUrl").trim(),
       auth_mode: providerType === "openai"
@@ -10605,6 +10619,14 @@ function bindSettings() {
       field.hidden = !visible;
     });
     resetLlmModelDiscovery();
+    window.OpenBiliClawSponsoredSettings.syncInstance({
+      provider: providerType,
+      model: document.getElementById("cfgLlmInstanceModel"),
+      key: document.getElementById("cfgLlmInstanceApiKey"),
+      base: document.getElementById("cfgLlmInstanceBaseUrl"),
+      status: document.getElementById("cfgLlmInstanceModelDiscoveryStatus"),
+      prepare: prepareSponsoredRuntime,
+    });
   }
 
   function applyLlmProviderDefaults() {
@@ -10646,6 +10668,7 @@ function bindSettings() {
     const dialog = document.getElementById("cfgLlmInstanceDialog");
     if (!(dialog instanceof HTMLElement)) return;
     const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+    if (instance?.provider_type === "siliconflow_free") return;
     state.llmEditingInstanceId = instanceId;
     llmDialogReturnFocus = document.activeElement;
     dialog.dataset.providerType = instance?.provider_type || "";
@@ -10741,7 +10764,7 @@ function bindSettings() {
     const effectiveKey = checked("cfgLlmInstanceClearApiKey")
       ? ""
       : typedKey || current.api_key || "";
-    const keyOptional = ["ollama", "gemini"].includes(providerType)
+    const keyOptional = ["ollama", "gemini", "siliconflow_free"].includes(providerType)
       || (providerType === "openai" && authMode === "codex_oauth");
     if (enabled && !keyOptional && !effectiveKey) {
       fail("启用的远端实例需要 API Key。", "cfgLlmInstanceApiKey");
@@ -10756,7 +10779,7 @@ function bindSettings() {
       name,
       provider_type: providerType,
       enabled,
-      api_key: effectiveKey,
+      api_key: providerType === "siliconflow_free" ? "" : effectiveKey,
       model,
       base_url: baseUrl,
       auth_mode: authMode,
@@ -10781,7 +10804,7 @@ function bindSettings() {
   }
 
   function deleteLlmInstance(instanceId) {
-    if (!state.llmDraft?.instances[instanceId]) return;
+    if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
     const references = llmInstanceReferences(instanceId);
     if (references.length) {
       showToast(`无法删除：仍被 ${references.join("、")} 引用。`, "error");
@@ -10801,6 +10824,10 @@ function bindSettings() {
     state.llmProbeResults.set(instanceId, { pending: true });
     renderLlmInstances();
     try {
+      if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+        const prepared = await prepareSponsoredRuntime();
+        if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+      }
       const result = await probeConfigService("llm_instance", collectForm(), instanceId);
       state.llmProbeResults.set(instanceId, result);
     } catch (err) {
@@ -10888,6 +10915,17 @@ function bindSettings() {
 
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
+    window.OpenBiliClawSponsoredSettings.renderNotice(
+      document.getElementById("cfgLlmProviderNotice"),
+      cfg.llm?.sponsored?.service_status,
+      (notices) => {
+        if (notices.every(item => !item.capabilities?.includes("chat"))) {
+          const field = document.getElementById("cfgEmbeddingProvider");
+          field.scrollIntoView({ block: "center" });
+          field.focus();
+        } else openLlmInstanceDialog();
+      },
+    );
     ensurePopupSourceDateFields();
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
@@ -11262,6 +11300,15 @@ function bindSettings() {
     setVal("cfgExploreRefreshMinutes", cfg.scheduler?.explore_refresh_minutes);
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
     setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm");
+    const jevProvider = cfg.discovery?.jev_provider || {};
+    window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer"), {
+      probe: config => probeConfigService("jev", config),
+    })
+      .load(jevProvider, cfg.discovery?.jev_evaluation || {});
+    const jevStatus = document.getElementById("cfgJevEvaluatorStatus");
+    if (jevStatus) {
+      jevStatus.textContent = jevProvider.reason || "请在下方配置连接。";
+    }
     setVal("cfgKeywordGenerationMode", cfg.discovery?.keyword_generation_mode || "hybrid");
     const visualProfile = document.getElementById("cfgVisualProfileEnabled");
     if (visualProfile) visualProfile.checked = cfg.discovery?.visual_profile_enabled === true;
@@ -11338,6 +11385,7 @@ function bindSettings() {
   }
 
   function collectForm() {
+    const jevUpdate = window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer")).collect();
     const logPath = splitLogPath(getVal("cfgLogPath"), state.runtimeConfig?.logging);
     const embeddingFallbackProvider = getVal("cfgEmbeddingFallbackProvider");
     const llmDraft = state.llmDraft || normalizeLlmDraft(state.runtimeConfig?.llm || {});
@@ -11361,6 +11409,7 @@ function bindSettings() {
         timeout: getInt("cfgLlmTimeoutV2", 1200),
         embedding: {
           ...(state.runtimeConfig?.llm?.embedding || {}),
+          output_dimensionality: getVal("cfgEmbeddingProvider") === "siliconflow_free" ? 1024 : state.runtimeConfig?.llm?.embedding?.output_dimensionality || 1024,
           provider: getVal("cfgEmbeddingProvider"),
           api_key: getVal("cfgEmbeddingApiKey"),
           base_url: getVal("cfgEmbeddingBaseUrl"),
@@ -11598,8 +11647,10 @@ function bindSettings() {
           ...popupSourceDateFieldsForUpdate("instagram")
         },
       },
+      ...(jevUpdate.decision ? {decision: jevUpdate.decision} : {}),
       discovery: {
         ...(state.runtimeConfig?.discovery || {}),
+        jev_evaluation: {...(state.runtimeConfig?.discovery?.jev_evaluation || {}), ...(jevUpdate.discovery?.jev_evaluation || {})},
         eval_scorer: getVal("cfgEvalScorer") || "llm",
         keyword_generation_mode: getVal("cfgKeywordGenerationMode"),
         candidate_eval_concurrency: getInt("cfgCandidateEvalConcurrency", 3),

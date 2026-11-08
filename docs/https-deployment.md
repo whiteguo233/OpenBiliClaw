@@ -216,3 +216,8 @@ curl --insecure https://192.168.1.20:8443/ca.crt -o openbiliclaw-ca.crt
 profile。启用 TLS 不会自动改扩展或书签地址，也不会关闭原始 `:8420` HTTP 映射；需要
 TLS-only 策略时应同时调整 Compose 端口发布或主机防火墙。把插件后端配置切到 `https`
 后，手机版二维码和 loopback `/api/qr-info` 探测会沿用 HTTPS，不会向 TLS 端口发送明文 HTTP。
+
+
+## 免费模型连接与抓包边界
+
+本机 UI 默认 HTTP；跨设备应使用本页 HTTPS 或已加密私网。Rust 到硅基流动固定 HTTPS、内置公共 CA 校验、禁止重定向，不启用系统 CA 或 TLS key logging。真实伪造证书代理测试未收到解密请求。HTTPS 不防控制客户端进程的人提取其内存，故共享 Key 的长期方案是 [服务端中继](sponsored-relay.md)，不能把 Rust 混淆或证书绑定称为不可提取保证。

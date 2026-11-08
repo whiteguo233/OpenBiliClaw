@@ -16,9 +16,18 @@
 
 [Homepage](https://whiteguo233.github.io/OpenBiliClaw/) | English | [中文](README.md)
 
-Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/OpenBiliClaw) (automatically synced from GitHub).
+China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/OpenBiliClaw).
 
 </div>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://whiteguo233.github.io/OpenBiliClaw/images/siliconflow-logo-dark.png">
+    <img src="https://whiteguo233.github.io/OpenBiliClaw/images/siliconflow-logo.png" alt="Powered by SiliconFlow" width="260" height="36">
+  </picture>
+  <br>
+  <sub>Model compute support: thanks to <a href="https://www.siliconflow.cn">SiliconFlow</a> for free model credits and inference support · <a href="docs/partners.md">Partnership details</a></sub>
+</p>
 
 > ### 🆕 Big update: OpenBiliClaw now runs inside DeepSeek Harness
 >
@@ -26,18 +35,11 @@ Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo23
 >
 > 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
 
-> 🇨🇳 **Mainland China source**: [Gitee v0.3.229 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229) is the latest mirrored source. Get v0.3.230 source and installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.230); domestic installer mirrors are pending. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 ## OpenBiliClaw in 10 Seconds
 
-> **Official sources: Instagram & TikTok** (generally available since v0.3.231) — both are disabled by default and need to be enabled explicitly in settings. The extension includes site access for both by default, with no separate permission prompt when saving source settings.
->
-> - **Instagram**, included since v0.3.227 and generally available since v0.3.231: discover topics and creators; after signing in within the same browser, import a bounded, read-only snapshot of your recent likes, saves, and follows. Recommendation-card saves stay local. [Setup](docs/modules/instagram.md) · [Tested scope](docs/platform-source-acceptance.instagram.md).
-> - **TikTok**, included since v0.3.229 and generally available since v0.3.231: discover public feed, hashtag, and creator videos without signing in, plus keyword search after browser login. Public discovery → real model evaluation → recommendations and desktop/mobile Web rendering have been exercised. [Setup](docs/modules/tiktok.md) · [Tested scope](docs/platform-source-acceptance.tiktok.md).
->
-> Known limitations: TikTok native favorites are deferred; nonempty real-account profiling, incremental sync, and signed-in Firefox are still being verified ([#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)). Instagram's full Likes history, second-account, signed-in Firefox, and physical-phone checks are still being verified. Neither source claims complete account-capability acceptance.
-
-A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, Instagram, and custom website workflows — without handing your profile to another platform.
+A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, Instagram, and custom website / RSS sources — without handing your profile to another platform.
 
 | Cross-platform | Local-first | Trainable |
 |---|---|---|
@@ -59,12 +61,17 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 
 ## Quick Start
 
+Phone connections: Desktop Web / extension **Mobile** offers LAN, Tailscale and public QR links. The updated companion App can **Scan to connect**; phone cameras open Mobile Web. See [connection guide](docs/mobile-connection.md) for the coordinated backend / App update.
+
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee is last synced at v0.3.229; get v0.3.230 source and installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.230); domestic installer mirrors are pending.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Gitee source is synced through v0.3.233. Get the latest installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234); 123 Cloud still holds v0.3.213 files.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
    ```
 
@@ -81,14 +88,15 @@ authorized device tags; fully restart the app afterward. The credential is stage
 next start and is never written to `config.toml`, echoed by the API, or logged. Source / scripted installs first run `openbiliclaw tailnet build-helper` with Go
 1.26.6, then `openbiliclaw tailnet enable` and restart. The computer needs no system-wide Tailscale;
 this default-off edge is tailnet-private and enables no Funnel/Serve. Enable the app password in the
-local Web settings as defense in depth (source installs may also use `openbiliclaw set-password`). See
+local Web settings before connecting remotely (source installs may also use `openbiliclaw set-password`). See
 [Embedded Tailnet](docs/modules/tailnet.md).
 
-Optional keyword grounding: add `parallel` to `[discovery].inspiration_search_backends`. Existing defaults stay unchanged; see [Discovery](docs/modules/discovery.md#可选-parallel-grounding).
+Optional keyword grounding: add `parallel` to `[discovery].inspiration_search_backends`. Existing defaults stay unchanged; see [Discovery](docs/modules/discovery.md#可选-parallel-grounding). `keenable` can be added the same way; see [Discovery](docs/modules/discovery.md#可选-keenable-grounding).
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 
@@ -110,7 +118,7 @@ This is the core differentiator: the system **guesses domains you might enjoy bu
 
 ### 🔒 100% local, 100% yours
 
-Core behavior, recommendation, and dialogue data lives in SQLite on your disk; config, profiles, credentials, and caches also stay in local files. LLM calls use your own API key by default, with an experimental option to reuse local Codex CLI ChatGPT OAuth credentials. There is no OpenBiliClaw-operated cloud account, and no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, migrate it, or edit the database.
+Core behavior, recommendation, and dialogue data lives in SQLite on your disk; config, profiles, credentials, and caches also stay in local files. Choose the free model option, your own API key, or experimental reuse of local Codex CLI ChatGPT OAuth credentials. Cloud model calls send the text and profile context needed for the task to your selected model provider. There is no OpenBiliClaw-operated cloud account. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, migrate it, or edit the database.
 
 > 💡 **How it compares**
 >
@@ -230,12 +238,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.231 (2026-10-22)**
+📌 Latest: **v0.3.234 (2026-11-06)**
 
-- **Instagram and TikTok are official**: no longer experimental; still opt-in in settings.
-- **A chattier Blue Fish**: notices are written in the fish persona, with a cuter default voice and working DMs.
-- **Ollama embeddings**: no longer require the chat SDK, so deployments stay lean.
-- Full changelog: [docs/changelog.md](docs/changelog.md).
+- **Selectable free models**: setup and settings share Qwen3-8B / Qwen3.5-4B, with cloud BGE-M3 or local Ollama embeddings.
+- **Authentication before remote access**: disabling the password permits trusted local access only; remote devices receive setup guidance.
+- **Source facts reach evaluation**: native engagement, GitHub repository attributes and available Xiaohongshu text survive the pipeline; oversized batches split within bounded limits.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -319,7 +326,7 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
-> 🇨🇳 **Mainland China source**: [Gitee v0.3.229 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.229) is the latest mirrored source. Get v0.3.230 source and installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.230); domestic installer mirrors are pending. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
+> 🇨🇳 **Mainland China sources**: [Gitee v0.3.233 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.233) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)
@@ -375,7 +382,7 @@ openbiliclaw start
 
 > During `openbiliclaw init`, you'll be asked whether to allow LAN access (default Y). If you chose N or want to change it later, edit `[api].host` in `config.toml` (`0.0.0.0` = LAN-reachable over available IPv4 and IPv6, `127.0.0.1` = local only). QR links prefer IPv4 and automatically use a bracketed IPv6 literal when IPv4 is unavailable.
 >
-> **Security note**: binding `0.0.0.0` makes the backend reachable by every device on the network. The `[api.auth]` password gate is off by default, which leaves history, profile, and write endpoints (likes/comments/follows) open to the LAN with zero authentication. The Bilibili credential routes and the settings write/probe routes (`PUT /api/config`, `probe-service`, `discover-models`) are the exception — they always require a local or authenticated caller. On any untrusted network (public Wi-Fi, shared hotspot, port forwarded to the internet), run `openbiliclaw set-password` to enable the gate immediately.
+> **Remote access**: with `[api.auth].enabled=false`, private APIs are trusted-local only. Before connecting a phone, LAN client, or reverse proxy, enable an access password in the backend computer’s Settings or run `openbiliclaw set-password`. Remote extensions also require device-key pairing. Static pages and health probes stay public. See [authentication](docs/modules/api-auth.md).
 
 After opening `/m/`, save it as a home-screen shortcut: on iPhone / iPad, use Safari's Share menu and choose "Add to Home Screen"; on Android Chrome / Chromium browsers, use the menu item "Install app" or "Add to Home screen". LAN HTTP may only create a shortcut in some Android browsers; full PWA install prompts are more reliable behind HTTPS in a trusted local setup.
 
@@ -409,7 +416,10 @@ Good if you already have Docker installed; ships with an Ollama embedding sideca
 mkdir -p ~/openbiliclaw && cd ~/openbiliclaw
 curl -fsSLO https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docker-compose.prebuilt.yml
 docker compose -f docker-compose.prebuilt.yml up -d
-# then open http://127.0.0.1:8420/setup/ to finish initialization
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker restart openbiliclaw-backend
+# sign in at http://127.0.0.1:8420/web/, then open /setup/
+# see the Docker guide below for extension pairing and container initialization
 ```
 
 Or paste this into an AI coding agent for the terminal wizard + auto-init path:
@@ -642,13 +652,58 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🚀 **Guided Init in the UI** — the packaged `/setup/` wizard, Desktop Web, and the extension can all initialize with one click; no terminal required
 - 📦 **Cross-Machine Migration** — export/import portable config, SQLite, profiles, cookies, and the image cache from Desktop settings; imports are validated and staged, can be inspected or cancelled, then apply on restart with rollback copies. `.obcbackup` contains plaintext secrets but excludes the source machine's API-login password, session-signing secret, and extension device keys
 - 🔬 **Self-Optimizing Eval Loops** — five modules each carry an LLM-as-judge loop that improves prompt quality over rounds
-- 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls use your own key, and each instance is built for exactly one person
+- 🔒 **Fully Private** — SQLite, config, profiles, and caches stay local; LLM calls can use free models or your own key, and each instance is built for exactly one person
 - 🔌 **Local Embedding** — optional Ollama + bge-m3, automatic acceleration with CPU fallback, no extra API key
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
 
 Public feed routing: `[network] direct/system/custom → local DNS or proxied DoH → pinned public IP / original Host and TLS identity → robots → feed`. Up to 128 article-reference origins grant no extra requests.
+
+SiliconFlow is a preconfigured LLM instance in the existing instance list. Choose 8B or 4B and route it through ordinary default/module chains; select cloud BGE-M3 or local Ollama independently for embeddings. This unified configuration change is awaiting an application release. [Design and verification](docs/testing/2026-11-06-unified-providers.md).
+
+```text
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
+```
+
+Text/JSON calls forward real streaming deltas. Free tools use a Qwen-tagged prompt bridge with identified results; ordinary JSON remains data. Fallback follows only the explicitly configured instance chain. BGE-M3 has no image embeddings.
+
+```text
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
+```
+
+Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/extension_presence.json → full/discovery worker → browser task queues`. Idle connections renew every 20 seconds; active leases expire after 60 seconds, while normal disconnects retain their configured grace. See the [Runtime module](docs/modules/runtime.md#presencetracker).
+
+Douyin account import: `profile/self with web parameters → current-account API pages → valid API rows → backend rejection of reported DOM fallback → task results / profile`. Empty stays empty; failures retain valid API partial rows only. Page recommendation cards never become account records. The default remains 300 per scope; success does not imply full history.
+
+Douyin discovery backoff: `claimed task failure → durable dy_tasks cooldown → producer before keyword claim / client / pending-claim gates`. Native search streams reach the page immediately while a bounded clone is parsed frame by frame. Valid partial items retain the failure; paths sharing the discovery client and task queue respect the cooldown across restarts and direct fallback.
+
+Douyin hot-word rotation: `enqueued choices from dy_tasks over the last 6h → each newly created plugin client → prefer unselected board words`, preserving rotation when the runtime recreates its transport each round.
+
+Desktop scripts: `packaged desktop/shared scripts → DesktopAssets (fixed dependency order, two content versions, precompressed gzip) → one defer request from /web`. Shared sources and original asset paths remain available to mobile and extension surfaces. No Node build, installation, or configuration changes are required. See the [Desktop Web module](docs/modules/desktop-web.md).
+
+Cover display: `UI → pooled API connection → image service (disk originals → bounded rendition cache) → UI`. An unavailable image service falls back to in-process handling.
 
 TikTok covers: `image proxy → DoH public-address validation → pinned IP / original TLS identity → cache`, following the configured network route.
 
@@ -662,11 +717,31 @@ Local embedding: `requests / diagnostics → Ollama automatic acceleration → v
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
-Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
+Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → tool-protocol text guard → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
 
-Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings; drain and rebuild for other changes`. Local chat updates preserve active conversations and learning tasks.
+Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings, reorder the registry for default-chain changes; drain and rebuild for other changes`. Local updates preserve active conversations and learning tasks.
 
 Background configuration: `successful full apply → queue settles → parent confirms old children exited → workers / recommendation / images read new settings`. The active data directory and durable candidates survive; model repairs can resume pool filling.
+
+Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
+Jev connection: `shared Web / popup / mobile form → config API validation → local URL/token/pinned-model/limits → runtime rebuild`; read responses never return the token.
+Jev draft test: `shared test button → synthetic profile + one item → real full 8-question request → safe result`; warns of cost and does not save. Contradictory temporal evidence is parked without same-context paid retries.
+Jev time evidence: `joint outcome + representative excerpt → source/time-bound hard claims → atomic validation`. Invalid native answers are also parked; correcting the endpoint permits recovery, rotating a token does not.
+Jev text path: `full descriptions (no early 400-character trim) → budgeted whole-source excerpts → full-source cache identity`; originals stay unchanged.
+Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
+No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require registration in settings or TOML.
+Profile allocation reserves mandatory facts first, then loads whole positive-interest facts that fit, avoiding a dislikes-only projection.
+Local whole-source excerpts carry coverage and provenance. Each candidate's complete question group stays
+in one batch; overflow reduces batch size first. Oversized mandatory inputs follow
+`InputBudgetFailure → lease-CAS failed_eval parking (no retry) → bounded requeue after context changes`.
+Shared rules and whole profile fields already selected identically for every candidate are sent once.
+First-fit backfills open batches within both budgets, with a default search ceiling of 64 candidates.
+Automatic byte ceilings no longer reserve an extra 25%; manual limits remain. This is not exact token saturation and adds no evaluation rounds.
+The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
+explicit unknowns and dual input guards. Failures never silently invoke an LLM. Settings can save a local token, with existing environment credentials still supported;
+live Chinese-content quality remains unverified. See [evaluation details](docs/modules/discovery.md).
+
+Optional Director, disabled by default: `recommendation profile + latest 3 experienced screens + shortlist → shared screen objective / evidence / soft roles → recurrent Jev pairs / Agent + Jev repair / Agent-only preplanning (at most one Agent validation correction) → fresh eligibility check → atomic screen commit → actual-visibility ACK → future drafts`. Agent planning identifies useful supply first, then uses request-local short refs restored before strict validation. Horizon coverage, legal short tails and early-stop reasons remain validated; one correction shares the original planning deadline, and repair does not mechanically fill semantic shortfalls. All three modes use the same policy to organize focused, complementary, independently useful choices, without a fixed exploration ratio. Jev is an independent decision provider, also available for discovery filtering, not a chat-LLM fallback. Web surfaces and CLI preserve screen identity and exact feedback; configure through TOML. Live model quality remains unverified. See the [decision module](docs/modules/decision.md) and [Director runtime](docs/modules/director.md).
 
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 

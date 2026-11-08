@@ -380,6 +380,10 @@ export function normalizeRecommendation(item) {
     topic_label: getSourceStrategyLabel(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
+    ...(normalizeText(item?.batch_ref) ? {
+      batch_ref: normalizeText(item.batch_ref),
+      stream_ref: normalizeText(item?.stream_ref),
+    } : {}),
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,
@@ -969,6 +973,7 @@ export function shouldFetchProfileSummary({ online, profileLoaded, force = false
 
 export function normalizeRuntimeStatus(status) {
   return {
+    sponsored_status: status?.sponsored_status || {},
     initialized: Boolean(status?.initialized),
     recommendation_count: Number(status?.recommendation_count ?? 0),
     pending_signal_events: Number(status?.pending_signal_events ?? 0),

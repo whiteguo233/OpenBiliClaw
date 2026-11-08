@@ -10,16 +10,18 @@ import inspect
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import uuid
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import click
 import typer
@@ -1008,11 +1010,26 @@ def _build_recommendation_engine() -> Any:
     # it — constructing one is not free (httpx client + cookie load).
     _danmaku_on = bool(getattr(getattr(cfg, "discovery", None), "danmaku_enabled", False))
 
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+    from openbiliclaw.discovery.evaluator_runtime import build_cli_jev_evaluator
+
+    jev_evaluator = build_cli_jev_evaluator(cfg)
+    content_evaluator = (
+        ContentDiscoveryEngine(
+            database=database,
+            embedding_service=_emb,
+            eval_scorer="jev",
+            jev_evaluator=jev_evaluator,
+        )
+        if jev_evaluator is not None
+        else None
+    )
     return RecommendationEngine(
         llm=llm_service,
         database=database,
         embedding_service=embedding_service,
         xhs_self_info_provider=_xhs_self_info_provider,
+        content_evaluator=content_evaluator,
         copy_ready_target_count=effective_copy_target,
         pool_available_target_count=max(
             0,
@@ -1240,7 +1257,7 @@ def _install_sigterm_cleanup_hook() -> Callable[[], None]:
     return _restore
 
 
-def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
+def _run_api_server(*, host: str = "0.0.0.0", port: int = 8420) -> None:
     """Run the local FastAPI service used by the browser extension."""
     import uvicorn
 
@@ -1263,6 +1280,9 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
 
     api_app = create_app(prepare_ego_on_startup=True)
     state = getattr(api_app, "state", None)
+    if state is not None:
+        state.api_listen_host = host
+        state.api_listen_port = port
     if bool(getattr(state, "degraded", False)):
         issues = []
         for issue in list(getattr(state, "degraded_issues", [])):
@@ -1493,12 +1513,16 @@ def _build_discovery_engine() -> Any:
 
     embedding_service = build_embedding_service(cfg, registry)
     discovery_cfg = getattr(cfg, "discovery", None)
+    from openbiliclaw.discovery.evaluator_runtime import build_cli_jev_evaluator
+    from openbiliclaw.discovery.semantic_filter import build_cli_semantic_filter
 
     engine = ContentDiscoveryEngine(
         llm_service=llm_service,
         database=database,
         concurrency=concurrency,
         embedding_service=embedding_service,
+        semantic_filter=build_cli_semantic_filter(cfg, database),
+        jev_evaluator=build_cli_jev_evaluator(cfg),
         multimodal_evaluation_enabled=bool(
             getattr(discovery_cfg, "multimodal_evaluation_enabled", False)
         ),
@@ -1701,7 +1725,18 @@ def _history_item_to_event(item: dict[str, Any]) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "bvid": bvid,
         "view_at": view_at,
+        # Guided init reads the back catalogue in one pass; without the flag
+        # the ledger has no way to say "this is history, not what happened
+        # this afternoon". ``view_at`` is mirrored into the canonical time key
+        # because the ledger's own ``created_at`` is the import moment.
+        "snapshot": True,
     }
+    try:
+        view_at_seconds = int(view_at)
+    except (TypeError, ValueError):
+        view_at_seconds = 0
+    if view_at_seconds > 0:
+        metadata["timestamp"] = view_at_seconds
     if bvid:
         metadata["content_id"] = bvid
     # Watch metrics decide how ``classify_event_satisfaction`` reads this row.
@@ -1879,6 +1914,55 @@ def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _select_init_language(language: str | None = None) -> None:
+    """Select and persist the init language before provider/auth setup.
+
+    Non-interactive callers keep their config unless --language is explicit.
+    Configuration diagnostics deliberately allow an unconfigured first run.
+    """
+    if language is None and not _is_interactive_terminal():
+        return
+
+    from openbiliclaw.cli_i18n import cli_translator, reset_cli_locale_cache, resolve_cli_locale
+    from openbiliclaw.config import load_config, save_config
+    from openbiliclaw.i18n import SUPPORTED_LOCALES, native_name, resolve_locale
+
+    config = load_config()
+    tr = cli_translator(config)
+    if language is None:
+        console.print("\n[bold]语言 / 語言 / Language[/bold]")
+        for index, locale in enumerate(SUPPORTED_LOCALES, 1):
+            console.print(f"  {index}. {native_name(locale)} ({locale})")
+        default = str(SUPPORTED_LOCALES.index(resolve_cli_locale(config)) + 1)
+        while True:
+            choice = typer.prompt("选择 / 選擇 / Select (1/2/3)", default=default).strip()
+            language = SUPPORTED_LOCALES[int(choice) - 1] if choice in {"1", "2", "3"} else choice
+            if resolve_locale(language) is not None:
+                break
+            console.print(
+                tr(
+                    "cli.language.unsupported",
+                    value=choice,
+                    supported=" / ".join(SUPPORTED_LOCALES),
+                )
+            )
+
+    resolved = resolve_locale(language)
+    if resolved is None:
+        console.print(
+            tr("cli.language.unsupported", value=language, supported=" / ".join(SUPPORTED_LOCALES))
+        )
+        raise typer.Exit(2)
+    config.language = resolved
+    save_config(config)
+    reset_cli_locale_cache()
+    console.print(
+        cli_translator(config)(
+            "cli.language.changed", locale=resolved, native=native_name(resolved)
+        )
+    )
+
+
 def _save_runtime_provider_config(
     provider: str,
     *,
@@ -1887,6 +1971,8 @@ def _save_runtime_provider_config(
     model: str = "",
 ) -> None:
     """Persist one complete provider instance and make it the global primary."""
+    from dataclasses import replace
+
     from openbiliclaw.config import (
         LLMInstanceConfig,
         effective_llm_default_chain,
@@ -1946,6 +2032,9 @@ def _save_runtime_provider_config(
         instance.model = model.strip()
 
     config.llm.instance_routing = True
+    # This entry point is an explicit BYOK choice in the CLI setup wizard.
+    # Preserve the free model selection so switching back does not lose it.
+    config.llm.sponsored = replace(config.llm.sponsored, enabled=False)
     config.llm.instances = instances
     config.llm.default_chain = [
         instance_id,
@@ -2139,8 +2228,8 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
         {
             "label": "MiniMax 官方",
             "description": (
-                "国产代码 / agent 场景的当前 SOTA 之一 (M3: 1M ctx / 图文视频输入),"
-                "便宜 ($0.60 / $2.40 per M),适合做推荐这种结构化输出任务"
+                "MiniMax-M3.1-Flash (1M ctx / 自适应推理),便宜 ($0.15 / $0.60 per M),"
+                "适合做推荐这种结构化输出任务"
             ),
             "signup_url": (
                 "https://platform.minimaxi.com/user-center/basic-information/interface-key "
@@ -2148,11 +2237,10 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
             ),
             "supports_embedding": "false",
             "base_url": "https://api.minimax.io/v1",
-            "default_model": "MiniMax-M3",
+            "default_model": "MiniMax-M3.1-Flash",
             "hint": (
-                "MiniMax-M3 (默认 / 最新 / 5-2026 / 1M ctx) / "
-                "MiniMax-M2.7 / MiniMax-M2.5 / MiniMax-M2.1。"
-                "旧 abab 系列 (abab6.5*) 已被 M 系列替代"
+                "MiniMax-M3.1-Flash (默认 / 最新 / 1M ctx / 自适应推理) / MiniMax-M3。"
+                "旧模型与自定义 ID 仍可用"
             ),
             "domain_alt": (
                 "国内用户改 base_url 为 https://api.minimaxi.com/v1 (旧 .chat 域名将停)"
@@ -2454,8 +2542,20 @@ def _save_embedding_config(
     from openbiliclaw.config import load_config_with_diagnostics, save_config
 
     config, diagnostics = load_config_with_diagnostics()
+    if config.llm.embedding.provider != provider:
+        config.llm.embedding.api_key = ""
+        config.llm.embedding.base_url = ""
+    if provider == "siliconflow_free":
+        config.llm.embedding.output_dimensionality = 1024
+        config.llm.embedding.multimodal_enabled = False
+        config.llm.embedding.fallback_enabled = False
+        config.llm.embedding.fallback_provider = ""
     config.llm.embedding.provider = provider
     config.llm.embedding.model = model
+    if config.llm.sponsored.enabled and provider == "ollama":
+        from dataclasses import replace
+
+        config.llm.sponsored = replace(config.llm.sponsored, embedding_mode="local")
     if base_url:
         config.llm.embedding.base_url = base_url.strip()
     elif provider == "ollama" and not config.llm.embedding.base_url.strip():
@@ -2881,9 +2981,8 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
 def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool = False) -> None:
     """Phase 3 — embedding service (v0.3.20+ "有默认值的取舍提问").
 
-    Default = 1 (本地 Ollama bge-m3). Mirrors the question shape used by
-    docs/agent-install.md: each option carries a tradeoff explanation,
-    "不确定就回 1". Two advanced branches (custom OpenAI-compatible
+    Default = free (硅基流动 BGE-M3), with local Ollama as option 1.
+    Each option carries a tradeoff explanation. Two advanced branches (custom OpenAI-compatible
     endpoint / pin a different provider) are kept but de-emphasized so
     普通用户 don't get derailed.
 
@@ -2909,9 +3008,10 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         '"这条和你之前喜欢的那条是不是同一类"。和聊天 LLM 是分开的。[/dim]\n'
     )
     options = (
+        ("free", "硅基流动（免费 · BGE-M3）", "无需 Key、无需下载，独立于 LLM 实例"),
         (
             "1",
-            "本地 Ollama bge-m3 ★默认推荐",
+            "本地 Ollama bge-m3",
             "免费 / 离线 / 不消耗主 LLM 配额(自动装 Ollama + 拉 568MB 模型)",
         ),
         (
@@ -2936,11 +3036,26 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         table.add_row(label, name, desc)
     console.print(table)
     console.print(
-        "[dim]Tip:不确定就选 1。日常推荐质量已经够用且不消耗主 LLM 配额。"
-        "想再准一点选 2(Gemini),需要去 https://aistudio.google.com/apikey 拿 Key。[/dim]"
+        "[dim]推荐 free：硅基流动 BGE-M3，无需 Key 或本地下载。"
+        "希望本地运行选 1；已有其他服务可以选择对应 Provider。[/dim]"
     )
 
-    choice = typer.prompt("请选择 embedding 方案", default="1").strip()
+    choice = typer.prompt("请选择 embedding 方案", default="free").strip()
+
+    if choice in {"free", "siliconflow_free"}:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+        settings = load_config().llm.sponsored
+        try:
+            if not settings.runtime_path and not settings.relay_url:
+                ensure_runtime()
+        except BundleError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            return
+        _save_embedding_config(provider="siliconflow_free", model="BAAI/bge-m3")
+        console.print("[green]已选择硅基流动免费 BGE-M3 Embedding。[/green]")
+        return
 
     if choice in {"0", "skip", "跳过"}:
         console.print("[dim]已跳过 embedding 配置,不修改当前设置。[/dim]")
@@ -3153,10 +3268,106 @@ def _interactive_runtime_config_setup() -> None:
       4) Optional per-module overrides (advanced, default skip).
     """
     _print_page_title("初始化前配置引导", "选 LLM、配 Embedding、填 B 站 Cookie")
+    console.print("[cyan]free.[/cyan] 硅基流动（免费 · 预置 LLM 实例，无需 Key）")
     _print_provider_table()
 
     while True:
-        raw = typer.prompt("\n请输入序号或名称（默认 1=DeepSeek）", default="1")
+        raw = typer.prompt("\n请输入序号或名称（默认 free=免费方案）", default="free")
+        if raw.strip().lower() in {"free", "sponsored", "免费"}:
+            from dataclasses import replace
+
+            from openbiliclaw.config import load_config_with_diagnostics, save_config
+            from openbiliclaw.llm.sponsored_profiles import ALTERNATE_CHAT_MODEL, DEFAULT_CHAT_MODEL
+            from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+            cfg, _diagnostics = load_config_with_diagnostics()
+            chosen = typer.prompt("选择模型 [1=Qwen3-8B / 2=Qwen3.5-4B]", default="1")
+            if chosen not in {"1", "2"}:
+                console.print("[yellow]请选择 1 或 2。[/yellow]")
+                continue
+            embedding_choice = typer.prompt(
+                "文本向量 [1=硅基流动 BGE-M3（推荐） / 2=本地 Ollama]", default="1"
+            ).strip()
+            if embedding_choice not in {"1", "2"}:
+                console.print("[yellow]请选择 1 或 2。[/yellow]")
+                continue
+            try:
+                if not cfg.llm.sponsored.runtime_path and not cfg.llm.sponsored.relay_url:
+                    ensure_runtime()
+            except BundleError as exc:
+                console.print(f"[yellow]{exc}[/yellow]")
+                continue
+            from openbiliclaw.config import (
+                effective_llm_instances,
+                effective_llm_routes,
+            )
+
+            selected_model = DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL
+            instances = effective_llm_instances(cfg.llm)
+            instance_id = next(
+                (
+                    key
+                    for key, item in instances.items()
+                    if item.provider_type == "siliconflow_free" and item.model == selected_model
+                ),
+                "siliconflow-free",
+            )
+            for bucket, route in effective_llm_routes(cfg.llm).items():
+                setattr(cfg.llm, bucket, route)
+            cfg.llm.instances = instances
+            cfg.llm.default_chain = [instance_id]
+            cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 2
+            protected_ids = {
+                item
+                for route in effective_llm_routes(cfg.llm).values()
+                if not route.inherit
+                for item in route.chain
+            }
+            for issue in _diagnostics.issues:
+                parts = issue.field.split(".")
+                if issue.severity != "blocking" or len(parts) < 2 or parts[0] != "llm":
+                    continue
+                blocked_id = parts[2] if len(parts) > 3 and parts[1] == "instances" else parts[1]
+                if blocked_id in instances and blocked_id not in {instance_id, *protected_ids}:
+                    instances[blocked_id].enabled = False
+            if embedding_choice == "1":
+                cfg.llm.embedding = replace(
+                    cfg.llm.embedding,
+                    provider="siliconflow_free",
+                    model="BAAI/bge-m3",
+                    api_key="",
+                    base_url="",
+                    output_dimensionality=1024,
+                    fallback_enabled=False,
+                    fallback_provider="",
+                    multimodal_enabled=False,
+                )
+            if embedding_choice == "2":
+                from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+                select_local_embedding(cfg)
+                endpoint = (
+                    cfg.llm.embedding.base_url.rstrip("/").removesuffix("/v1")
+                    or "http://127.0.0.1:11434"
+                )
+                if _is_default_ollama_endpoint(endpoint) and _ollama_install_if_missing():
+                    _ollama_start_serve_background()
+                if not _ollama_has_model(
+                    cfg.llm.embedding.model, host=endpoint
+                ) and not _ollama_pull_model(cfg.llm.embedding.model, host=endpoint):
+                    console.print(
+                        "[yellow]本地向量尚未就绪；请准备 Ollama 模型后再初始化。[/yellow]"
+                    )
+            save_config(cfg)
+            embedding_label = (
+                "硅基流动 BGE-M3" if embedding_choice == "1" else f"本地 {cfg.llm.embedding.model}"
+            )
+            console.print(
+                f"[green]已选择 LLM 实例 {selected_model} + Embedding {embedding_label}；"
+                "初始化将验证真实连接。[/green]"
+            )
+            return
         choice = _resolve_menu_choice(raw)
         if choice is None:
             console.print("[bold red]看不懂这个输入，请重新输入序号或名称[/bold red]")
@@ -3307,7 +3518,7 @@ async def _run_init_discovery_backfill_async(
         await _report(4, 4, "已跳过首轮内容池构建")
         return 0
 
-    if selected_sources is not None and "instagram" in selected_sources:
+    if selected_sources is not None and selected_sources & {"instagram", "github"}:
         from openbiliclaw.config import load_config
         from openbiliclaw.runtime.instagram_producer import build_instagram_discovery_producer
         from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
@@ -3345,9 +3556,42 @@ async def _run_init_discovery_backfill_async(
             pool_source_shares=effective_pool_source_shares(config),
             llm_concurrency_gate=gate,
         )
-        return await controller.run_init_backfill(
-            profile, target, sources=selected_sources, progress_callback=progress_callback
-        )
+        async with AsyncExitStack() as resources:
+            if "github" in selected_sources:
+                from openbiliclaw.runtime.github_producer import GitHubDiscoveryProducer
+                from openbiliclaw.sources.github_client import (
+                    GitHubClient,
+                    resolve_github_access_token,
+                )
+
+                github = config.sources.github
+                token, _ = resolve_github_access_token(github.access_token)
+                client = await resources.enter_async_context(
+                    GitHubClient(
+                        token=token or None,
+                        request_interval_seconds=float(github.request_interval_seconds),
+                    )
+                )
+                controller.github_producer = GitHubDiscoveryProducer(
+                    database=database,
+                    soul_engine=soul_engine,
+                    client=client,
+                    enabled=bool(github.enabled),
+                    access_token=token,
+                    source_modes=tuple(github.source_modes),
+                    daily_search_budget=int(github.daily_search_budget),
+                    daily_ranked_budget=int(github.daily_ranked_budget),
+                    daily_latest_budget=int(github.daily_latest_budget),
+                    min_interval_minutes=int(github.min_interval_minutes),
+                    candidate_pipeline=pipeline,
+                    candidate_evaluation_owned_by_coordinator=True,
+                    keyword_fetch=KeywordFetchCoordinator(
+                        database=database, discovery_config=config.discovery
+                    ),
+                )
+            return await controller.run_init_backfill(
+                profile, target, sources=selected_sources, progress_callback=progress_callback
+            )
 
     discovered_count = 0
     copy_error: BaseException | None = None
@@ -5554,6 +5798,32 @@ def _drop_events_already_imported(
     return kept, skipped
 
 
+def _follow_time_window(following: list[dict[str, Any]]) -> str:
+    """Render the real follow span as ``（关注时间 2019-03 ~ 2026-08）``.
+
+    Returns an empty string when upstream supplied no ``mtime``, so the caller
+    never invents a window it cannot prove.
+    """
+    stamps: list[int] = []
+    for user in following:
+        raw = user.get("mtime")
+        if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+            continue
+        try:
+            seconds = int(float(raw))
+        except (TypeError, ValueError):
+            continue
+        if seconds > 0:
+            stamps.append(seconds)
+    if not stamps:
+        return ""
+    from datetime import UTC, datetime
+
+    first = datetime.fromtimestamp(min(stamps), UTC).strftime("%Y-%m")
+    last = datetime.fromtimestamp(max(stamps), UTC).strftime("%Y-%m")
+    return f"（关注时间 {first} ~ {last}）"
+
+
 def _favorites_to_history_rows(favorites: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Turn fetched favourites into individual profile-history rows.
 
@@ -5625,6 +5895,12 @@ def _build_bilibili_init_events(
         duration = fav.get("duration")
         if isinstance(duration, (int, float)) and duration > 0:
             fav_metadata["video_duration_seconds"] = float(duration)
+        # Guided init is the account's back catalogue: every row is an import,
+        # and ``fav_time`` is the only honest moment it carries.
+        fav_metadata["snapshot"] = True
+        fav_time = fav_metadata.get("fav_time")
+        if isinstance(fav_time, int) and not isinstance(fav_time, bool) and fav_time > 0:
+            fav_metadata["timestamp"] = fav_time
         events.append(
             build_event(
                 event_type="favorite",
@@ -5638,6 +5914,17 @@ def _build_bilibili_init_events(
     for user in following_data:
         sign = str(user.get("sign", "")).strip()
         name = str(user.get("name", ""))
+        follow_metadata: dict[str, Any] = {
+            "up_name": name,
+            "sign": sign,
+            # The following list is inventory: it arrives as one batch even
+            # though the follows happened across years.
+            "snapshot": True,
+        }
+        mtime = user.get("mtime")
+        if isinstance(mtime, int) and mtime > 0:
+            follow_metadata["mtime"] = mtime
+            follow_metadata["timestamp"] = mtime
         events.append(
             build_event(
                 event_type="follow",
@@ -5647,10 +5934,7 @@ def _build_bilibili_init_events(
                 context=(
                     f"在 B 站关注了《{name}》,签名:{sign}" if sign else f"在 B 站关注了《{name}》"
                 ),
-                metadata={
-                    "up_name": name,
-                    "sign": sign,
-                },
+                metadata=follow_metadata,
             )
         )
     return events
@@ -7123,7 +7407,7 @@ def autostart_disable() -> None:
 
 @app.command("set-password")
 def set_password(
-    disable: bool = typer.Option(False, "--disable", help="关闭密码门禁"),
+    disable: bool = typer.Option(False, "--disable", help="关闭远程访问，恢复仅本机模式"),
     logout_all: bool = typer.Option(
         False, "--logout-all", help="使所有设备的登录态立即失效（不改密码/密钥）"
     ),
@@ -7196,7 +7480,11 @@ def set_password(
     if disable:
         cfg.api.auth.enabled = False
         save_config(cfg)
-        _print_status_panel("success", "已关闭密码门禁", "重启后端 (openbiliclaw start) 后生效。")
+        _print_status_panel(
+            "success",
+            "已关闭密码门禁",
+            "恢复仅可信本机访问；重启后端 (openbiliclaw start) 后生效。",
+        )
         return
 
     if rotate_secret:
@@ -8411,10 +8699,10 @@ def _maybe_setup_password_in_init(*, allow_lan: bool) -> None:
     if not allow_lan or not _is_interactive_terminal():
         return
     console.print()
-    console.print("[bold]🔒 访问密码（可选）[/bold]")
+    console.print("[bold]🔒 远程访问密码（仅本机使用可跳过）[/bold]")
     console.print(
-        "为局域网/远程设备访问设置登录密码？[bold]本机访问始终免登录[/bold]，"
-        "只有手机和其他电脑需要输入密码。"
+        "为局域网/远程设备访问设置登录密码？[bold]可信本机默认免登录[/bold]。"
+        "跳过后仅允许本机访问；手机和其他电脑需设置密码后才能连接。"
     )
     console.print("[dim]后续可用 `openbiliclaw set-password` 设置或修改。[/dim]")
     console.print()
@@ -9023,6 +9311,10 @@ async def _fetch_bilibili_init_data(
                     {
                         "name": getattr(user, "uname", str(user)),
                         "sign": getattr(user, "sign", ""),
+                        # Real follow moment (epoch seconds). Guided init used
+                        # to keep only name + signature, so the whole following
+                        # list arrived undated and read as one day of activity.
+                        "mtime": int(getattr(user, "mtime", 0) or 0),
                     }
                 )
             if len(page_users) < page_size:
@@ -10781,13 +11073,21 @@ async def run_guided_init(
             }
         )
     if following_data:
+        # Say out loud that this is inventory, and when it was built. A bare
+        # "共关注 500 人" reads as social behaviour and used to push the
+        # extraversion dimension; the following list is years of accumulation
+        # fetched in one batch, and Bilibili's ``mtime`` lets us show the span.
+        following_window = _follow_time_window(following_data)
         combined_history.append(
             {
                 "title": "[关注列表汇总]",
                 "_following": following_data,
-                "_following_summary": f"共关注 {len(following_data)} 人，"
-                + "包括: "
-                + ", ".join(f["name"] for f in following_data[:100]),
+                "_following_summary": (
+                    f"共关注 {len(following_data)} 人{following_window}。"
+                    "这是账号长期累积的关注清单（一次性导入的存量），"
+                    "不代表近期行为、活跃度或社交频率。包括: "
+                    + ", ".join(f["name"] for f in following_data[:100])
+                ),
             }
         )
     if xhs_events:
@@ -10968,6 +11268,7 @@ async def run_guided_init(
                 ("v2ex", include_v2ex),
                 ("weibo", include_weibo),
                 ("instagram", include_instagram),
+                ("github", include_github),
             )
             if included
         }
@@ -11069,6 +11370,9 @@ async def run_guided_init(
 
 @app.command()
 def init(
+    language: str | None = typer.Option(
+        None, "--language", help="语言 / 語言 / Language: zh-Hans, zh-Hant, en."
+    ),
     no_bilibili: bool = typer.Option(
         False,
         "--no-bilibili",
@@ -11291,6 +11595,7 @@ def init(
 
     已初始化时默认（交互终端）先二次确认，--force 跳过确认并直接按重新初始化执行。
     """
+    _select_init_language(language)
     _prepare_init_runtime()
 
     # Snapshot the highest llm_usage row id seen at start so the
@@ -14673,13 +14978,105 @@ def import_youtube(
 
 
 @app.command()
-def recommend() -> None:
+def recommend(
+    request_id: Annotated[str, typer.Option(help="导演幂等请求 ID；重试复用相同值")] = "",
+    stream_ref: Annotated[str, typer.Option(help="导演会话流标识")] = "cli",
+    intent: Annotated[str, typer.Option(help="NEXT 推进一屏；STAY 保持当前方向")] = "NEXT",
+    restore: Annotated[bool, typer.Option(help="只恢复已提交屏，不生成新屏")] = False,
+    limit: Annotated[int, typer.Option(min=1, max=20, help="每屏卡片数")] = 5,
+    direction: Annotated[str, typer.Option(help="本次明确的编排意图")] = "",
+) -> None:
     """查看推荐内容."""
     from openbiliclaw.soul.engine import SoulProfileNotInitializedError
 
     _require_runtime_config()
     soul_engine = _build_soul_engine()
     recommendation_engine = _build_recommendation_engine()
+
+    from openbiliclaw.config import load_config
+
+    config = load_config()
+    if config.director.mode != "off":
+        from openbiliclaw.recommendation.director.runtime import build_director_runtime
+        from openbiliclaw.recommendation.director.store import StoreConflict
+        from openbiliclaw.recommendation.engine import Recommendation
+
+        normalized_intent = intent.strip().upper()
+        if (
+            normalized_intent not in {"NEXT", "STAY"}
+            or not stream_ref.strip()
+            or len(stream_ref) > 128
+        ):
+            raise typer.BadParameter("intent 仅支持 NEXT/STAY，stream-ref 长度为 1–128")
+        if len(request_id) > 128 or len(direction) > 500:
+            raise typer.BadParameter("request-id 最长 128，direction 最长 500")
+        stable_id = request_id.strip() or uuid.uuid4().hex
+        console.print(f"[dim]导演请求 ID：{stable_id}[/dim]")
+
+        async def _direct() -> None:
+            runtime = build_director_runtime(
+                config,
+                _get_runtime_database(),
+                recommendation_engine,
+                recommendation_engine._llm,
+            )
+            assert runtime is not None
+            try:
+                batch = (
+                    await runtime.restore(
+                        stream_ref,
+                        latest_disliked_topics=getattr(
+                            soul_engine, "get_effective_disliked_topics", None
+                        ),
+                    )
+                    if restore
+                    else await runtime.generate(
+                        await soul_engine.get_profile(),
+                        stream_ref=stream_ref,
+                        request_id=stable_id,
+                        intent=cast("Any", normalized_intent),
+                        limit=limit,
+                        explicit_intent=direction,
+                        latest_disliked_topics=getattr(
+                            soul_engine, "get_effective_disliked_topics", None
+                        ),
+                    )
+                )
+                _print_page_title("本轮推荐", "导演编排 · " + config.director.strategy)
+                if batch is None:
+                    _print_status_panel(
+                        "info", "暂无可推荐内容", "请先执行 `openbiliclaw discover`。"
+                    )
+                    return
+                rows = [dict(row) for row in batch.items]
+                content_by_key = {
+                    card.item_key: card for card in recommendation_engine._rows_to_discovered(rows)
+                }
+                for index, row in enumerate(rows, 1):
+                    item = Recommendation(
+                        content=content_by_key[str(row["item_key"])],
+                        recommendation_id=int(str(row["recommendation_id"])),
+                        expression=str(row.get("expression") or ""),
+                        topic_label=str(row.get("topic") or ""),
+                    )
+                    _print_recommendation_card(item, index)
+                console.print(f"[dim]屏：{batch.batch_ref} · 方向：{batch.direction}[/dim]")
+                # Successful terminal rendering is this surface's presentation.
+                await asyncio.to_thread(
+                    runtime.store.present,
+                    batch.batch_ref,
+                    "cli_" + batch.batch_ref,
+                    [str(row["item_key"]) for row in rows],
+                )
+            finally:
+                await runtime.aclose()
+
+        try:
+            asyncio.run(_direct())
+        except (SoulProfileNotInitializedError, StoreConflict, ValueError) as exc:
+            _print_status_panel("warning", "导演请求未完成", str(exc))
+            raise typer.Exit(code=1) from exc
+        return
 
     try:
         profile_data = asyncio.run(soul_engine.get_profile())
@@ -14692,7 +15089,7 @@ def recommend() -> None:
         recommendation_engine.generate_recommendations(
             discovered=None,
             profile=profile_data,
-            limit=5,
+            limit=limit,
         )
     )
 
@@ -14808,6 +15205,17 @@ def feedback(
             stored_recommendation_id,
             feedback_type=stored_feedback_type,
             note=stored_note,
+        )
+        from openbiliclaw.api.director import project_feedback
+
+        await asyncio.to_thread(
+            project_feedback,
+            _get_runtime_database(),
+            stored_recommendation_id,
+            normalized_request_id,
+            stored_feedback_type,
+            stored_note,
+            existing_event_id=item_receipt.event_id,
         )
 
         # The command is durably successful at this boundary. Cognition and
@@ -14984,6 +15392,7 @@ def keyword_inspiration_dry_run(
     from openbiliclaw.config import derive_inspiration_breadth_params, load_config
     from openbiliclaw.discovery.douyin import split_csv_values
     from openbiliclaw.discovery.inspiration_provider import (
+        InspirationGroundingKeys,
         build_inspiration_search_provider,
         build_platform_source_backends,
     )
@@ -15109,9 +15518,7 @@ def keyword_inspiration_dry_run(
                 inspiration_provider=build_inspiration_search_provider(
                     getattr(config.discovery, "inspiration_search_backends", None),
                     database=database,
-                    exa_api_key=str(getattr(config.discovery, "exa_api_key", "") or ""),
-                    you_api_key=str(getattr(config.discovery, "you_api_key", "") or ""),
-                    serply_api_key=str(getattr(config.discovery, "serply_api_key", "") or ""),
+                    grounding_keys=InspirationGroundingKeys.from_discovery_config(config.discovery),
                     platform_backends=build_platform_source_backends(
                         config,
                         database=database,
@@ -17682,6 +18089,144 @@ def _run_web_formal_discovery(*, limit: int, force: bool = False) -> None:
     raise typer.Exit(code=1)
 
 
+@app.command("profile-repair-provenance")
+def profile_repair_provenance(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="真正写入修复结果。默认 dry-run：只打印将要做的改动。",
+    ),
+) -> None:
+    """修复被错误时间线 / MBTI / 产品运维话题污染的画像数据。
+
+    三类污染：
+
+    \b
+      - insight 的 evidence 里把 MBTI 类型当证据（标签本身来自导入假数据）
+      - 觉察笔记的「同一天 / 快速切换」来自导入时刻，而不是真实行为时间
+      - 对话来的兴趣 / 避雷其实是「使用本产品」的运维话题
+
+    默认 dry-run。--apply 会先把三层文件备份到
+    data/memory/provenance_repair_runs/<timestamp>/ 再写入；写入前请先停掉
+    正在运行的后端，否则内存里的旧快照会覆盖修复结果。
+    """
+    from openbiliclaw.soul.provenance_repair import (
+        plan_provenance_repair,
+        replace_layer_payload,
+    )
+
+    _print_page_title("画像来源修复", "profile-repair-provenance")
+    memory = _build_memory_manager()
+    preference_layer = memory.get_layer("preference")
+    awareness_layer = memory.get_layer("awareness")
+    insight_layer = memory.get_layer("insight")
+
+    awareness = awareness_layer.data if isinstance(awareness_layer.data, dict) else {}
+    insights = insight_layer.data if isinstance(insight_layer.data, dict) else {}
+    preference = preference_layer.data if isinstance(preference_layer.data, dict) else {}
+
+    mbti_type = ""
+    soul_data = getattr(memory.get_layer("soul"), "data", None)
+    core = soul_data.get("core") if isinstance(soul_data, dict) else None
+    if isinstance(core, dict):
+        mbti = core.get("mbti")
+        if isinstance(mbti, dict):
+            mbti_type = str(mbti.get("type") or "")
+
+    plan = plan_provenance_repair(
+        awareness=awareness,
+        insights=insights,
+        preference=preference,
+        event_times=_provenance_event_times(awareness),
+        mbti_type=mbti_type,
+    )
+
+    rows = [
+        ("删掉的 MBTI 证据", f"{plan.summary['insight_evidence_removed']} 条"),
+        ("修好的洞察", f"{plan.summary['insights_repaired']} 条"),
+        ("作废的洞察", f"{plan.summary['insights_invalidated']} 条"),
+        ("隔离的觉察笔记", f"{plan.summary['awareness_quarantined']} 条"),
+        ("无法验证的觉察", f"{plan.summary['awareness_unverified']} 条"),
+        ("归档的兴趣", f"{plan.summary['interests_archived']} 个"),
+        ("待人工确认的兴趣", f"{plan.summary['interests_review']} 个"),
+        ("归档的避雷主题", f"{plan.summary['dislikes_archived']} 个"),
+    ]
+    _print_key_value_table("修复计划", rows)
+    for detail in plan.details[:200]:
+        console.print(f"  [dim]· {detail}[/dim]")
+    if len(plan.details) > 200:
+        console.print(f"  [dim]… 另有 {len(plan.details) - 200} 条明细未显示[/dim]")
+
+    if not plan.changed:
+        console.print("\n[green]没有需要修复的数据。[/green]")
+        return
+    if not apply:
+        console.print("\n[yellow]dry-run：加 --apply 才会写入（会先自动备份）。[/yellow]")
+        return
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_dir = preference_layer.storage_path.parent / "provenance_repair_runs" / stamp
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for layer in (preference_layer, awareness_layer, insight_layer):
+        if layer.storage_path.exists():
+            shutil.copy2(layer.storage_path, backup_dir / layer.storage_path.name)
+
+    replace_layer_payload(preference_layer, plan.preference)
+    replace_layer_payload(awareness_layer, plan.awareness)
+    replace_layer_payload(insight_layer, plan.insights)
+    console.print(f"\n[green]已写入修复结果，备份在 {backup_dir}[/green]")
+
+
+def _provenance_event_times(awareness: dict[str, Any]) -> dict[int, float]:
+    """Resolve ``source_event_ids`` to their real interaction epoch seconds.
+
+    Notes cite event ids; only the events' own interaction time (``view_at`` /
+    ``fav_time`` / ``mtime`` / ``interaction_time`` …) decides whether a
+    「同一天」 claim is true. Events without one stay absent.
+    """
+    from openbiliclaw.sources.event_format import parse_event_timestamp
+
+    notes = awareness.get("notes")
+    if not isinstance(notes, list):
+        return {}
+    ids: set[int] = set()
+    for note in notes:
+        raw_ids = note.get("source_event_ids") if isinstance(note, dict) else None
+        for raw in raw_ids or []:
+            try:
+                event_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if event_id > 0:
+                ids.add(event_id)
+    if not ids:
+        return {}
+
+    try:
+        database = _get_runtime_database()
+        placeholders = ",".join("?" for _ in ids)
+        rows = database.conn.execute(
+            f"SELECT id, metadata FROM events WHERE id IN ({placeholders})",
+            sorted(ids),
+        ).fetchall()
+    except Exception as exc:
+        console.print(f"[yellow]  读取事件时间失败，跳过时序校验：{exc}[/yellow]")
+        return {}
+
+    times: dict[int, float] = {}
+    for event_id, raw_metadata in rows:
+        metadata = raw_metadata
+        if isinstance(raw_metadata, str):
+            try:
+                metadata = json.loads(raw_metadata)
+            except (TypeError, ValueError):
+                metadata = {}
+        parsed = parse_event_timestamp(metadata if isinstance(metadata, dict) else {})
+        if parsed is not None:
+            times[int(event_id)] = parsed.timestamp()
+    return times
+
+
 @app.command()
 def discover(
     source: str = typer.Option(
@@ -18214,8 +18759,71 @@ def config_show() -> None:
         "cli.config_show.row.llm_chain" if instance_routing else "cli.config_show.row.llm"
     )
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
+    from openbiliclaw.sponsored_status import sponsored_status
+
+    for notice in sponsored_status(cfg)["notices"]:
+        console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
+    from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+
+    try:
+        jev_context = resolve_jev_context(
+            cfg.decision.providers.jev.model, cfg.decision.providers.jev.context_limits
+        )
+    except JevContextError:
+        jev_context_label = tr("cli.config_show.value.jev_context_unknown")
+    else:
+        jev_context_label = (
+            f"{jev_context.max_state_question_tokens} / {jev_context.max_request_tokens} tokens; "
+            f"{jev_context.max_state_question_bytes} / {jev_context.max_request_bytes} bytes "
+            f"({jev_context.source})"
+        )
     _print_page_title(tr("cli.config_show.title"), tr("cli.config_show.subtitle"))
     rows = [
+        (
+            tr("cli.config_show.row.jev_client"),
+            tr(
+                "cli.config_show.value.on"
+                if cfg.decision.providers.jev.enabled
+                else "cli.config_show.value.off"
+            ),
+        ),
+        (tr("cli.config_show.row.jev_model"), cfg.decision.providers.jev.model),
+        (tr("cli.config_show.row.jev_url"), cfg.decision.providers.jev.endpoint_url),
+        (
+            tr("cli.config_show.row.jev_token"),
+            tr(
+                "cli.config_show.value.token_saved"
+                if cfg.decision.providers.jev.api_key
+                else "cli.config_show.value.token_not_saved"
+            ),
+        ),
+        (tr("cli.config_show.row.jev_context"), jev_context_label),
+        (tr("cli.config_show.row.jev_key_env"), cfg.decision.providers.jev.api_key_env),
+        (tr("cli.config_show.row.jev_timeout"), str(cfg.decision.providers.jev.timeout_seconds)),
+        (tr("cli.config_show.row.jev_attempts"), str(cfg.decision.providers.jev.max_attempts)),
+        (tr("cli.config_show.row.director_mode"), cfg.director.mode),
+        (tr("cli.config_show.row.director_strategy"), cfg.director.strategy),
+        (tr("cli.config_show.row.director_horizon"), str(cfg.director.planning_horizon_screens)),
+        (tr("cli.config_show.row.jev_filter"), cfg.discovery.semantic_filter.mode),
+        (tr("cli.config_show.row.eval_scorer"), cfg.discovery.eval_scorer),
+        (tr("cli.config_show.row.jev_capabilities"), tr("cli.config_show.value.jev_capabilities")),
+        (
+            tr("cli.config_show.row.jev_byte_guards"),
+            tr(
+                "cli.config_show.value.jev_byte_guards",
+                single=cfg.discovery.jev_evaluation.max_state_question_bytes,
+                total=cfg.discovery.jev_evaluation.max_request_bytes,
+            ),
+        ),
+        (
+            tr("cli.config_show.row.jev_batch"),
+            tr(
+                "cli.config_show.value.jev_batch",
+                candidates=cfg.discovery.jev_evaluation.max_candidates_per_request,
+                questions=cfg.discovery.jev_evaluation.max_questions_per_request,
+                single=cfg.discovery.jev_evaluation.max_question_bytes,
+            ),
+        ),
         (
             tr("cli.config_show.row.language"),
             tr(

@@ -1,0 +1,142 @@
+{
+  "date": "2026-11-06",
+  "production_endpoint": "http://127.0.0.1:18420",
+  "source_base": "a0cae9322bd55f37ee957cdd365878cf1e433a28",
+  "patches": [
+    "Codex JSON input marker (#334)",
+    "Reject explicit DOM/zero-API account bootstrap rows before staging"
+  ],
+  "deployment_snapshot": "a0cae9322bd5-codex-json-20261106-002709",
+  "backup": "douyin-codex-20261106-002709",
+  "model": "gpt-6.1-sol",
+  "soul_chain": [
+    "codex-profile"
+  ],
+  "other_routes_unchanged": true,
+  "quarantine": {
+    "task_id": "9a7873fa-2e10-4e96-b345-9b77e09a1912",
+    "events_quarantined": 40,
+    "seen_items_reverted": 13,
+    "consumer_had_not_consumed": true,
+    "existing_profile_preserved": true
+  },
+  "profile_recovery": {
+    "at": "2026-11-05T16:39:24.678253+00:00",
+    "task_id": "fed7f6e0-de22-4474-8921-d03e886e53e4",
+    "events": 7,
+    "mode": "exclusive manual recovery using deployed SoulEngine analyze_events + build_initial_profile",
+    "usage_start": 29634,
+    "ledger_start": 10744,
+    "ok": true,
+    "seconds": 41.76,
+    "changed_files": [
+      "preference.json",
+      "soul.json",
+      "soul_profile.json",
+      "soul_profile.md"
+    ],
+    "usage": [
+      {
+        "id": 29635,
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "caller": "soul.preference.chunk",
+        "success": 1,
+        "total_tokens": 5358
+      },
+      {
+        "id": 29636,
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "caller": "soul.profile_build",
+        "success": 1,
+        "total_tokens": 330250
+      }
+    ],
+    "ledger": [
+      {
+        "id": 10745,
+        "write_point": "init_cognition_persist",
+        "outcome": "success"
+      },
+      {
+        "id": 10746,
+        "write_point": "init_preference_build",
+        "outcome": "success"
+      },
+      {
+        "id": 10747,
+        "write_point": "init_soul_build",
+        "outcome": "success"
+      }
+    ]
+  },
+  "runtime": {
+    "/api/health": {
+      "http": 200,
+      "fields": [
+        "status",
+        "service",
+        "profile_ready",
+        "lan_ip",
+        "embedding_ready",
+        "llm_registered"
+      ]
+    },
+    "/api/runtime-status": {
+      "http": 200,
+      "fields": [
+        "initialized",
+        "recommendation_count",
+        "pending_signal_events",
+        "last_refresh_at",
+        "discovery_failure_message",
+        "last_notification_at",
+        "unread_count",
+        "pool_available_count",
+        "pool_raw_count",
+        "pool_pending_count",
+        "pool_pending_eval_count",
+        "pool_evaluated_pending_count"
+      ],
+      "worker_running": true,
+      "worker_heartbeat_age_seconds": 11.742115020751953,
+      "initialized": true
+    },
+    "/api/profile-summary": {
+      "http": 200,
+      "fields": [
+        "initialized",
+        "personality_portrait",
+        "core_traits",
+        "deep_needs",
+        "mbti",
+        "values",
+        "motivational_drivers",
+        "likes",
+        "dislikes",
+        "favorite_up_users",
+        "total_likes",
+        "total_dislikes"
+      ]
+    },
+    "quarantined_task_event_count": 0,
+    "valid_task_event_count": 7,
+    "user_overrides_unchanged": true,
+    "guard_file_sha256": "ad831681b497cd81f742c5f5d7779b1b5d73b14df7fc4ae28011458f69046cc7"
+  },
+  "tests": {
+    "codex_provider": 13,
+    "api_ingest_final": 24,
+    "deployed_source_combined": 37,
+    "ruff": "PASS",
+    "mypy": "PASS (366 source files)",
+    "full_pytest": "INTERRUPTED: 1185 passed in 308.45 seconds; remaining suite NOT_RUN"
+  },
+  "browser": "temporary repaired extension closed and profile removed; regular Chrome extension update awaits user action",
+  "remaining": [
+    "Regular Chrome repair extension installation",
+    "Authenticated four-scope collection retry after CAPTCHA/403 resolution"
+  ],
+  "full_e2e": "NOT_COMPLETE"
+}

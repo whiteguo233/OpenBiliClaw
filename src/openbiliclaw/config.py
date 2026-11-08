@@ -8,16 +8,28 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
 import re
+import shlex
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import MISSING, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+from openbiliclaw.discovery.inspiration_backends import (
+    DEFAULT_INSPIRATION_SEARCH_BACKENDS,
+    normalize_inspiration_search_backends,
+)
+from openbiliclaw.sponsored_runtime_state import (
+    DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS,
+    SponsoredRuntimeSettings,
+    install_sponsored_settings,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,6 +58,7 @@ _SUPPORTED_OPENAI_API_FLAVORS = {"", "chat_completions", "responses"}
 # browser page-translation rewrote '奥拉玛' into config via value-less
 # <option> elements).
 _SUPPORTED_EMBEDDING_PROVIDERS = {
+    "siliconflow_free",
     "",
     "ollama",
     "openai",
@@ -75,10 +88,12 @@ _SUPPORTED_CHAT_PROVIDERS = {
     "api_route",
     "cheaperinference",
 }
+_SUPPORTED_INSTANCE_PROVIDERS = _SUPPORTED_CHAT_PROVIDERS | {"siliconflow_free"}
 _LLM_INSTANCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _TAILNET_HOSTNAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DEFAULT_TAILNET_HOSTNAME = "openbiliclaw-host"
 _LLM_PROVIDER_DISPLAY_NAMES = {
+    "siliconflow_free": "硅基流动（免费）",
     "openai": "OpenAI",
     "claude": "Claude",
     "gemini": "Gemini",
@@ -173,20 +188,15 @@ _DEFAULT_INSPIRATION_SEARCH_RESULTS_PER_QUERY = 5
 _DEFAULT_INSPIRATION_MAX_SEEDS_PER_ASPECT = 3
 _DEFAULT_INSPIRATION_MAX_KEYWORDS_PER_PLATFORM = 12
 _DEFAULT_INSPIRATION_BREADTH = "high"
-_DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = (
-    "local_cache",
-    "platform_sources",
-    "bing_rss",
-    "exa",
-    "you",
-    "serply",
-)
+# Shared with `discovery.inspiration_provider` so the default chain and the alias
+# table live in one place — see `openbiliclaw/discovery/inspiration_backends.py`.
+_DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = DEFAULT_INSPIRATION_SEARCH_BACKENDS
 _DEFAULT_ADMISSION_MIN_SCORE = 0.60
 _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
-_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned", "jev"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -372,6 +382,15 @@ _REMOVED_INSPIRATION_DISCOVERY_KEYS: tuple[str, ...] = (
     "inspiration_max_keywords_per_platform",
 )
 
+# Keys removed for their own, non-breadth reason; each carries its own notice so
+# an old config gets an actionable message instead of a silent drop.
+_REMOVED_DISCOVERY_KEY_MESSAGES: dict[str, str] = {
+    "keenable_api_key": (
+        "`keenable_api_key` 已移除：Keenable grounding 固定使用匿名免费端点，无需 API Key，"
+        "该值被忽略，请删除这一行。"
+    ),
+}
+
 
 def derive_inspiration_breadth_params(breadth: object) -> InspirationBreadthParams:
     """Return the effective inspiration knobs for a breadth tier.
@@ -392,7 +411,7 @@ def _removed_discovery_key_issues(raw: dict[str, Any]) -> list[ConfigIssue]:
     discovery_raw = raw.get("discovery")
     if not isinstance(discovery_raw, dict):
         return []
-    return [
+    issues = [
         ConfigIssue(
             field=f"discovery.{key}",
             message=(
@@ -402,6 +421,12 @@ def _removed_discovery_key_issues(raw: dict[str, Any]) -> list[ConfigIssue]:
         for key in _REMOVED_INSPIRATION_DISCOVERY_KEYS
         if key in discovery_raw
     ]
+    issues.extend(
+        ConfigIssue(field=f"discovery.{key}", message=message)
+        for key, message in _REMOVED_DISCOVERY_KEY_MESSAGES.items()
+        if key in discovery_raw
+    )
+    return issues
 
 
 @dataclass
@@ -449,6 +474,127 @@ class LLMInstanceConfig(LLMProviderConfig):
     name: str = ""
     provider_type: str = ""
     enabled: bool = True
+
+
+@dataclass(frozen=True)
+class JevContextLimits:
+    """Operator-confirmed dual token limits bound to one exact model ID."""
+
+    max_request_tokens: int
+    max_state_question_tokens: int
+
+
+@dataclass
+class JevDecisionConfig:
+    """Independent Jev settings; a local saved token takes precedence over env.
+
+    Enabling the client does not enable a recommendation or filtering route.
+    ``max_attempts`` includes the initial request. Timeout and attempt defaults
+    are conservative initial transport budgets, not a measured latency SLA.
+    """
+
+    enabled: bool = False
+    model: str = "jev-1.13.0"
+    api_key_env: str = "TYPESAFE_API_KEY"
+    api_key: str = field(default="", repr=False)
+    endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    timeout_seconds: float = 2.0
+    max_attempts: int = 2
+    context_limits: dict[str, JevContextLimits] = field(default_factory=dict)
+
+
+@dataclass
+class DecisionProvidersConfig:
+    """Provider settings independent of chat and embedding configuration."""
+
+    jev: JevDecisionConfig = field(default_factory=JevDecisionConfig)
+
+
+@dataclass
+class DecisionConfig:
+    """Typed decision-provider configuration, without business routing."""
+
+    providers: DecisionProvidersConfig = field(default_factory=DecisionProvidersConfig)
+
+
+@dataclass
+class DirectorConfig:
+    """Recommendation rollout and orchestration policy, independent of filtering."""
+
+    mode: str = "off"
+    strategy: str = "agent_jev"
+    decision_provider: str = "jev"
+    planning_horizon_screens: int = 3
+    plan_ttl_seconds: int = 300
+    planning_budget_seconds: float = 20.0
+    decision_budget_seconds: float = 8.0
+    max_decision_calls: int = 10
+    max_candidates: int = 40
+
+
+@dataclass
+class SemanticFilterConfig:
+    """Opt-in discovery rejection evidence; enforcement needs versioned calibration.
+
+    The threshold is a conservative shadow starting point, NOT a calibrated
+    quality claim. Enforce requires an operator's calibration tag bound to the
+    exact pinned provider model; provider swaps must reopen calibration.
+    """
+
+    mode: str = "off"
+    provider: str = "jev"
+    refusal_threshold: float = 1.0
+    calibration_tag: str = ""
+    calibration_model: str = ""
+    max_candidates_per_cycle: int = 30
+    max_calls_per_cycle: int = 1
+    decision_budget_seconds: float = 2.0
+
+
+@dataclass
+class JevEvaluationConfig:
+    """Pure typed evaluator vocabulary and conservative UTF-8 wire budgets.
+
+    These byte guards are engineering headroom, not tokenizer measurements or
+    quality calibration. Unknown is adapter-owned and never a configurable label.
+    """
+
+    topic_labels: list[str] = field(
+        default_factory=lambda: [
+            "科技",
+            "编程",
+            "科学",
+            "游戏",
+            "影视",
+            "音乐",
+            "动漫",
+            "生活",
+            "美食",
+            "旅行",
+            "运动",
+            "财经",
+            "教育",
+            "历史",
+            "社会",
+            "艺术",
+            "其他",
+        ]
+    )
+    franchise_labels: list[str] = field(default_factory=list)
+    # Zero adapts to the selected model. Existing explicit values remain
+    # operator-owned stricter guards; they never redefine model capacity.
+    max_state_question_bytes: int = 0
+    max_request_bytes: int = 0
+    # Bounded packing search, not a native question cap or quality calibration.
+    # Dual model budgets choose the actual batch; do not stop at four when a
+    # larger operator-confirmed window can fit more complete candidates.
+    # Native Jev has no independent question-count cap; zero leaves that guard
+    # to the dual context budgets. A complete candidate currently needs 8 questions.
+    max_candidates_per_request: int = 64
+    max_questions_per_request: int = 0
+    max_question_bytes: int = 0
+    max_calls: int = 32
+    budget_seconds: float = 30.0
 
 
 @dataclass
@@ -514,6 +660,7 @@ class LLMConfig:
     # marker distinguishes a deliberately empty v2 draft from a legacy config
     # whose fixed provider tables should be projected into instances.
     instance_routing: bool = False
+    builtin_providers_version: int = 2
     instances: dict[str, LLMInstanceConfig] = field(default_factory=dict)
     default_chain: list[str] = field(default_factory=list)
     openai: LLMProviderConfig = field(default_factory=LLMProviderConfig)
@@ -539,6 +686,9 @@ class LLMConfig:
     discovery: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
     recommendation: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
     evaluation: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
+    # Official-build Sponsored Runtime. Disabled in source deployments; the
+    # settings are installed process-wide by ``load_config_with_diagnostics``.
+    sponsored: SponsoredRuntimeSettings = field(default_factory=SponsoredRuntimeSettings)
 
 
 _LLM_PROVIDER_CONFIG_FIELDS = tuple(field_.name for field_ in fields(LLMProviderConfig))
@@ -619,6 +769,160 @@ def _legacy_provider_is_visible(
     return provider_type == "ollama" and bool(model or str(provider.base_url or "").strip())
 
 
+def builtin_siliconflow_instance(model: str = "Qwen/Qwen3-8B") -> LLMInstanceConfig:
+    """An immutable built-in endpoint using the ordinary instance contract."""
+    return LLMInstanceConfig(
+        name=f"硅基流动 · {model.removeprefix('Qwen/')}（免费）",
+        provider_type="siliconflow_free",
+        model=model,
+    )
+
+
+def _with_builtin_siliconflow_instances(
+    instances: dict[str, LLMInstanceConfig],
+) -> dict[str, LLMInstanceConfig]:
+    """Keep saved identities; make both fixed models available without routing them."""
+    result = dict(instances)
+    for preferred, model in (
+        ("siliconflow-free", "Qwen/Qwen3-8B"),
+        ("siliconflow-free-qwen35-4b", "Qwen/Qwen3.5-4B"),
+    ):
+        if any(i.provider_type == "siliconflow_free" and i.model == model for i in result.values()):
+            continue
+        instance_id = preferred
+        suffix = 2
+        while instance_id in result:
+            instance_id = f"{preferred}-{suffix}"
+            suffix += 1
+        result[instance_id] = builtin_siliconflow_instance(model)
+    return result
+
+
+def migrate_sponsored_provider_config(llm: LLMConfig, *, seed_preset: bool = False) -> None:
+    """Translate the retired global switch into explicit, ordered routes once.
+
+    Never insert a paid fallback unless the old configuration allowed it.
+    Existing module overrides survive and take effect under ordinary routing.
+    ``seed_preset`` is retained for source compatibility; both fixed entries
+    are now always present, independent of their inclusion in a route.
+    """
+    from dataclasses import replace
+
+    if llm.sponsored.enabled:
+        settings = llm.sponsored
+        instances = effective_llm_instances(llm)
+        previous_chain = effective_llm_default_chain(llm)
+        routes = effective_llm_routes(llm)
+        free_chain: list[str] = []
+        models = [settings.model]
+        if settings.fallback_to_other_free_model:
+            models.append(
+                "Qwen/Qwen3.5-4B" if settings.model == "Qwen/Qwen3-8B" else "Qwen/Qwen3-8B"
+            )
+        for index, model in enumerate(models):
+            preferred = "siliconflow-free" if index == 0 else "siliconflow-free-backup"
+            instance_id = preferred
+            suffix = 2
+            while (
+                instance_id in instances
+                and instances[instance_id].provider_type != "siliconflow_free"
+            ):
+                instance_id = f"{preferred}-{suffix}"
+                suffix += 1
+            instances[instance_id] = builtin_siliconflow_instance(model)
+            if index:
+                instances[instance_id].name = "硅基流动（免费备用）"
+            free_chain.append(instance_id)
+        # Template-only legacy endpoints were previously ignored by the switch.
+        # Preserve them as disabled editable entries rather than reject migration.
+        for instance in instances.values():
+            if (
+                not settings.fallback_to_user_provider
+                and instance.provider_type in _REMOTE_PROVIDER_FIELDS
+                and (not instance.api_key.strip() or not instance.model.strip())
+                and not (instance.provider_type == "openai" and instance.auth_mode == "codex_oauth")
+                and not (instance.provider_type == "gemini" and _gemini_api_key_from_env())
+            ):
+                instance.enabled = False
+        llm.instances = instances
+        llm.default_chain = free_chain
+        if settings.fallback_to_user_provider:
+            llm.default_chain.extend(
+                i
+                for i in previous_chain
+                if i not in free_chain and i in instances and instances[i].enabled
+            )
+        for bucket, route in routes.items():
+            setattr(llm, bucket, route)
+        llm.instance_routing = True
+        if settings.embedding_mode == "cloud":
+            llm.embedding = replace(
+                llm.embedding,
+                provider="siliconflow_free",
+                model="BAAI/bge-m3",
+                api_key="",
+                base_url="",
+                output_dimensionality=1024,
+                fallback_enabled=False,
+                fallback_provider="",
+                multimodal_enabled=False,
+            )
+        elif llm.embedding.provider != "ollama":
+            llm.embedding = replace(
+                llm.embedding,
+                provider="ollama",
+                model="bge-m3",
+                api_key="",
+                base_url="http://127.0.0.1:11434/v1",
+                output_dimensionality=1024,
+                fallback_enabled=False,
+                fallback_provider="",
+                multimodal_enabled=False,
+            )
+        llm.sponsored = replace(settings, enabled=False)
+        llm.builtin_providers_version = 1
+    if llm.instance_routing:
+        if llm.builtin_providers_version < 2:
+            # Earlier releases allowed editing/duplicating a free endpoint. Keep
+            # its model and first identity, remapping duplicate route references.
+            aliases: dict[str, str] = {}
+            by_model: dict[str, str] = {}
+            for instance_id, instance in list(llm.instances.items()):
+                if instance.provider_type != "siliconflow_free":
+                    continue
+                if instance.model not in {"Qwen/Qwen3-8B", "Qwen/Qwen3.5-4B"}:
+                    continue  # Invalid models remain visible to validation.
+                if instance.model in by_model:
+                    aliases[instance_id] = by_model[instance.model]
+                    del llm.instances[instance_id]
+                else:
+                    by_model[instance.model] = instance_id
+                    llm.instances[instance_id] = builtin_siliconflow_instance(instance.model)
+            llm.default_chain = list(dict.fromkeys(aliases.get(i, i) for i in llm.default_chain))
+            for bucket in _LLM_MODULE_BUCKETS:
+                route = getattr(llm, bucket)
+                route.chain = list(dict.fromkeys(aliases.get(i, i) for i in route.chain))
+        llm.instances = _with_builtin_siliconflow_instances(llm.instances)
+        llm.builtin_providers_version = 2
+
+
+def uses_siliconflow_free(llm: LLMConfig, *, include_embedding: bool = True) -> bool:
+    """Whether a routed LLM instance or the independent embedding uses the SDK."""
+    if llm.sponsored.enabled or (
+        include_embedding and llm.embedding.provider == "siliconflow_free"
+    ):
+        return True
+    chain = effective_llm_default_chain(llm)
+    for route in effective_llm_routes(llm).values():
+        if not route.inherit:
+            chain.extend(route.chain)
+    instances = effective_llm_instances(llm)
+    return any(
+        i in instances and instances[i].enabled and instances[i].provider_type == "siliconflow_free"
+        for i in chain
+    )
+
+
 def effective_llm_instances(llm: LLMConfig) -> dict[str, LLMInstanceConfig]:
     """Return authoritative v2 instances or a lossless legacy projection.
 
@@ -627,9 +931,9 @@ def effective_llm_instances(llm: LLMConfig) -> dict[str, LLMInstanceConfig]:
     explicitly opts into v2 when it submits the new shape.
     """
     if llm.instance_routing:
-        return dict(llm.instances)
+        return _with_builtin_siliconflow_instances(llm.instances)
 
-    projected: dict[str, LLMInstanceConfig] = {}
+    projected = _with_builtin_siliconflow_instances({})
     for provider_type in sorted(_SUPPORTED_CHAT_PROVIDERS):
         provider = getattr(llm, provider_type)
         if _legacy_provider_is_visible(llm, provider_type, provider):
@@ -1163,8 +1467,11 @@ class DiscoveryConfig:
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
     # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
-    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
+    # with learned-vs-LLM audit), "learned" (learned relevance with LLM metadata),
+    # or "jev" (pure text-only typed full evaluation with controlled metadata).
     eval_scorer: str = "llm"
+    semantic_filter: SemanticFilterConfig = field(default_factory=SemanticFilterConfig)
+    jev_evaluation: JevEvaluationConfig = field(default_factory=JevEvaluationConfig)
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -1811,11 +2118,11 @@ class AgentConfig:
 
 @dataclass
 class ApiAuthConfig:
-    """Optional password gate for LAN / remote access (see
+    """Password gate required for LAN / remote access (see
     ``docs/plans/2026-05-30-web-password-auth-design.md``).
 
-    Only takes effect when ``enabled`` is true *and* the request is not a
-    trusted-local request (loopback without forwarding headers, see §4.1).
+    When disabled, private APIs are trusted-local only. Enabling the gate
+    allows authenticated remote access (see §4.1 for trusted-local rules).
     ``session_secret`` is auto-generated on first enable. The revocation epoch
     (``auth_epoch``) and password fingerprint live in SQLite, not here (§4.7).
     """
@@ -1886,6 +2193,8 @@ class Config:
     data_dir: str = "data"
     api: ApiConfig = field(default_factory=ApiConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
+    director: DirectorConfig = field(default_factory=DirectorConfig)
     bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     # Overseas-outbound proxy (LLM SDKs / YouTube / Bangumi / updater).
     # CN-direct clients never use it — see NetworkConfig docstring.
@@ -2372,12 +2681,31 @@ def _build_config(
             )
         )
 
+    sponsored_raw = llm_raw.get("sponsored", {})
+    if not isinstance(sponsored_raw, dict):
+        sponsored_raw = {}
+    sponsored = SponsoredRuntimeSettings(
+        enabled=bool(sponsored_raw.get("enabled", False)),
+        runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
+        relay_url=str(
+            sponsored_raw.get("relay_url", "") or SponsoredRuntimeSettings().relay_url
+        ).strip(),
+        model=str(sponsored_raw.get("model", "Qwen/Qwen3-8B")),
+        embedding_mode=str(sponsored_raw.get("embedding_mode", "cloud")),
+        fallback_to_other_free_model=bool(sponsored_raw.get("fallback_to_other_free_model", True)),
+        fallback_to_user_provider=bool(sponsored_raw.get("fallback_to_user_provider", False)),
+        notify_on_fallback=bool(sponsored_raw.get("notify_on_fallback", True)),
+        request_timeout_seconds=_normalize_sponsored_timeout(
+            sponsored_raw.get("request_timeout_seconds")
+        ),
+    )
     llm = LLMConfig(
         default_provider=llm_raw.get("default_provider", "deepseek"),
         concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
         timeout=_normalize_llm_timeout(llm_raw.get("timeout")),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         instance_routing=instance_routing,
+        builtin_providers_version=(2 if llm_raw.get("builtin_providers_version") == 2 else 0),
         instances=instances,
         default_chain=default_chain,
         openai=_provider_config("openai"),
@@ -2402,6 +2730,7 @@ def _build_config(
         discovery=_module_config("discovery"),
         recommendation=_module_config("recommendation"),
         evaluation=_module_config("evaluation"),
+        sponsored=sponsored,
     )
     if instance_routing:
         ordered_instance_ids = [
@@ -2881,7 +3210,7 @@ def _build_config(
 
     api_auth = _build_api_auth(api_raw, consult_environment=consult_environment)
 
-    return Config(
+    config = Config(
         language=general.get("language", "zh"),
         data_dir=general.get("data_dir", "data"),
         api=ApiConfig(
@@ -2890,6 +3219,8 @@ def _build_config(
             auth=api_auth,
         ),
         llm=llm,
+        decision=_build_decision_config(raw.get("decision", {})),
+        director=_build_director_config(raw.get("director", {})),
         bilibili=bilibili,
         network=_build_network_config(raw),
         sources=sources,
@@ -3141,6 +3472,376 @@ def _build_config(
         tls_proxy=_build_tls_proxy(raw, consult_environment=consult_environment),
         tailnet=_build_tailnet(raw, consult_environment=consult_environment),
     )
+    validate_director_routes(config)
+    return config
+
+
+def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
+    """Check typed Jev settings without reading or revealing credentials."""
+    from openbiliclaw.decision.context_budget import (
+        JevContextError,
+        parse_jev_context_limits,
+        resolve_jev_context,
+        validate_jev_model_id,
+    )
+
+    issues: list[ConfigIssue] = []
+
+    def add(name: str, message: str) -> None:
+        issues.append(
+            ConfigIssue(
+                field=f"decision.providers.jev.{name}", message=message, severity="blocking"
+            )
+        )
+
+    if not isinstance(config.enabled, bool):
+        add("enabled", "必须为 TOML 布尔值 true 或 false。")
+    from openbiliclaw.decision.jev_provider import validate_jev_endpoint_url
+
+    try:
+        validate_jev_endpoint_url(config.endpoint_url)
+    except ValueError as exc:
+        add("endpoint_url", str(exc))
+    if not isinstance(config.api_key, str) or (
+        config.api_key
+        and (
+            not config.api_key.isascii()
+            or any(ord(char) < 33 or ord(char) == 127 for char in config.api_key)
+        )
+    ):
+        add("api_key", "Token 必须是有效 Bearer 凭据，不能含空白或控制字符。")
+    if (
+        not isinstance(config.model, str)
+        or not config.model.strip()
+        or config.model != config.model.strip()
+    ):
+        add("model", "必须为非空模型名称，且不能含首尾空白。")
+    if (
+        not isinstance(config.api_key_env, str)
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", config.api_key_env) is None
+    ):
+        add("api_key_env", "必须为合法环境变量名；请勿填写实际 API Key。")
+    timeout = config.timeout_seconds
+    try:
+        valid_timeout = (
+            isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and math.isfinite(timeout)
+            and timeout > 0
+        )
+    except OverflowError:
+        valid_timeout = False
+    if not valid_timeout:
+        add("timeout_seconds", "必须为大于 0 的有限秒数。")
+    if (
+        not isinstance(config.max_attempts, int)
+        or isinstance(config.max_attempts, bool)
+        or config.max_attempts < 1
+    ):
+        add("max_attempts", "必须为大于等于 1 的整数（包含首次请求）。")
+    if not isinstance(config.context_limits, dict):
+        add("context_limits", "必须为按精确模型 ID 索引的上下文容量表。")
+    else:
+        for model, limits in config.context_limits.items():
+            try:
+                validate_jev_model_id(model)
+                resolve_jev_context(model, {model: parse_jev_context_limits(limits)})
+            except JevContextError as exc:
+                add("context_limits", str(exc))
+    return issues
+
+
+def validate_jev_decision_config(config: JevDecisionConfig) -> None:
+    """Reject invalid Jev client settings; credential resolution is separate."""
+    issues = _jev_decision_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def _build_decision_config(raw: object) -> DecisionConfig:
+    """Parse the isolated decision namespace without credential lookup."""
+    from openbiliclaw.decision.context_budget import JevContextError, parse_jev_context_limits
+
+    def table(value: object, section: str, allowed: set[str]) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ConfigError(f"`[{section}]` 必须是 TOML table。")
+        unknown = set(value) - allowed
+        if unknown:
+            # Do not echo values: a mistaken api_key entry can be a secret.
+            raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+        return value
+
+    decision_raw = table(raw, "decision", {"providers"})
+    providers_raw = table(decision_raw.get("providers", {}), "decision.providers", {"jev"})
+    jev_raw = table(
+        providers_raw.get("jev", {}),
+        "decision.providers.jev",
+        {item.name for item in fields(JevDecisionConfig)},
+    )
+    context_raw = jev_raw.get("context_limits", {})
+    if not isinstance(context_raw, dict):
+        raise ConfigError("decision.providers.jev.context_limits 必须为 TOML table。")
+    try:
+        context_limits = {
+            model: parse_jev_context_limits(limits) for model, limits in context_raw.items()
+        }
+    except JevContextError as exc:
+        raise ConfigError(f"decision.providers.jev.context_limits: {exc}") from None
+    jev = JevDecisionConfig(**{**jev_raw, "context_limits": context_limits})
+    validate_jev_decision_config(jev)
+    return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
+
+
+def update_decision_config(current: DecisionConfig, update: object) -> DecisionConfig:
+    """Apply a strict partial Jev update, preserving omitted/blank secrets.
+
+    Clear is explicit. Changing the destination requires a fresh token to avoid
+    forwarding a previously saved or environment credential to another service.
+    No credential is resolved and no network probe happens here.
+    """
+    if not isinstance(update, dict) or set(update) - {"providers"}:
+        raise ConfigError("decision 仅支持 providers 配置。")
+    providers = update.get("providers", {})
+    if not isinstance(providers, dict) or set(providers) - {"jev"}:
+        raise ConfigError("decision.providers 仅支持 jev。")
+    values = providers.get("jev", {})
+    if not isinstance(values, dict):
+        raise ConfigError("decision.providers.jev 必须是对象。")
+    values = dict(values)
+    if "base_url" in values:
+        from openbiliclaw.decision.jev_provider import jev_endpoint_from_base_url
+
+        if "endpoint_url" in values:
+            raise ConfigError("Jev Base URL 与完整接口地址不能同时设置。")
+        try:
+            values["endpoint_url"] = jev_endpoint_from_base_url(values.pop("base_url"))
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
+    clear = values.pop("clear_api_key", False)
+    if type(clear) is not bool:
+        raise ConfigError("clear_api_key 必须是布尔值。")
+    token = values.get("api_key", "")
+    if not isinstance(token, str) or "****" in token:
+        raise ConfigError("请填写有效 Token，不接受掩码或非文本值。")
+    if clear and token:
+        raise ConfigError("不能同时替换和清除 Jev Token。")
+    if (
+        values.get("endpoint_url", current.providers.jev.endpoint_url)
+        != current.providers.jev.endpoint_url
+        and not token
+    ):
+        raise ConfigError("修改 Jev URL 时请重新填写 Token，避免误发旧凭据。")
+    merged = asdict(current.providers.jev)
+    if not token:
+        values.pop("api_key", None)
+    merged.update(values)
+    if clear:
+        merged["api_key"] = ""
+    return _build_decision_config({"providers": {"jev": merged}})
+
+
+def _strict_route_table(raw: object, cls: type[Any], section: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{section}] 必须是 TOML table。")
+    unknown = set(raw) - {item.name for item in fields(cls)}
+    if unknown:
+        raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+    return raw
+
+
+def _build_director_config(raw: object) -> DirectorConfig:
+    return DirectorConfig(**_strict_route_table(raw, DirectorConfig, "director"))
+
+
+def _build_semantic_filter_config(raw: object) -> SemanticFilterConfig:
+    return SemanticFilterConfig(
+        **_strict_route_table(raw, SemanticFilterConfig, "discovery.semantic_filter")
+    )
+
+
+def build_jev_evaluation_config(raw: object) -> JevEvaluationConfig:
+    """Parse evaluator settings strictly; do not silently trim or discard context."""
+    config = JevEvaluationConfig(
+        **_strict_route_table(raw, JevEvaluationConfig, "discovery.jev_evaluation")
+    )
+    validate_jev_evaluation_config(config)
+    return config
+
+
+def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[ConfigIssue]:
+    issues: list[ConfigIssue] = []
+    prefix = "discovery.jev_evaluation"
+
+    def add(name: str, message: str) -> None:
+        issues.append(ConfigIssue(field=f"{prefix}.{name}", message=message, severity="blocking"))
+
+    def valid_label(label: object) -> bool:
+        if not isinstance(label, str) or not label.strip() or label != label.strip():
+            return False
+        if label.casefold() == "unknown" or any(ord(char) < 32 for char in label):
+            return False
+        try:
+            return len(label.encode("utf-8")) <= 80
+        except UnicodeEncodeError:
+            return False
+
+    for name in ("topic_labels", "franchise_labels"):
+        labels = getattr(evaluation, name)
+        if (
+            not isinstance(labels, list)
+            or len(labels) > 254
+            or not all(valid_label(label) for label in labels)
+        ):
+            add(name, "必须为至多 254 个非空标签，每项最多 80 UTF-8 字节；unknown 为保留结果。")
+        elif len(set(labels)) != len(labels):
+            add(name, "标签不能重复；不会自动截断或合并。")
+    for name in ("max_state_question_bytes", "max_request_bytes", "max_question_bytes"):
+        value = getattr(evaluation, name)
+        if type(value) is not int or (value != 0 and not 256 <= value <= 75_000_000):
+            add(name, "必须为 0（按模型自适应）或 256..75000000 的更严字节护栏。")
+    for name, low, high in (("max_calls", 1, 64), ("max_candidates_per_request", 1, 64)):
+        value = getattr(evaluation, name)
+        if type(value) is not int or not low <= value <= high:
+            add(name, f"必须为 {low}..{high} 的整数。")
+    questions = evaluation.max_questions_per_request
+    if type(questions) is not int or (questions != 0 and not 8 <= questions <= 640):
+        add("max_questions_per_request", "必须为 0（仅受容量限制）或 8..640；完整候选不可拆题。")
+    if (
+        type(evaluation.max_request_bytes) is int
+        and type(evaluation.max_state_question_bytes) is int
+        and evaluation.max_request_bytes > 0
+        and evaluation.max_state_question_bytes > 0
+        and evaluation.max_request_bytes < evaluation.max_state_question_bytes
+    ):
+        add("max_request_bytes", "不能小于 max_state_question_bytes。")
+    budget = evaluation.budget_seconds
+    if type(budget) not in (int, float) or not 0.01 <= budget <= 120:
+        add("budget_seconds", "必须为 0.01..120 的有限数值。")
+    return issues
+
+
+def validate_jev_evaluation_config(config: JevEvaluationConfig) -> None:
+    """Validate direct adapter injection as strictly as persisted configuration."""
+    issues = _jev_evaluation_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def decision_routes_enabled(config: Config) -> bool:
+    """Whether runtime must construct the independent decision provider."""
+    return (
+        config.discovery.eval_scorer == "jev"
+        or config.discovery.semantic_filter.mode != "off"
+        or (config.director.mode != "off" and config.director.strategy != "agent_only")
+    )
+
+
+def _director_route_issues(config: Config) -> list[ConfigIssue]:
+    from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+
+    issues: list[ConfigIssue] = []
+
+    def add(path: str, message: str) -> None:
+        issues.append(ConfigIssue(field=path, message=message, severity="blocking"))
+
+    def enum(path: str, value: object, allowed: set[str]) -> None:
+        if not isinstance(value, str) or value not in allowed:
+            add(path, f"必须为 {' / '.join(sorted(allowed))}。")
+
+    def integer(path: str, value: object, low: int, high: int) -> None:
+        if type(value) is not int or not low <= value <= high:
+            add(path, f"必须为 {low}..{high} 的整数。")
+
+    def number(path: str, value: object, low: float, high: float) -> None:
+        if (
+            type(value) not in (int, float)
+            or not low <= value <= high  # type: ignore[operator]
+            or not math.isfinite(value)  # type: ignore[arg-type]
+        ):
+            add(path, f"必须为 {low:g}..{high:g} 的有限数值。")
+
+    director = config.director
+    filtering = config.discovery.semantic_filter
+    enum("director.mode", director.mode, {"off", "shadow", "enforce"})
+    enum("director.strategy", director.strategy, {"jev_recurrent", "agent_jev", "agent_only"})
+    enum("director.decision_provider", director.decision_provider, {"jev"})
+    integer("director.planning_horizon_screens", director.planning_horizon_screens, 1, 3)
+    integer("director.plan_ttl_seconds", director.plan_ttl_seconds, 1, 3600)
+    number("director.planning_budget_seconds", director.planning_budget_seconds, 0.01, 60)
+    number("director.decision_budget_seconds", director.decision_budget_seconds, 0.01, 60)
+    integer("director.max_decision_calls", director.max_decision_calls, 1, 10)
+    integer("director.max_candidates", director.max_candidates, 2, 40)
+    prefix = "discovery.semantic_filter"
+    enum(f"{prefix}.mode", filtering.mode, {"off", "shadow", "enforce"})
+    enum(f"{prefix}.provider", filtering.provider, {"jev"})
+    number(f"{prefix}.refusal_threshold", filtering.refusal_threshold, 0.5, 1.0)
+    integer(f"{prefix}.max_candidates_per_cycle", filtering.max_candidates_per_cycle, 1, 90)
+    integer(f"{prefix}.max_calls_per_cycle", filtering.max_calls_per_cycle, 1, 3)
+    number(f"{prefix}.decision_budget_seconds", filtering.decision_budget_seconds, 0.01, 30)
+    for name in ("calibration_tag", "calibration_model"):
+        value = getattr(filtering, name)
+        if not isinstance(value, str) or len(value) > 200 or value != value.strip():
+            add(f"{prefix}.{name}", "必须为至多 200 字符的文本，且不能含首尾空白。")
+    if filtering.mode == "enforce":
+        if not filtering.calibration_tag:
+            add(f"{prefix}.calibration_tag", "enforce 需要显式领域校准记录标识；标识不是质量证明。")
+        model = config.decision.providers.jev.model
+        if (
+            filtering.calibration_model != model
+            or not isinstance(model, str)
+            or model in {"jev-latest", "jev-preview"}
+        ):
+            add(f"{prefix}.calibration_model", "enforce 校准模型必须与当前固定 Jev 模型完全一致。")
+        if config.discovery.eval_prefilter_mode == "enforce":
+            add(f"{prefix}.mode", "Jev 与 embedding 预过滤不能同时 enforce。")
+    if decision_routes_enabled(config) and not config.decision.providers.jev.enabled:
+        add(
+            "decision.providers.jev.enabled",
+            "启用 Jev 评估、编排或过滤路由时必须显式启用 provider。",
+        )
+    issues.extend(_jev_evaluation_config_issues(config.discovery.jev_evaluation))
+    # Inactive routes may retain an unknown model for later setup, but must
+    # not silently borrow another model's capacity when the route is enabled.
+    try:
+        context = resolve_jev_context(
+            config.decision.providers.jev.model, config.decision.providers.jev.context_limits
+        )
+    except JevContextError as exc:
+        if decision_routes_enabled(config):
+            add("decision.providers.jev.context_limits", str(exc))
+    else:
+        evaluation = config.discovery.jev_evaluation
+        for name in ("max_request_bytes", "max_state_question_bytes"):
+            value = getattr(evaluation, name)
+            if type(value) is int and value > getattr(context, name):
+                add(f"discovery.jev_evaluation.{name}", "只能收紧所选模型字节预算，不能放宽。")
+    if config.discovery.eval_scorer == "jev":
+        if config.decision.providers.jev.model in {"jev-latest", "jev-preview"}:
+            add(
+                "decision.providers.jev.model",
+                "完整 Jev 评估必须使用固定模型版本；latest/preview 会使缓存与质量校准身份漂移。",
+            )
+        if config.discovery.multimodal_evaluation_enabled:
+            add(
+                "discovery.multimodal_evaluation_enabled",
+                "纯 Jev 评估仅支持文本；请关闭候选封面 LLM 评估。",
+            )
+        if filtering.mode != "off":
+            add(
+                "discovery.semantic_filter.mode",
+                "完整 Jev 评估与 Jev 预过滤不能同时启用；请设为 off。",
+            )
+    return issues
+
+
+def validate_director_routes(config: Config) -> None:
+    """Validate routes without resolving environment credentials or making I/O."""
+    issues = _director_route_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
 
 
 def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
@@ -3153,6 +3854,8 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
     (``OPENBILICLAW_DISCOVERY_*``) normalize identically to TOML values.
     """
     return DiscoveryConfig(
+        semantic_filter=_build_semantic_filter_config(discovery_raw.get("semantic_filter", {})),
+        jev_evaluation=build_jev_evaluation_config(discovery_raw.get("jev_evaluation", {})),
         unified_keyword_planner_enabled=_coerce_bool(
             discovery_raw.get("unified_keyword_planner_enabled"),
             default=_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED,
@@ -3609,41 +4312,9 @@ def normalize_github_source_config(
 
 
 def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
-    """Normalize inspiration search backend names for the mcporter provider chain."""
+    """Normalize inspiration search backend names onto the shared canonical set."""
 
-    raw_values = (
-        list(_DEFAULT_INSPIRATION_SEARCH_BACKENDS) if value is None else _coerce_str_list(value)
-    )
-    aliases = {
-        "bing": "bing_rss",
-        "bing_rss": "bing_rss",
-        "bing-rss": "bing_rss",
-        "exa": "exa",
-        "parallel": "parallel",
-        "local": "local_cache",
-        "cache": "local_cache",
-        "local_cache": "local_cache",
-        "local-cache": "local_cache",
-        "platform-source": "platform_sources",
-        "platform_sources": "platform_sources",
-        "platform": "platform_sources",
-        "you": "you",
-        "you.com": "you",
-        "youcom": "you",
-        "you-search": "you",
-        "you_search": "you",
-        "serply": "serply",
-        "serply.io": "serply",
-    }
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        backend = aliases.get(raw.strip().lower())
-        if backend is None or backend in seen:
-            continue
-        normalized.append(backend)
-        seen.add(backend)
-    return tuple(normalized or _DEFAULT_INSPIRATION_SEARCH_BACKENDS)
+    return normalize_inspiration_search_backends(value)
 
 
 # Single source of truth: every env var ``_build_api_auth`` honors for
@@ -4087,6 +4758,25 @@ def _normalize_llm_timeout(value: object) -> int:
     return normalized
 
 
+def _normalize_sponsored_timeout(value: object) -> float:
+    """Normalize ``llm.sponsored.request_timeout_seconds`` with a safe fallback."""
+
+    if isinstance(value, bool):
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    if isinstance(value, int | float):
+        normalized = float(value)
+    elif isinstance(value, str):
+        try:
+            normalized = float(value.strip())
+        except ValueError:
+            return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    else:
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    if not (1.0 <= normalized <= 3600.0):
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    return normalized
+
+
 def llm_concurrency_from_config(config: object) -> int:
     """Extract LLM concurrency from a config object, with safe fallback.
 
@@ -4281,6 +4971,15 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
     """Validate v2 instance identities, endpoint configs, and route references."""
     issues: list[ConfigIssue] = []
     instances = llm.instances
+    free_models = [i.model for i in instances.values() if i.provider_type == "siliconflow_free"]
+    if len(free_models) != len(set(free_models)):
+        issues.append(
+            ConfigIssue(
+                field="llm.instances",
+                message="内置免费模型每个只保留一个固定实例，请勿复制。",
+                severity="blocking",
+            )
+        )
 
     if not instances:
         issues.append(
@@ -4305,13 +5004,13 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                 )
             )
         provider_type = str(instance.provider_type or "").strip().lower()
-        if provider_type not in _SUPPORTED_CHAT_PROVIDERS:
+        if provider_type not in _SUPPORTED_INSTANCE_PROVIDERS:
             issues.append(
                 ConfigIssue(
                     field=f"{field_prefix}.provider_type",
                     message=(
                         f"不支持的 provider 类型: `{instance.provider_type}`。仅支持: "
-                        f"{', '.join(sorted(_SUPPORTED_CHAT_PROVIDERS))}。"
+                        f"{', '.join(sorted(_SUPPORTED_INSTANCE_PROVIDERS))}。"
                     ),
                     severity="blocking",
                 )
@@ -4392,6 +5091,42 @@ def _collect_llm_instance_routing_issues(llm: LLMConfig) -> list[ConfigIssue]:
                     )
                 )
 
+        if provider_type == "siliconflow_free":
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            if instance != builtin_siliconflow_instance(instance.model):
+                issues.append(
+                    ConfigIssue(
+                        field=field_prefix,
+                        message="内置免费实例配置不可修改，请通过调用链选择或切换。",
+                        severity="blocking",
+                    )
+                )
+            if instance.model not in CHAT_MODELS:
+                issues.append(
+                    ConfigIssue(
+                        field=f"{field_prefix}.model",
+                        message="请选择 Qwen3-8B 或 Qwen3.5-4B。",
+                        severity="blocking",
+                    )
+                )
+            if any(
+                (
+                    instance.api_key,
+                    instance.base_url,
+                    instance.auth_mode,
+                    instance.api_flavor,
+                    instance.http_referer,
+                    instance.x_title,
+                )
+            ):
+                issues.append(
+                    ConfigIssue(
+                        field=field_prefix,
+                        message="内置免费实例由安全组件管理凭据与地址，不接受自定义 Key 或端点。",
+                        severity="blocking",
+                    )
+                )
         if not instance.enabled:
             continue
         if not str(instance.model or "").strip():
@@ -4581,7 +5316,11 @@ def _source_date_preference_issues(config: Config) -> list[ConfigIssue]:
 
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     """Collect non-fatal config issues to display as guidance."""
-    issues: list[ConfigIssue] = []
+    if config.llm.sponsored.enabled:
+        config = deepcopy(config)
+        migrate_sponsored_provider_config(config.llm)
+    issues: list[ConfigIssue] = _jev_decision_config_issues(config.decision.providers.jev)
+    issues.extend(_director_route_issues(config))
 
     try:
         normalize_tailnet_hostname(config.tailnet.hostname)
@@ -4593,6 +5332,81 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                 severity="blocking",
             )
         )
+
+    sponsored = getattr(config.llm, "sponsored", None)
+    if sponsored is not None:
+        from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+        if sponsored.embedding_mode not in {"cloud", "local"}:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.embedding_mode",
+                    message="请选择 cloud（硅基流动）或 local（本地 Ollama）向量模式",
+                    severity="blocking",
+                )
+            )
+        if (
+            sponsored.enabled
+            and sponsored.embedding_mode == "local"
+            and (config.llm.embedding.provider != "ollama")
+        ):
+            issues.append(
+                ConfigIssue(
+                    field="llm.embedding.provider",
+                    message="免费方案的本地向量模式需要配置 Ollama；请重新选择本地向量并保存。",
+                    severity="blocking",
+                )
+            )
+        if sponsored.model not in CHAT_MODELS:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.model",
+                    message="请选择 Qwen3-8B 或 Qwen3.5-4B",
+                    severity="blocking",
+                )
+            )
+    if sponsored is not None and uses_siliconflow_free(config.llm) and sponsored.relay_url:
+        from openbiliclaw.runtime.relay_release import validate_relay_url
+
+        try:
+            validate_relay_url(sponsored.relay_url)
+        except ValueError:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.relay_url",
+                    message="免费中继地址必须使用 HTTPS。",
+                    severity="blocking",
+                )
+            )
+    if sponsored is not None and uses_siliconflow_free(config.llm) and not sponsored.relay_url:
+        runtime_path = str(getattr(sponsored, "runtime_path", "") or "").strip()
+        if not runtime_path:
+            from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+            runtime_path = installed_runtime_command()
+        try:
+            command = shlex.split(runtime_path)
+        except ValueError:
+            command = []
+        if not runtime_path:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.runtime_path",
+                    message=("免费模型组件尚未安装或需要更新，请在模型设置中准备免费组件后重试。"),
+                    severity="blocking",
+                )
+            )
+        elif not command or shutil.which(command[0]) is None:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.runtime_path",
+                    message=(
+                        f"未找到 Sponsored Runtime：{runtime_path}。"
+                        "请确认官方安装包完整或在调用链中改用其他实例。"
+                    ),
+                    severity="warning",
+                )
+            )
 
     incremental_intervals = (
         ("source_incremental_hours", config.scheduler.source_incremental_hours, False),
@@ -4835,6 +5649,26 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                 )
             )
 
+    if config.llm.embedding.provider == "siliconflow_free":
+        emb = config.llm.embedding
+        if (
+            emb.model != "BAAI/bge-m3"
+            or emb.api_key
+            or emb.base_url
+            or emb.multimodal_enabled
+            or emb.output_dimensionality != 1024
+        ):
+            issues.append(
+                ConfigIssue(
+                    field="llm.embedding",
+                    message=(
+                        "内置免费 Embedding 仅支持 BAAI/bge-m3、1024 维文本向量，"
+                        "凭据与地址由安全组件管理。"
+                    ),
+                    severity="blocking",
+                )
+            )
+
     # Before the default-provider early return: embedding validation must run
     # even when default_provider itself is broken.
     for emb_field, emb_value in (
@@ -4871,20 +5705,67 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
+    if not (_MIN_POOL_TARGET_COUNT <= config.scheduler.pool_target_count <= _MAX_POOL_TARGET_COUNT):
+        issues.append(
+            ConfigIssue(
+                field="scheduler.pool_target_count",
+                message=(
+                    "`scheduler.pool_target_count` 必须在 "
+                    f"{_MIN_POOL_TARGET_COUNT}..{_MAX_POOL_TARGET_COUNT} 之间。"
+                ),
+            )
+        )
+
+    if not (
+        _MIN_EVAL_MIN_BATCH_SIZE <= config.scheduler.eval_min_batch_size <= _MAX_EVAL_MIN_BATCH_SIZE
+    ):
+        issues.append(
+            ConfigIssue(
+                field="scheduler.eval_min_batch_size",
+                message=(
+                    "`scheduler.eval_min_batch_size` 必须在 "
+                    f"{_MIN_EVAL_MIN_BATCH_SIZE}..{_MAX_EVAL_MIN_BATCH_SIZE} 之间。"
+                ),
+            )
+        )
+
+    if not (
+        _MIN_EVAL_MAX_WAIT_SECONDS
+        <= config.scheduler.eval_max_wait_seconds
+        <= _MAX_EVAL_MAX_WAIT_SECONDS
+    ):
+        issues.append(
+            ConfigIssue(
+                field="scheduler.eval_max_wait_seconds",
+                message=(
+                    "`scheduler.eval_max_wait_seconds` 必须在 "
+                    f"{_MIN_EVAL_MAX_WAIT_SECONDS:g}..{_MAX_EVAL_MAX_WAIT_SECONDS:g} 之间。"
+                ),
+            )
+        )
+
+    eval_prefilter_mode = str(config.discovery.eval_prefilter_mode or "").strip().lower()
+    if eval_prefilter_mode not in _SUPPORTED_EVAL_PREFILTER_MODES:
+        issues.append(
+            ConfigIssue(
+                field="discovery.eval_prefilter_mode",
+                message='`discovery.eval_prefilter_mode` 仅支持: "off", "shadow", "enforce"。',
+                severity="blocking",
+            )
+        )
+
+    eval_scorer = str(config.discovery.eval_scorer or "").strip().lower()
+    if eval_scorer not in _SUPPORTED_EVAL_SCORER_MODES:
+        issues.append(
+            ConfigIssue(
+                field="discovery.eval_scorer",
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned", "jev"。',
+                severity="blocking",
+            )
+        )
+
     if config.llm.instance_routing:
         issues.extend(_collect_llm_instance_routing_issues(config.llm))
-        if not (
-            _MIN_POOL_TARGET_COUNT <= config.scheduler.pool_target_count <= _MAX_POOL_TARGET_COUNT
-        ):
-            issues.append(
-                ConfigIssue(
-                    field="scheduler.pool_target_count",
-                    message=(
-                        "`scheduler.pool_target_count` 必须在 "
-                        f"{_MIN_POOL_TARGET_COUNT}..{_MAX_POOL_TARGET_COUNT} 之间。"
-                    ),
-                )
-            )
         return issues
 
     # `[llm].fallback_provider` dead-state validation. The chat fallback
@@ -4893,8 +5774,14 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # at save/load time is the only user-visible diagnosis. Runs before the
     # default-provider early return so a broken default provider does not
     # hide fallback problems.
+    # Free-only routing never invokes the saved legacy user providers. Keep
+    # validating their schema, but require credentials/endpoints only when
+    # they are an active route (including an explicitly enabled fallback).
+    user_provider_required = not (
+        config.llm.sponsored.enabled and not config.llm.sponsored.fallback_to_user_provider
+    )
     fallback_name = str(config.llm.fallback_provider or "").strip().lower()
-    if fallback_name:
+    if fallback_name and user_provider_required:
         default_name = str(config.llm.default_provider or "").strip().lower()
         if fallback_name not in _SUPPORTED_CHAT_PROVIDERS:
             supported = ", ".join(sorted(_SUPPORTED_CHAT_PROVIDERS))
@@ -5067,7 +5954,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             has_codex_credentials = codex_credentials_exist()
         except Exception:
             has_codex_credentials = False
-        if not has_codex_credentials:
+        if not has_codex_credentials and user_provider_required:
             issues.append(
                 ConfigIssue(
                     field="llm.openai.codex_oauth",
@@ -5079,7 +5966,8 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     has_env_fallback = provider_name == "gemini" and bool(_gemini_api_key_from_env())
     provider_uses_codex_oauth = provider_name == "openai" and openai_auth_mode == "codex_oauth"
     if (
-        required_field
+        user_provider_required
+        and required_field
         and not provider_config.api_key.strip()
         and not has_env_fallback
         and not provider_uses_codex_oauth
@@ -5097,7 +5985,11 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # would just be ``openai`` with extra steps. Surface this so the user
     # knows to fill ``[llm.openai_compatible].base_url`` (Groq:
     # https://api.groq.com/openai/v1, vLLM: http://your-vllm:8000/v1, ...).
-    if provider_name == "openai_compatible" and not config.llm.openai_compatible.base_url.strip():
+    if (
+        user_provider_required
+        and provider_name == "openai_compatible"
+        and not config.llm.openai_compatible.base_url.strip()
+    ):
         issues.append(
             ConfigIssue(
                 field="llm.openai_compatible.base_url",
@@ -5108,7 +6000,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
-    if provider_name == "ollama" and not config.llm.ollama.model.strip():
+    if user_provider_required and provider_name == "ollama" and not config.llm.ollama.model.strip():
         issues.append(
             ConfigIssue(
                 field="llm.ollama.model",
@@ -5116,65 +6008,6 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                     "默认 provider `ollama` 必须明确填写聊天 `model` "
                     "（例如 `qwen2.5:7b`）；系统不会再隐式使用 `llama3`。"
                 ),
-                severity="blocking",
-            )
-        )
-
-    if not (_MIN_POOL_TARGET_COUNT <= config.scheduler.pool_target_count <= _MAX_POOL_TARGET_COUNT):
-        issues.append(
-            ConfigIssue(
-                field="scheduler.pool_target_count",
-                message=(
-                    "`scheduler.pool_target_count` 必须在 "
-                    f"{_MIN_POOL_TARGET_COUNT}..{_MAX_POOL_TARGET_COUNT} 之间。"
-                ),
-            )
-        )
-
-    if not (
-        _MIN_EVAL_MIN_BATCH_SIZE <= config.scheduler.eval_min_batch_size <= _MAX_EVAL_MIN_BATCH_SIZE
-    ):
-        issues.append(
-            ConfigIssue(
-                field="scheduler.eval_min_batch_size",
-                message=(
-                    "`scheduler.eval_min_batch_size` 必须在 "
-                    f"{_MIN_EVAL_MIN_BATCH_SIZE}..{_MAX_EVAL_MIN_BATCH_SIZE} 之间。"
-                ),
-            )
-        )
-
-    if not (
-        _MIN_EVAL_MAX_WAIT_SECONDS
-        <= config.scheduler.eval_max_wait_seconds
-        <= _MAX_EVAL_MAX_WAIT_SECONDS
-    ):
-        issues.append(
-            ConfigIssue(
-                field="scheduler.eval_max_wait_seconds",
-                message=(
-                    "`scheduler.eval_max_wait_seconds` 必须在 "
-                    f"{_MIN_EVAL_MAX_WAIT_SECONDS:g}..{_MAX_EVAL_MAX_WAIT_SECONDS:g} 之间。"
-                ),
-            )
-        )
-
-    eval_prefilter_mode = str(config.discovery.eval_prefilter_mode or "").strip().lower()
-    if eval_prefilter_mode not in _SUPPORTED_EVAL_PREFILTER_MODES:
-        issues.append(
-            ConfigIssue(
-                field="discovery.eval_prefilter_mode",
-                message='`discovery.eval_prefilter_mode` 仅支持: "off", "shadow", "enforce"。',
-                severity="blocking",
-            )
-        )
-
-    eval_scorer = str(config.discovery.eval_scorer or "").strip().lower()
-    if eval_scorer not in _SUPPORTED_EVAL_SCORER_MODES:
-        issues.append(
-            ConfigIssue(
-                field="discovery.eval_scorer",
-                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
                 severity="blocking",
             )
         )
@@ -5321,6 +6154,8 @@ def load_config_with_diagnostics(
     # _build_discovery ever runs — the values are ignored, never fail-fast.
     diagnostics.issues.extend(_removed_discovery_key_issues(raw))
     config = _build_config(raw, consult_environment=consult_environment)
+    migrate_sponsored_provider_config(config.llm, seed_preset=True)
+    install_sponsored_settings(config.llm.sponsored, data_path=config.data_path)
     diagnostics.issues.extend(_collect_config_issues(config))
     return config, diagnostics
 
@@ -5832,6 +6667,8 @@ def save_config(
         validate_bangumi_username,
     )
 
+    validate_jev_decision_config(config.decision.providers.jev)
+    validate_director_routes(config)
     date_preference_issues = _source_date_preference_issues(config)
     if date_preference_issues:
         first_issue = date_preference_issues[0]
@@ -5901,6 +6738,7 @@ def save_config(
     # happens to equal the runtime default did not consult config.local.toml, so
     # its save must not be provenance-gated by that file either.
     consult_local = config_path is None
+    migrate_sponsored_provider_config(config.llm)
     rendered = _render_config_toml(
         config,
         on_disk_auth=on_disk_auth,
@@ -5914,6 +6752,9 @@ def save_config(
     )
     if config.llm.instance_routing and path.exists():
         _create_llm_migration_backup(path)
+    if config.decision.providers.jev.api_key:
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
     path.write_text(rendered, encoding="utf-8")
     return path
 
@@ -5952,6 +6793,11 @@ def _render_config_toml(
     include_api_auth: bool = True,
 ) -> str:
     """Render a Config dataclass into TOML."""
+    from openbiliclaw.decision.context_budget import parse_jev_context_limits
+
+    jev = config.decision.providers.jev
+    validate_jev_decision_config(jev)
+    validate_director_routes(config)
     api_auth_lines = (
         _api_auth_lines(
             config,
@@ -5963,6 +6809,63 @@ def _render_config_toml(
         else []
     )
     lines = [
+        "[director]",
+        f"mode = {_toml_string(config.director.mode)}",
+        f"strategy = {_toml_string(config.director.strategy)}",
+        f"decision_provider = {_toml_string(config.director.decision_provider)}",
+        f"planning_horizon_screens = {config.director.planning_horizon_screens}",
+        f"plan_ttl_seconds = {config.director.plan_ttl_seconds}",
+        f"planning_budget_seconds = {config.director.planning_budget_seconds}",
+        f"decision_budget_seconds = {config.director.decision_budget_seconds}",
+        f"max_decision_calls = {config.director.max_decision_calls}",
+        f"max_candidates = {config.director.max_candidates}",
+        "",
+        "[discovery.semantic_filter]",
+        f"mode = {_toml_string(config.discovery.semantic_filter.mode)}",
+        f"provider = {_toml_string(config.discovery.semantic_filter.provider)}",
+        f"refusal_threshold = {config.discovery.semantic_filter.refusal_threshold}",
+        f"calibration_tag = {_toml_string(config.discovery.semantic_filter.calibration_tag)}",
+        f"calibration_model = {_toml_string(config.discovery.semantic_filter.calibration_model)}",
+        f"max_candidates_per_cycle = {config.discovery.semantic_filter.max_candidates_per_cycle}",
+        f"max_calls_per_cycle = {config.discovery.semantic_filter.max_calls_per_cycle}",
+        f"decision_budget_seconds = {config.discovery.semantic_filter.decision_budget_seconds}",
+        "",
+        "[discovery.jev_evaluation]",
+        f"topic_labels = {_toml_str_list(config.discovery.jev_evaluation.topic_labels)}",
+        f"franchise_labels = {_toml_str_list(config.discovery.jev_evaluation.franchise_labels)}",
+        f"max_state_question_bytes = {config.discovery.jev_evaluation.max_state_question_bytes}",
+        f"max_request_bytes = {config.discovery.jev_evaluation.max_request_bytes}",
+        "max_candidates_per_request = "
+        f"{config.discovery.jev_evaluation.max_candidates_per_request}",
+        f"max_questions_per_request = {config.discovery.jev_evaluation.max_questions_per_request}",
+        f"max_question_bytes = {config.discovery.jev_evaluation.max_question_bytes}",
+        f"max_calls = {config.discovery.jev_evaluation.max_calls}",
+        f"budget_seconds = {config.discovery.jev_evaluation.budget_seconds}",
+        "",
+        "[decision.providers.jev]",
+        f"enabled = {_toml_bool(jev.enabled)}",
+        f"model = {_toml_string(jev.model)}",
+        f"api_key_env = {_toml_string(jev.api_key_env)}",
+        *([f"api_key = {_toml_string(jev.api_key)}"] if jev.api_key else []),
+        *(
+            [f"endpoint_url = {_toml_string(jev.endpoint_url)}"]
+            if jev.endpoint_url != "https://api.typesafe.ai/v1/systemone"
+            else []
+        ),
+        f"timeout_seconds = {jev.timeout_seconds}",
+        f"max_attempts = {jev.max_attempts}",
+        "",
+        *[
+            line
+            for model, raw_limits in sorted(jev.context_limits.items())
+            for limits in (parse_jev_context_limits(raw_limits),)
+            for line in (
+                f"[decision.providers.jev.context_limits.{_toml_string(model)}]",
+                f"max_request_tokens = {limits.max_request_tokens}",
+                f"max_state_question_tokens = {limits.max_state_question_tokens}",
+                "",
+            )
+        ],
         "[general]",
         f"language = {_toml_string(config.language)}",
         f"data_dir = {_toml_string(config.data_dir)}",
@@ -5993,6 +6896,7 @@ def _render_config_toml(
             [
                 "[llm]",
                 "routing_version = 2",
+                "builtin_providers_version = 2",
                 f"default_chain = {_toml_str_list(config.llm.default_chain)}",
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
@@ -6025,6 +6929,19 @@ def _render_config_toml(
         lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
     lines.extend(
         [
+            "[llm.sponsored]",
+            f"enabled = {_toml_bool(config.llm.sponsored.enabled)}",
+            f"runtime_path = {_toml_string(config.llm.sponsored.runtime_path)}",
+            f"relay_url = {_toml_string(config.llm.sponsored.relay_url)}",
+            f"model = {_toml_string(config.llm.sponsored.model)}",
+            f"embedding_mode = {_toml_string(config.llm.sponsored.embedding_mode)}",
+            "fallback_to_other_free_model = "
+            f"{_toml_bool(config.llm.sponsored.fallback_to_other_free_model)}",
+            "fallback_to_user_provider = "
+            f"{_toml_bool(config.llm.sponsored.fallback_to_user_provider)}",
+            f"notify_on_fallback = {_toml_bool(config.llm.sponsored.notify_on_fallback)}",
+            f"request_timeout_seconds = {config.llm.sponsored.request_timeout_seconds}",
+            "",
             "[llm.embedding]",
             f"provider = {_toml_string(config.llm.embedding.provider)}",
             f"model = {_toml_string(config.llm.embedding.model)}",

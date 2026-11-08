@@ -27,6 +27,7 @@ from openbiliclaw.runtime.producer_cadence import (
 from openbiliclaw.sources.douyin_plugin_search import (
     DouyinBudgetExhausted as _DouyinBudgetExhausted,
 )
+from openbiliclaw.sources.dy_tasks import DyTaskQueue
 
 if TYPE_CHECKING:
     from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
@@ -233,17 +234,25 @@ class DouyinDiscoveryProducer:
         now = datetime.now(UTC)
         record_producer_run(getattr(self, "database", None), "douyin", int(discovered))
         self._last_run_at = now
-        if int(discovered) > 0 or reason in {"ok", "empty"}:
-            self._retry_not_before = None
-        elif reason == "budget_exhausted":
+        if reason == "budget_exhausted":
             self._retry_not_before = now + timedelta(minutes=_DOUYIN_BUDGET_RETRY_MINUTES)
         elif reason in {"error", "timeout"}:
             self._retry_not_before = now + timedelta(minutes=_DOUYIN_FAILURE_RETRY_MINUTES)
+        else:
+            self._retry_not_before = None
 
     def _is_due(self) -> bool:
         now = datetime.now(UTC)
         if self._retry_not_before is not None and now < self._retry_not_before:
             return False
+        database = getattr(self, "database", None)
+        if database is not None and hasattr(database, "open_connection"):
+            shared_retry = DyTaskQueue(database).discovery_retry_at()
+            if shared_retry is not None:
+                # This check precedes keyword claim and survives a producer
+                # restart; cooling time must not consume keyword attempts.
+                self._retry_not_before = shared_retry
+                return False
         if self.min_interval_minutes <= 0:
             return True
         # The persisted ledger is intentionally productive-only. Keep this
@@ -253,7 +262,6 @@ class DouyinDiscoveryProducer:
             minutes=self.min_interval_minutes
         ):
             return False
-        database = getattr(self, "database", None)
         if ledger_available(database):
             # Restart-surviving floor keyed on the last *productive* round.
             return not producer_ran_within(database, "douyin", self.min_interval_minutes)
@@ -342,8 +350,6 @@ class DouyinDiscoveryProducer:
 
     @staticmethod
     def _result_reason(result: DouyinDiscoveryResult) -> str:
-        if result.items:
-            return "ok"
         outcomes = set(result.source_outcomes.values())
         if outcomes and outcomes <= {"budget_exhausted"}:
             return "budget_exhausted"
@@ -351,6 +357,8 @@ class DouyinDiscoveryProducer:
             return "timeout"
         if "failed" in outcomes:
             return "error"
+        if result.items:
+            return "ok"
         return "empty"
 
     def _stamp_candidate_score_thresholds(self, items: list[Any]) -> None:

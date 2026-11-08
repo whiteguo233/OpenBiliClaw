@@ -12,15 +12,53 @@ import asyncio
 import base64
 import ipaddress
 import json
+import os
 import socket
+from functools import lru_cache
 from typing import TYPE_CHECKING
 from urllib.request import getproxies, proxy_bypass
 
+import certifi
 import httpcore
 import httpx
 
 if TYPE_CHECKING:
+    import ssl
     from collections.abc import AsyncIterator, Callable, Iterable
+
+
+@lru_cache(maxsize=4)
+def _cached_default_ssl_context(
+    trust_env: bool,
+    _process_id: int,
+    _bundle_identity: tuple[str, int, int, int, int, int],
+) -> ssl.SSLContext:
+    return httpx.create_ssl_context(trust_env=trust_env)
+
+
+def _image_ssl_context(*, trust_env: bool) -> ssl.SSLContext:
+    """Reuse default CA parsing without caching routes or custom trust stores."""
+    # Custom CA directories load certificates lazily and files can change in
+    # place. Preserve HTTPX's exact per-request reload behavior for both env
+    # overrides; direct CDN traffic must continue to ignore them entirely.
+    if trust_env and (os.environ.get("SSL_CERT_FILE") or os.environ.get("SSL_CERT_DIR")):
+        return httpx.create_ssl_context(trust_env=True)
+    bundle = certifi.where()
+    try:
+        stat = os.stat(bundle)
+    except OSError:
+        # Let HTTPX report its normal TLS setup error instead of serving an old
+        # context if the trust bundle disappears or becomes inaccessible.
+        return httpx.create_ssl_context(trust_env=trust_env)
+    identity = (
+        bundle,
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
+    return _cached_default_ssl_context(trust_env, os.getpid(), identity)
 
 
 class UnsafeImageAddressError(ValueError):
@@ -86,6 +124,7 @@ async def _resolve_proxy_addresses(host: str, proxy: str | None) -> tuple[str, .
             asyncio.timeout(5.0),
             httpx.AsyncClient(
                 proxy=proxy,
+                verify=_image_ssl_context(trust_env=False),
                 trust_env=False,
                 timeout=5.0,
                 follow_redirects=False,
@@ -289,7 +328,7 @@ class PinnedImageBackend(httpcore.AsyncNetworkBackend):
                         if proxy is not None:
                             if proxy.url.scheme == "https":
                                 stream = await stream.start_tls(
-                                    httpx.create_ssl_context(),
+                                    _image_ssl_context(trust_env=True),
                                     server_hostname=proxy.url.host,
                                     timeout=timeout,
                                 )
@@ -352,7 +391,7 @@ class ImageTransport(httpx.AsyncBaseTransport):
         ):
             raise UnsafeImageAddressError("Image route was not frozen")
         pool = httpcore.AsyncConnectionPool(
-            ssl_context=httpx.create_ssl_context(trust_env=not direct),
+            ssl_context=_image_ssl_context(trust_env=not direct),
             max_keepalive_connections=0,
             network_backend=PinnedImageBackend(host, addresses, proxy),
         )

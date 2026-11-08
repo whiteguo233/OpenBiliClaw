@@ -39,6 +39,7 @@ from openbiliclaw.llm.json_utils import (
 )
 from openbiliclaw.llm.prompt_cache import PromptLayerRenderCache, profile_prompt_layers
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.recommendation.exclusion import phrase_dislike_terms
 from openbiliclaw.saved_sync.identity import content_storage_key
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 from openbiliclaw.sources.platforms import normalize_source_platform, source_family
@@ -46,7 +47,7 @@ from openbiliclaw.sources.platforms import normalize_source_platform, source_fam
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
 
-    from openbiliclaw.discovery.engine import DiscoveredContent
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
     from openbiliclaw.runtime.serve_outbox import ServeOutbox
@@ -442,6 +443,16 @@ class ServeResult:
     timings: ServeTimings = field(default_factory=ServeTimings)
 
 
+@dataclass(frozen=True)
+class DirectorCandidateSnapshot:
+    """Read-only serving input; no history, shown or presentation changes."""
+
+    items: tuple[DiscoveredContent, ...]
+    source_rows: tuple[dict[str, Any], ...]
+    scores: dict[str, float]
+    pool_counts: dict[str, int]
+
+
 @dataclass
 class PersonalTopic:
     """A deeply personalized recommendation topic.
@@ -490,8 +501,10 @@ class RecommendationEngine:
         serve_outbox: ServeOutbox | None = None,
         reply_style: str = "",
         output_language: str = "",
+        content_evaluator: ContentDiscoveryEngine | None = None,
     ) -> None:
         self._llm = llm
+        self._content_evaluator = content_evaluator
         self._database = database
         self._curator = curator
         self._embedding_service = embedding_service
@@ -703,6 +716,78 @@ class RecommendationEngine:
             source_platform=source_platform,
         )
         return result.items
+
+    async def load_director_candidates(
+        self,
+        profile: SoulProfile,
+        *,
+        limit: int = 40,
+        source_platform: str = "",
+        excluded_keys: frozenset[str] = frozenset(),
+    ) -> DirectorCandidateSnapshot:
+        """Prepare a bounded, topic-stratified shortlist without consuming it.
+
+        The Director store performs the final eligibility check and atomic
+        commit. This reader deliberately does not call serve(), whose legacy
+        persistence contract can retain a partial batch.
+        """
+        if not 1 <= limit <= 40:
+            raise ValueError("director shortlist limit must be between 1 and 40")
+        scope = normalize_source_platform(source_platform)
+        snapshot = await self._database.load_pool_serve_snapshot_async(
+            limit=limit * 3,
+            source_platform=scope,
+            xhs_self_nickname=self._xhs_self_nickname(),
+            curator_history_limit=max(1, int(getattr(self._curator, "_history_window", 30))),
+        )
+        rows = [dict(row) for row in snapshot.candidate_rows]
+        candidates = self._enforce_platform_scope(self._rows_to_discovered(rows), scope)
+        candidates = [
+            card
+            for card in candidates
+            if card.item_key not in excluded_keys
+            and card.bvid not in excluded_keys
+            and card.bvid not in snapshot.seen_bvids
+        ]
+        # Unlike the legacy fuzzy fallback, Director admission never re-adds a
+        # candidate excluded by the supplied dislike view just to fill a screen.
+        candidates = self._exclude_disliked_topic_candidates(candidates, profile)
+        candidates = self._filter_candidates_for_publication_serving(candidates)
+        candidates = self._exclude_temporally_stale_candidates_for_serve(candidates)
+        score_override, _ = await asyncio.to_thread(
+            self._score_candidates_with_curator,
+            candidates,
+            (list(snapshot.curator_signals), list(snapshot.feedback_signals)),
+        )
+        score_override = score_override or {}
+        candidates.sort(
+            key=lambda card: (
+                -score_override.get(card.scoring_key, card.relevance_score),
+                card.item_key,
+            )
+        )
+        # Round-robin topic representatives keep lower-ranked directions in
+        # the bounded menu. The 3x read and 40-card cap are engineering limits,
+        # not calibrated relevance/diversity thresholds.
+        groups: dict[str, list[DiscoveredContent]] = {}
+        for card in candidates:
+            groups.setdefault(card.topic_group or "unknown", []).append(card)
+        selected: list[DiscoveredContent] = []
+        while len(selected) < limit and any(groups.values()):
+            for group in groups.values():
+                if group and len(selected) < limit:
+                    selected.append(group.pop(0))
+        selected_keys = {card.item_key for card in selected}
+        raw_rows = tuple(row for row in rows if str(row.get("item_key", "")) in selected_keys)
+        return DirectorCandidateSnapshot(
+            items=tuple(selected),
+            source_rows=raw_rows,
+            scores={
+                card.item_key: score_override.get(card.scoring_key, card.relevance_score)
+                for card in selected
+            },
+            pool_counts=dict(snapshot.readiness),
+        )
 
     async def serve_with_result(
         self,
@@ -1971,6 +2056,10 @@ class RecommendationEngine:
                 batch_size=batch_size,
             )
 
+    def bind_content_evaluator(self, evaluator: ContentDiscoveryEngine) -> None:
+        """Route legacy metadata recovery through the selected full evaluator."""
+        self._content_evaluator = evaluator
+
     async def _classify_pool_backlog_locked(
         self,
         *,
@@ -2007,6 +2096,13 @@ class RecommendationEngine:
             # Persist results back to the pool.
             persisted: list[DiscoveredContent] = []
             for item in batch:
+                if (
+                    getattr(self, "_content_evaluator", None) is not None
+                    and item.relevance_reason == "evaluation_response_missing"
+                ):
+                    # Failed Jev calls are not zero labels and cannot overwrite
+                    # older pool metadata or count as a completed evaluation.
+                    continue
                 # Use topic_group as topic_key when the original is empty —
                 # diversity tokens fall back to topic_key, so this is critical.
                 if not item.topic_key and item.topic_group:
@@ -2132,6 +2228,10 @@ class RecommendationEngine:
         Mutates each item in-place: sets relevance/classification fields,
         including the temporal evaluation used by the shared eligibility gate.
         """
+        evaluator = getattr(self, "_content_evaluator", None)
+        if evaluator is not None:
+            await evaluator.evaluate_cached_content_batch(batch, profile)
+            return
         from openbiliclaw.llm.prompts import (
             build_batch_content_evaluation_prompt,
             content_evaluation_clock,
@@ -5732,7 +5832,10 @@ class RecommendationEngine:
             cls._normalize_dislike_match_text((item.body_text or "")[:800]),
             *[cls._normalize_dislike_match_text(tag) for tag in item.tags],
         ]
-        for term in disliked_terms:
+        # Scope parity with recommendation.exclusion: only phrase terms may
+        # substring-match prose; a bare category label ("科普" / "崩坏") is a
+        # structured-topic exclusion, never a site-wide title filter.
+        for term in phrase_dislike_terms(disliked_terms):
             if any(term in field for field in search_fields if field):
                 return True
         return False

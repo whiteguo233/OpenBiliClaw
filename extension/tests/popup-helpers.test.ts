@@ -1280,6 +1280,7 @@ test("getPopupState shows the init CTA when uninitialized despite pending pre-in
 
 test("normalizeRuntimeStatus fills stable fallback fields", () => {
   assert.deepEqual(normalizeRuntimeStatus({ initialized: true, unread_count: "2" }), {
+    sponsored_status: {},
     initialized: true,
     recommendation_count: 0,
     pending_signal_events: 0,
@@ -1323,6 +1324,7 @@ test("normalizeRuntimeStatus preserves backend update summary fields", () => {
       initialized: true,
       recommendation_count: 5,
       pending_signal_events: 0,
+      sponsored_status: {},
       last_refresh_at: "",
       last_notification_at: "",
       unread_count: 0,
@@ -1345,6 +1347,11 @@ test("normalizeRuntimeStatus preserves backend update summary fields", () => {
       backend_update_reason: "none",
     },
   );
+});
+
+test("normalizeRuntimeStatus retains actionable free-plan notices", () => {
+  const service = { notices: [{ code: "AUTH_FAILED", requires_update: true, capabilities: ["chat"] }] };
+  assert.deepEqual(normalizeRuntimeStatus({ sponsored_status: service }).sponsored_status, service);
 });
 
 test("shouldFetchProfileSummary allows force refresh after profile is cached", () => {

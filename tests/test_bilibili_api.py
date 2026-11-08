@@ -798,8 +798,11 @@ async def test_get_following_parses_users() -> None:
                     "code": 0,
                     "data": {
                         "list": [
-                            {"mid": 1, "uname": "alice", "sign": "doc lover"},
-                            {"mid": 2, "uname": "bob", "sign": "tech"},
+                            {"mid": 1, "uname": "alice", "sign": "doc lover", "mtime": 1584271945},
+                            {"mid": 2, "uname": "bob", "sign": "tech", "mtime": 1746098997},
+                            # Upstream occasionally omits mtime; it must not be
+                            # invented (0 = unknown, never the fetch moment).
+                            {"mid": 3, "uname": "carol", "sign": ""},
                         ]
                     },
                 }
@@ -810,8 +813,9 @@ async def test_get_following_parses_users() -> None:
     users = await client.get_following(page=1, page_size=2)
 
     assert users == [
-        FollowingUser(mid=1, uname="alice", sign="doc lover"),
-        FollowingUser(mid=2, uname="bob", sign="tech"),
+        FollowingUser(mid=1, uname="alice", sign="doc lover", mtime=1584271945),
+        FollowingUser(mid=2, uname="bob", sign="tech", mtime=1746098997),
+        FollowingUser(mid=3, uname="carol", sign="", mtime=0),
     ]
 
 
@@ -1488,3 +1492,30 @@ async def test_get_space_profile_signs_the_wbi_request() -> None:
     assert params["mid"] == "222156"
     assert params["w_rid"]
     assert params["wts"]
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [(0, "confirmed"), (86101, "pending"), (86090, "scanned"), (86038, "expired")],
+)
+async def test_qr_poll_preserves_codes_and_only_returns_confirmed_cookies(code, status):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"code": code, "url": "https://www.bilibili.com/"}},
+            headers=[
+                ("set-cookie", "SESSDATA=fake-session; Path=/"),
+                ("set-cookie", "unrelated=excluded; Path=/"),
+            ],
+        )
+
+    client = BilibiliAPIClient(cookie="")
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.poll_qrcode("fake-key")
+        assert result["raw_code"] == code
+        assert result["status"] == status
+        assert result["cookie"] == ("SESSDATA=fake-session" if code == 0 else "")
+    finally:
+        await client.close()

@@ -7339,6 +7339,7 @@ class Database:
                 claimed_at = CURRENT_TIMESTAMP,
                 claim_token = ?,
                 eval_error = CASE
+                    WHEN eval_error = 'semantic_filter_deferred' THEN eval_error
                     WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
                     THEN eval_error
                     ELSE ''
@@ -7750,6 +7751,30 @@ class Database:
                 updated_ids.add(candidate_id)
         return updated_ids
 
+    def defer_claimed_semantic_filter_candidates(
+        self,
+        candidate_ids: Sequence[int],
+        *,
+        claim_token: str,
+    ) -> int:
+        """Release a soft refusal once, without learning/rejection or retry penalties.
+
+        The marker survives the next claim and forces full evaluator review,
+        preventing repeat-refusal loops. Ownership is checked atomically.
+        """
+        ids = [int(value) for value in candidate_ids if int(value) > 0]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        cursor = self._execute_write(
+            f"""UPDATE discovery_candidates SET status='pending_eval',
+            claimed_at=NULL, claim_token=NULL, eval_error='semantic_filter_deferred',
+            last_seen_at=CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders}) AND status='evaluating' AND claim_token=?""",
+            (*ids, str(claim_token)),
+        )
+        return int(cursor.rowcount)
+
     def reset_claimed_discovery_candidates_to_pending(
         self,
         candidate_ids: Sequence[int],
@@ -7927,6 +7952,111 @@ class Database:
         )
         return int(cursor.rowcount)
 
+    def park_claimed_input_budget_candidates(
+        self, candidate_ids: Sequence[int], *, claim_token: str, reason: str
+    ) -> int:
+        """Park deterministic input refusals under the evaluator's exact lease.
+
+        Preserve any prior evidence; never manufacture a score or increment a
+        transport/batch retry count for work that did not reach the provider.
+        """
+        if re.fullmatch(r"input_budget_exhausted:[0-9a-f]{64}", reason) is None:
+            raise ValueError("invalid input budget failure identity")
+        return self.park_claimed_evaluation_refused_candidates(
+            candidate_ids, claim_token=claim_token, reason=reason
+        )
+
+    def park_claimed_evaluation_refused_candidates(
+        self, candidate_ids: Sequence[int], *, claim_token: str, reason: str
+    ) -> int:
+        """Lease-CAS park a local input refusal or contradictory remote evidence.
+
+        Neither is low-score admission or a transient response-missing retry.
+        Preserve earlier evidence and counters; remote billing belongs to usage.
+        """
+        if (
+            re.fullmatch(
+                r"(?:input_budget_exhausted|invalid_evaluation_evidence):[0-9a-f]{64}", reason
+            )
+            is None
+        ):
+            raise ValueError("invalid evaluation refusal identity")
+        ids = sorted({str(int(value)) for value in candidate_ids})
+        updated = 0
+        for chunk in _chunks(ids, 450):
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = self._execute_write(
+                f"""UPDATE discovery_candidates
+                    SET status = 'failed_eval', eval_error = ?,
+                        claimed_at = NULL, claim_token = NULL
+                    WHERE id IN ({placeholders})
+                      AND status = 'evaluating' AND claim_token = ?""",
+                (reason, *chunk, str(claim_token)),
+            )
+            updated += int(cursor.rowcount)
+        return updated
+
+    def count_input_budget_blocked_candidates(self) -> int:
+        """Count parked local refusals without exposing profile or content."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM discovery_candidates
+               WHERE status = 'failed_eval'
+                 AND eval_error LIKE 'input_budget_exhausted:%'"""
+        ).fetchone()
+        return int(row[0])
+
+    def revive_input_budget_candidates(
+        self, *, context_fingerprint: str, limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE
+    ) -> int:
+        """Requeue bounded input refusals only for a different effective context."""
+        return self.revive_evaluation_refused_candidates(
+            context_fingerprint=context_fingerprint, limit=limit, include_invalid_evidence=False
+        )
+
+    def count_invalid_evidence_blocked_candidates(self) -> int:
+        """Count contradictory evidence without conflating it with input overflow."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM discovery_candidates
+               WHERE status = 'failed_eval'
+                 AND eval_error LIKE 'invalid_evaluation_evidence:%'"""
+        ).fetchone()
+        return int(row[0])
+
+    def revive_evaluation_refused_candidates(
+        self,
+        *,
+        context_fingerprint: str,
+        limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE,
+        include_invalid_evidence: bool = True,
+    ) -> int:
+        """Bounded recovery after a context change, never an unchanged restart."""
+        if re.fullmatch(r"[0-9a-f]{64}", context_fingerprint) is None:
+            raise ValueError("invalid evaluation context identity")
+        cursor = self._execute_write(
+            """UPDATE discovery_candidates
+               SET status = 'pending_eval', eval_error = '',
+                   eval_attempts = 0, batch_eval_attempts = 0,
+                   claimed_at = NULL, claim_token = NULL,
+                   last_seen_at = CURRENT_TIMESTAMP
+               WHERE id IN (
+                   SELECT id FROM discovery_candidates
+                   WHERE status = 'failed_eval'
+                     AND (eval_error LIKE 'input_budget_exhausted:%'
+                          OR (? AND eval_error LIKE 'invalid_evaluation_evidence:%'))
+                     AND eval_error NOT IN (?, ?)
+                   ORDER BY id ASC LIMIT ?
+               )""",
+            (
+                include_invalid_evidence,
+                f"input_budget_exhausted:{context_fingerprint}",
+                f"invalid_evaluation_evidence:{context_fingerprint}",
+                max(0, int(limit)),
+            ),
+        )
+        return int(cursor.rowcount)
+
     def revive_failed_eval_candidates(
         self,
         *,
@@ -7973,6 +8103,8 @@ class Database:
                 WHERE status = 'failed_eval'
                   AND eval_revive_count < ?
                   AND COALESCE(eval_error, '') NOT LIKE 'temporal_review_due:%'
+                  AND COALESCE(eval_error, '') NOT LIKE 'input_budget_exhausted:%'
+                  AND COALESCE(eval_error, '') NOT LIKE 'invalid_evaluation_evidence:%'
                 ORDER BY id ASC
                 LIMIT ?
             )

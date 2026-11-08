@@ -1,0 +1,161 @@
+{
+  "schema": "director-live-e2e.v1",
+  "started_at": "2026-10-02T04:33:25.678433+00:00",
+  "transport": "codex-cli",
+  "model": "gpt-6-luna",
+  "mode": "scripted_http_acceptance",
+  "planning_budget_seconds": 60.0,
+  "budget_class": "diagnostic_override",
+  "real_source_snapshot": true,
+  "source_configuration": "config_toml_plus_local_and_environment",
+  "feedback_is_isolated_acceptance_action": true,
+  "long_term_learning_and_discovery": "excluded",
+  "jev": "not_used_agent_only",
+  "asgi_background_lifespan": "disabled",
+  "http_requests": [
+    {
+      "method": "GET",
+      "path": "/api/recommendations/director/restore",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/recommendations/director/generate",
+      "status": 200
+    }
+  ],
+  "screens": [
+    {
+      "batch_sha256": "760326a0ff487cfb0688774885a6e51ad3d2029f8f85a02b370cbdf2dbb6fc41",
+      "plan_sha256": null,
+      "item_count": 6,
+      "item_sequence_sha256": "d5099db1a329fd33aeb44255629c8edeec7dd49c5a8286c957dfe44b8e60cf8d",
+      "requested_strategy": "agent_only",
+      "realized_strategy": "deterministic",
+      "execution_binding": "SESSION_STEP",
+      "experience_step_seq": 1,
+      "state_revision": 0,
+      "planning_source": "fresh",
+      "planning_reason": "invalid_planner_output",
+      "planning_calls": 1,
+      "initial_screen_counts": null,
+      "coverage_reason": null
+    }
+  ],
+  "checks": [
+    "new_stream_restore_does_not_generate"
+  ],
+  "passed": false,
+  "model_calls": [
+    {
+      "input_sha256": "8800116f2a71267473292c67d48f50373e8c6d16bf864f6bf7e4c6eda88098b1",
+      "system_sha256": "4a6e4e25024e4e48778f12089614f5a8d3c393a034390ef062c6db6e06e00634",
+      "input_bytes": 38020,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": false,
+      "response_sha256": "ac8bf0f3c4e19265b95cb61978acdfe637d89d260919ab13c1cf6e9e20cf6cac",
+      "usage": {
+        "input_tokens": 19539,
+        "cached_input_tokens": 0,
+        "output_tokens": 1487,
+        "reasoning_output_tokens": 0
+      },
+      "response_shape": {
+        "json_parse_valid": true,
+        "json_object": true,
+        "screen_card_counts": [
+          6,
+          6,
+          6
+        ],
+        "unknown_ref_count": 2,
+        "duplicate_ref_count": 0,
+        "selected_omitted_overlap_count": 4,
+        "omitted_count": 25
+      },
+      "elapsed_seconds": 53.79
+    },
+    {
+      "input_sha256": "7acd7cc904f46676cb38530857b5e2478161061763dcb96cc55d4667ea073b06",
+      "system_sha256": "4a6e4e25024e4e48778f12089614f5a8d3c393a034390ef062c6db6e06e00634",
+      "input_bytes": 37229,
+      "candidate_count": 40,
+      "profile_present": true,
+      "profile_interest_count": 32,
+      "profile_dislike_count": 131,
+      "recent_screen_count": 0,
+      "recent_card_count": 0,
+      "feedback_count": 0,
+      "feedback_kind_counts": {},
+      "requested_horizon": 3,
+      "background": true,
+      "error_class": "CancelledError",
+      "elapsed_seconds": 0.602
+    }
+  ],
+  "transport_records": [
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "exit_code": 0,
+      "stderr_bytes": 0,
+      "item_types": [
+        "agent_message",
+        "error"
+      ],
+      "event_types": {
+        "item.completed": 2,
+        "thread.started": 1,
+        "turn.completed": 1,
+        "turn.started": 1
+      },
+      "event_type_counts_capped": false,
+      "reconnect_notices": 0,
+      "https_fallback_notices": 0,
+      "recoverable_diagnostic_present": true,
+      "event_count": 5,
+      "completed": true,
+      "stream_recovered": false
+    },
+    {
+      "requested_model": "gpt-6-luna",
+      "model_verification": "explicit_cli_flag_not_server_echo",
+      "reasoning_effort": "low",
+      "tools_allowed": false,
+      "max_tokens_and_temperature_enforced": false,
+      "wrapper_sha256": "8488ba5495a156a596e4cf78617dba74b575772d580fa8544324c1e1da40045e",
+      "cancelled_and_reaped": true
+    }
+  ],
+  "snapshot": {
+    "source_open_mode": "sqlite_readonly_online_backup",
+    "source_data_path_sha256": "25c70f5d9b28fa6b8a5c499ec98df2c2480b34d54e533fe659937830ff64a936",
+    "memory_files": [
+      "soul.json",
+      "preference.json",
+      "awareness.json",
+      "insight.json",
+      "profile_overrides.json",
+      "speculative_state.json",
+      "discovery_runtime.json"
+    ],
+    "database_bytes": 228888576,
+    "private_snapshot_deleted_on_exit": true
+  },
+  "initial_shortlist_count": 40,
+  "error_class": "AcceptanceFailure",
+  "failure_code": "screen_not_agent_only",
+  "finished_at": "2026-10-02T04:34:27.374306+00:00"
+}

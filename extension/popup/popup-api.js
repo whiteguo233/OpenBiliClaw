@@ -17,6 +17,18 @@ let healthCacheCheckedAt = 0;
 let healthCacheHasValue = false;
 let healthCachePayload = null;
 let healthProbeInFlight = null;
+let directorClient = null;
+
+function recommendationDirector() {
+  if (!directorClient && globalThis.OpenBiliClawDirectorClient) {
+    directorClient = globalThis.OpenBiliClawDirectorClient.createClient({ request: requestJson, namespace: "popup-director" });
+  }
+  return directorClient;
+}
+
+export function observeRecommendationPresentation(element, item) {
+  recommendationDirector()?.bindCard(element, item);
+}
 
 function abortError(message = "Request aborted") {
   if (typeof DOMException === "function") {
@@ -285,7 +297,9 @@ export async function fetchEmbeddingRepairStatus() {
 }
 
 export async function fetchRecommendations() {
-  const payload = await requestJson("/recommendations", { method: "GET" });
+  let payload = await requestJson("/recommendations", { method: "GET" });
+  const director = recommendationDirector();
+  if (director) payload = await director.ensureInitial(payload);
   return Array.isArray(payload.items) ? payload.items.map(normalizeRecommendation) : [];
 }
 
@@ -368,7 +382,8 @@ export async function refreshRecommendations() {
 }
 
 export async function reshuffleRecommendations(excludedBvids = []) {
-  const payload = await requestJson("/recommendations/reshuffle", {
+  const director = recommendationDirector();
+  const payload = director ? await director.generate("/recommendations/reshuffle", { excluded_bvids: excludedBvids }) : await requestJson("/recommendations/reshuffle", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -382,7 +397,8 @@ export async function reshuffleRecommendations(excludedBvids = []) {
 }
 
 export async function appendRecommendations(excludedBvids = []) {
-  const payload = await requestJson("/recommendations/append", {
+  const director = recommendationDirector();
+  const payload = director ? await director.generate("/recommendations/append", { excluded_bvids: excludedBvids }) : await requestJson("/recommendations/append", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -700,6 +716,7 @@ export async function submitProfileEdit({ target, op, value = null, parent = "",
 }
 
 export async function submitFeedback(payload) {
+  payload = recommendationDirector()?.feedback(payload) || payload;
   const key = feedbackRequestKey(payload);
   const request_id = payload.request_id || await rememberPendingId("feedback", key);
   try {
@@ -756,6 +773,7 @@ export async function sendBehaviorEvents(events, { retryKey = "" } = {}) {
  * @returns {Promise<boolean>} true if the click was reported successfully
  */
 export async function reportRecommendationClick(payload) {
+  payload = recommendationDirector()?.feedback(payload) || payload;
   const stableRecommendationId = payload.recommendation_id || "";
   const stableContentId = String(payload.content_id || payload.bvid || "").trim();
   let fallbackUrl = "";
@@ -1070,6 +1088,7 @@ export async function streamAgentChatTurn({
     if (name === "error") {
       const error = new Error(String(data?.error || "对话失败了，请稍后重试。"));
       error.agentStreamError = true;
+      error.agentRetrying = data?.retrying === true;
       onEvent?.(name, data);
       throw error;
     }
@@ -1275,7 +1294,7 @@ export async function probeConfigService(kind, config, instanceId = "") {
     // Keep the popup alive beyond the backend's bounded 120s LLM cold-start
     // probe window; otherwise the browser aborts a request the backend still
     // legitimately owns.
-    timeoutMs: 125_000,
+    timeoutMs: kind === "sponsored" ? 370_000 : 125_000,
     headers: {
       "Content-Type": "application/json",
     },
@@ -1285,6 +1304,10 @@ export async function probeConfigService(kind, config, instanceId = "") {
       ...(instanceId ? { instance_id: instanceId } : {}),
     }),
   });
+}
+
+export async function prepareSponsoredRuntime() {
+  return requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125_000 });
 }
 
 export async function discoverConfigModels(config, instanceId) {

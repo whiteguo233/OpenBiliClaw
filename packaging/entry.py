@@ -64,6 +64,42 @@ def _macos_app_bundle_root(exe_dir: Path) -> Path:
     return exe_dir.parent.parent
 
 
+def _verify_packaged_sponsored_runtime(resources: Path) -> None:
+    """Validate the released execution mode without accepting a mixed credential bundle."""
+    from openbiliclaw.runtime.relay_release import official_relay_url
+
+    if official_relay_url():
+        if (resources / "sponsored").exists():
+            raise RuntimeError("Relay-only package contains an unexpected local credential SDK")
+        return
+    from openbiliclaw.proc import no_window_kwargs
+    from openbiliclaw.runtime.sponsored_bundle import verify_bundle
+
+    bundle = resources / "sponsored"
+    if not bundle.is_dir():
+        raise RuntimeError("Packaged sponsored runtime is missing")
+    verify_bundle(bundle)
+    binary = bundle / ("obc-sponsored-runtime.exe" if os.name == "nt" else "obc-sponsored-runtime")
+    # Offline policy validation: exercise the actual bundled executable after
+    # signing/installation without making model calls or disclosing credentials.
+    result = subprocess.run(
+        [
+            str(binary),
+            "--policy",
+            str(bundle / "sponsored-policy.json"),
+            "--signature",
+            str(bundle / "sponsored-policy.sig"),
+            "--check-policy",
+        ],
+        capture_output=True,
+        timeout=30,
+        check=False,
+        **no_window_kwargs(),
+    )
+    if result.returncode:
+        raise RuntimeError("Packaged sponsored runtime failed native policy validation")
+
+
 def _user_data_root_for(
     os_name: str, platform: str, home: Path, environ: Mapping[str, str]
 ) -> Path:
@@ -487,6 +523,11 @@ def _ensure_embedding_model_async() -> None:
 
         cfg = load_config()
         emb = cfg.llm.embedding
+        if (
+            cfg.llm.embedding.provider == "siliconflow_free"
+            or cfg.llm.sponsored.uses_cloud_embedding
+        ):
+            return  # Free text vectors use cloud BGE, including with chat fallback.
         if str(emb.provider).strip().lower() != "ollama":
             return
         model = str(emb.model).strip() or "bge-m3"
@@ -593,9 +634,29 @@ def _seed_bundled_embedding_model(bundled_resources: Path, config_path: Path) ->
         from openbiliclaw.runtime.ollama_supervisor import start_managed_ollama_at
 
         cfg = load_config()
+        if (
+            cfg.llm.embedding.provider == "siliconflow_free"
+            or cfg.llm.sponsored.uses_cloud_embedding
+        ):
+            return False  # Preserve the local seed until local embedding is selected.
         provider = str(cfg.llm.embedding.provider).strip().lower()
         if provider not in ("", "ollama"):
             return False  # user chose a remote embedding provider — respect it
+        from openbiliclaw.config import uses_siliconflow_free
+
+        if uses_siliconflow_free(cfg.llm):
+            from urllib.parse import urlsplit
+
+            selected_model = cfg.llm.embedding.model.strip()
+            selected_url = cfg.llm.embedding.base_url.strip()
+            endpoint = urlsplit(selected_url or "http://127.0.0.1:11434/v1")
+            if (
+                selected_model not in {"", "bge-m3", "bge-m3:latest"}
+                or endpoint.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or endpoint.port not in {11434, _PRIVATE_OLLAMA_PORT}
+                or endpoint.path.rstrip("/") not in {"", "/v1"}
+            ):
+                return False  # Free chat must not overwrite an existing local deployment.
 
         target = effective_embedding_models_dir(
             user_ollama_models=os.environ.get("OLLAMA_MODELS"),
@@ -1169,11 +1230,24 @@ def main() -> None:
     # Make a bundled ollama (if this build shipped one) discoverable before any
     # config is read, so the existing supervisor finds it via shutil.which.
     has_bundled_ollama = _inject_bundled_ollama_on_path(bundled_resources)
+    if (bundled_resources / "sponsored").is_dir():
+        os.environ["OPENBILICLAW_SPONSORED_BUNDLE"] = str(bundled_resources / "sponsored")
 
     # Seed a default config.toml if the user hasn't created one yet. On a fresh
     # packaged install with a bundled ollama, default embedding to it so local
     # semantic features work out of the box.
     seeded = _seed_default_config(project_root, bundled_resources)
+    if seeded:
+        from dataclasses import replace
+        from openbiliclaw.config import load_config_with_diagnostics, save_config
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        initial_config, _ = load_config_with_diagnostics()
+        if initial_config.llm.sponsored.relay_url or installed_runtime_command():
+            initial_config.llm.sponsored = replace(
+                initial_config.llm.sponsored, enabled=True, fallback_to_other_free_model=False
+            )
+            save_config(initial_config)
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
         _default_ollama_to_embedding_only(project_root / "config.toml")
@@ -1215,7 +1289,7 @@ def main() -> None:
             print("[OpenBiliClaw] 迁移恢复后的数据目录已被另一后端使用；本次拒绝启动。")
             return
 
-    default_host = "127.0.0.1"
+    default_host = "0.0.0.0"
     default_port = 8420
     if runtime_config is not None:
         default_host = str(
@@ -1232,6 +1306,12 @@ def main() -> None:
     # port. Lets CI / a local check smoke-test the packaged build even
     # when a real serve-api already owns the port.
     if os.environ.get("OPENBILICLAW_SELFTEST"):
+        if getattr(sys, "frozen", False):
+            _verify_packaged_sponsored_runtime(bundled_resources)
+            from openbiliclaw.config import uses_siliconflow_free
+
+            if seeded and (runtime_config is None or not uses_siliconflow_free(runtime_config.llm)):
+                raise RuntimeError("Fresh packaged config did not enable its built-in provider")
         create_app()
         _close_splash()
         print("[OpenBiliClaw] selftest OK — 依赖与后端装配正常")
@@ -1300,7 +1380,7 @@ def main() -> None:
         runtime_config = load_config()
         configure_logging(runtime_config, sweep_unmanaged=False)
         _reconcile_packaged_autostart(runtime_config)
-        default_host = str(getattr(runtime_config.api, "host", "127.0.0.1") or "127.0.0.1")
+        default_host = str(getattr(runtime_config.api, "host", "0.0.0.0") or "0.0.0.0")
         default_port = int(getattr(runtime_config.api, "port", 8420) or 8420)
         host = os.environ.get("OPENBILICLAW_HOST", "").strip() or default_host
         port = int(os.environ.get("OPENBILICLAW_PORT", "").strip() or str(default_port))
@@ -1355,6 +1435,10 @@ def main() -> None:
     # single-instance guards resolve the active data directory. The API owns
     # the background task; selftests and worker children do not opt in.
     app = create_app(prepare_ego_on_startup=True)
+
+    if getattr(app, "state", None) is not None:
+        app.state.api_listen_host = host
+        app.state.api_listen_port = port
     use_tray = _should_use_tray()
     config_kwargs = {"access_log": False} if use_tray else {}
     config = uvicorn.Config(app, host=host, port=port, log_level="info", **config_kwargs)

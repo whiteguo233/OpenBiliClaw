@@ -23,7 +23,9 @@ async def test_config_factory_anonymous_search(tmp_path, monkeypatch, sse):
     config_path.write_text('[discovery]\ninspiration_search_backends = ["parallel"]\n')
     config = load_config(config_path, consult_environment=False)
     provider = build_inspiration_search_provider(config.discovery.inspiration_search_backends)
-    assert isinstance(provider, ParallelInspirationProvider)
+    assert isinstance(provider, FallbackInspirationSearchProvider)
+    (inner,) = provider.providers
+    assert isinstance(inner, ParallelInspirationProvider)
     assert "parallel" not in DiscoveryConfig().inspiration_search_backends
     seen = []
 
@@ -69,7 +71,7 @@ async def test_config_factory_anonymous_search(tmp_path, monkeypatch, sse):
             )
         return httpx.Response(200, json=rpc, headers={"mcp-session-id": "fixture-session"})
 
-    monkeypatch.setattr(provider, "_transport", httpx.MockTransport(handler))
+    monkeypatch.setattr(inner, "_transport", httpx.MockTransport(handler))
     items = await provider.search("python async tutorial", limit=1)
     assert items == [
         ExaPreviewItem(

@@ -99,7 +99,8 @@ test("executeTask persists the active task snapshot and arms the timeout alarm",
 
     // Contract extension.background = true: the task tab stays backgrounded.
     assert.equal(state.createdTabs[0]?.active, false);
-    assert.ok(state.createdTabs[0]?.url.includes("openbiliclaw_tiktok_task=1"));
+    assert.equal(state.createdTabs[0]?.url, "about:blank");
+    assert.ok(state.updatedTabs.some(tab => tab.url?.includes("openbiliclaw_tiktok_task=1")));
 
     const timeoutAlarm = alarms.created.find((call) => call.name === TASK_TIMEOUT_ALARM_NAME);
     assert.ok(timeoutAlarm, "timeout alarm must backstop the in-process timer");
@@ -385,7 +386,7 @@ test("actual backend bootstrap scopes execute sequentially, survive worker resta
     assert.equal(persisted.progress?.scope, "tt_collect");
     assert.equal(persisted.scope_results?.tt_like?.items.length, 1);
     assert.equal(persisted.scope_results?.tt_like?.status, "degraded");
-    assert.equal(state.updatedTabs.filter((tab) => tab.url).length, 1);
+    assert.equal(state.updatedTabs.filter((tab) => tab.url).length, 2);
     assert.equal(state.createdTabs[0].active, false);
     resetTiktokTaskStateForTest();
     await ensureTiktokTaskRecovery();

@@ -1369,12 +1369,14 @@ wheels = [
 
 [[package]]
 name = "openbiliclaw"
-version = "0.3.231"
+version = "0.3.234"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "apscheduler" },
     { name = "bilibili-api-python" },
+    { name = "certifi" },
+    { name = "cryptography" },
     { name = "curl-cffi" },
     { name = "fastapi" },
     { name = "google-genai" },
@@ -1432,7 +1434,9 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.40,<1" },
     { name = "apscheduler", specifier = ">=3.10" },
     { name = "bilibili-api-python", specifier = ">=16" },
+    { name = "certifi" },
     { name = "claude-agent-sdk", marker = "extra == 'eval'", specifier = ">=0.1" },
+    { name = "cryptography", specifier = ">=41" },
     { name = "cryptography", marker = "extra == 'tls'", specifier = ">=41" },
     { name = "curl-cffi", specifier = ">=0.15" },
     { name = "fastapi", specifier = ">=0.115" },

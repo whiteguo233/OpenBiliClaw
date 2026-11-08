@@ -2,7 +2,7 @@
 
 **Created:** 2026-08-31  
 **Revised:** 2026-09-26
-**Status:** Agent-first foundation; extended by the three-mode design below; implementation not started
+**Status:** Superseded in part by the three-mode design; requested modes, atomic screens, feedback and independent filtering integrated into main on 2026-10-22, disabled by default; not released, live quality unverified
 **Scope:** OpenBiliClaw recommendation strategy layer  
 **Research sources checked:** 2026-08-31
 **Repository interfaces checked:** 2026-09-26
@@ -17,6 +17,8 @@
 > 本文保留 batch/曝光/反馈、约束、提交、安全与审计底座；原有“Agent 不看候选、
 > 不选择具体卡片、仅一个低频 Planner 模式”等限制不再代表最新产品方案。
 > 增补文档 §14 列出了替代范围；本文 JSON 合同尚未升级到三模式，不能不经修订直接编码。
+> 三模式运行时、batch/反馈底座和独立过滤的实际边界见[实施进度](2026-09-26-director-implementation-progress.md)；
+> 本文原 JSON 仍为历史设计，最新可调用合同以[模块文档](../modules/director.md)为准。
 
 ## 1. 一句话决策
 

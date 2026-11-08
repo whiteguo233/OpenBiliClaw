@@ -532,6 +532,8 @@ class DiscoveryCandidatePipeline:
         if len(stored_tokens) == 1:
             token = stored_tokens.pop()
         items = tuple(row_to_discovered_content(row) for row in rows)
+        for row, item in zip(rows, items, strict=True):
+            item.semantic_filter_review = row.get("eval_error") == "semantic_filter_deferred"
         return CandidateEvalClaim(token=token, rows=tuple(rows), items=items)
 
     def claim_ready_batch(self, *, limit: int) -> CandidateEvalClaim | None:
@@ -565,7 +567,7 @@ class DiscoveryCandidatePipeline:
         return max(0.0, max_wait - max(0.0, float(self.time_fn()) - first_seen))
 
     async def evaluate_claim(self, claim: CandidateEvalClaim, profile: Any) -> CandidateEvalOutcome:
-        """Run only the LLM evaluation stage; this method performs no writes."""
+        """Run evaluator I/O and optional evidence audits, but never admit content."""
 
         started = self.time_fn()
         scores = await self.discovery_engine.evaluate_content_batch(
@@ -596,9 +598,11 @@ class DiscoveryCandidatePipeline:
         rows = list(claim.rows)
         items = list(claim.items)
         scores = list(outcome.scores)
-        await self._normalize_evaluated_items(items)
+        await self._normalize_evaluated_items(
+            [item for item in items if item.evaluation_failure is None]
+        )
         recently_viewed = self._recent_viewed_content_keys()
-        updated_ids = self._persist_evaluations(
+        updated_ids, deferred_count, blocked_count = self._persist_evaluations(
             rows,
             items,
             scores,
@@ -669,12 +673,17 @@ class DiscoveryCandidatePipeline:
         )
         self.last_admitted_items = list(admitted_items)
         confirmed_ids = set(durable_by_id)
-        return {
+        result = {
             "evaluated": len(confirmed_ids),
             "cached": cached,
             "rejected": rejected + admission_rejected,
-            "stale": len(rows) - len(confirmed_ids),
+            "stale": len(rows) - len(confirmed_ids) - deferred_count - blocked_count,
         }
+        if deferred_count:
+            result["deferred"] = deferred_count
+        if blocked_count:
+            result["blocked"] = blocked_count
+        return result
 
     def release_claim(
         self,
@@ -728,6 +737,26 @@ class DiscoveryCandidatePipeline:
             logger.debug("failed_eval candidate revival failed", exc_info=True)
             return 0
 
+    def input_budget_blocked_count(self) -> int:
+        """Read the durable count of deterministic input refusals."""
+        count = getattr(self.database, "count_input_budget_blocked_candidates", None)
+        return int(count() or 0) if callable(count) else 0
+
+    def invalid_evidence_blocked_count(self) -> int:
+        """Read parked contradictory answers separately from local budget failures."""
+        count = getattr(self.database, "count_invalid_evidence_blocked_candidates", None)
+        return int(count() or 0) if callable(count) else 0
+
+    def refresh_evaluation_context(self, profile: Any) -> int:
+        """Reconsider parked refusals only when the effective context changed."""
+        refresh = getattr(self.database, "revive_evaluation_refused_candidates", None)
+        fingerprint = getattr(self.discovery_engine, "evaluation_context_fingerprint", None)
+        if not callable(refresh) or not callable(fingerprint):
+            return 0
+        if self.input_budget_blocked_count() + self.invalid_evidence_blocked_count() == 0:
+            return 0
+        return int(refresh(context_fingerprint=fingerprint(profile)) or 0)
+
     async def _drain_pending_locked(
         self,
         *,
@@ -757,6 +786,7 @@ class DiscoveryCandidatePipeline:
             # Preserve caller and engine caps, but do not inflate an explicit
             # first-pool wave to the daemon's minimum coalescing batch size.
             batch_size = min(requested, batch_size)
+        self.refresh_evaluation_context(profile)
         claim_limit = self._effective_eval_claim_limit(batch_size)
         if flush:
             # An explicit caller budgets the whole wave, not each daemon worker.
@@ -832,6 +862,7 @@ class DiscoveryCandidatePipeline:
             "evaluated": result["evaluated"],
             "cached": retry_cached + result["cached"],
             "rejected": retry_rejected + result["rejected"],
+            **({"blocked": result["blocked"]} if result.get("blocked") else {}),
         }
 
     def _effective_eval_batch_concurrency(self) -> int:
@@ -982,10 +1013,20 @@ class DiscoveryCandidatePipeline:
         *,
         recently_viewed: set[str],
         claim_token: str | None = None,
-    ) -> set[int]:
+    ) -> tuple[set[int], int, int]:
         evaluations: list[dict[str, Any]] = []
         unresolved_ids: list[int] = []
+        deferred_ids: list[int] = []
+        blocked: dict[str, list[int]] = {}
         for row, item, score in zip(rows, items, scores, strict=True):
+            if item.semantic_filter_deferred:
+                deferred_ids.append(int(row["id"]))
+                continue
+            if item.evaluation_failure is not None:
+                blocked.setdefault(item.evaluation_failure.storage_reason, []).append(
+                    int(row["id"])
+                )
+                continue
             if item.relevance_reason == "evaluation_response_missing":
                 unresolved_ids.append(int(row["id"]))
                 continue
@@ -1053,8 +1094,30 @@ class DiscoveryCandidatePipeline:
             "persist_claimed_discovery_candidate_evaluations",
             None,
         )
+        blocked_count = 0
+        if blocked and claim_token is not None:
+            for reason, ids in blocked.items():
+                blocked_count += int(
+                    self.database.park_claimed_evaluation_refused_candidates(
+                        ids,
+                        claim_token=claim_token,
+                        reason=reason,
+                    )
+                )
+        elif blocked:
+            # Without lease ownership a legacy adapter cannot park candidates.
+            # Do not turn a technical input refusal into a low-score rejection.
+            raise ValueError("evaluation refusal parking requires claim ownership")
         if claim_token is not None and callable(persist_claimed):
             updated_ids = set(persist_claimed(evaluations, claim_token=claim_token))
+            deferred_count = 0
+            if deferred_ids:
+                deferred_count = int(
+                    self.database.defer_claimed_semantic_filter_candidates(
+                        deferred_ids,
+                        claim_token=claim_token,
+                    )
+                )
             reset_claimed = getattr(
                 self.database, "reset_claimed_discovery_candidates_to_pending", None
             )
@@ -1067,11 +1130,19 @@ class DiscoveryCandidatePipeline:
                     max_batch_attempts=self.max_batch_eval_attempts,
                     increment_attempts=False,
                 )
-            return updated_ids
+            return updated_ids, deferred_count, blocked_count
+        if deferred_ids:
+            # Legacy adapters cannot prove ownership for a temporary refusal.
+            # Do not turn it into a permanent low-score result.
+            self._release_eval_claims(
+                [row for row in rows if int(row["id"]) in deferred_ids],
+                reason="semantic_filter_deferred",
+                increment_attempts=False,
+            )
         updated = int(self.database.update_discovery_candidate_evaluations(evaluations) or 0)
         if updated == len(evaluations):
-            return {int(evaluation["candidate_id"]) for evaluation in evaluations}
-        return set()
+            return {int(evaluation["candidate_id"]) for evaluation in evaluations}, 0, blocked_count
+        return set(), 0, blocked_count
 
     def _durable_candidate_rows(self, candidate_ids: set[int]) -> list[dict[str, Any]]:
         """Reload persisted rows before admission, failing closed if unavailable."""

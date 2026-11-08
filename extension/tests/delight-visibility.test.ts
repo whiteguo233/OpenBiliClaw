@@ -99,7 +99,7 @@ test("desktop delight actions remove only explicit negative responses", () => {
 test("mobile delight response-loss retry reuses id when the title changes", async () => {
   const storage = new Map<string, string>();
   const submitted: Array<Record<string, string>> = [];
-  (globalThis as any).location = { protocol: "http:", host: "127.0.0.1:8420" };
+  (globalThis as any).location = new URL("http://127.0.0.1:8420/m/");
   (globalThis as any).window = { dispatchEvent() { return true; } };
   (globalThis as any).CustomEvent = class {
     type: string;

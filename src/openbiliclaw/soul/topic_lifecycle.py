@@ -291,20 +291,20 @@ def scan_lifecycle(
                         name, ACTIVE, DECAYING, f"silent {_DECAY_AFTER_DAYS}+ days (weight x0.5)"
                     )
                 )
-        elif state == DECAYING:
-            if (
-                silent_days is not None
-                and silent_days >= _DECAY_AFTER_DAYS + _ARCHIVE_AFTER_DECAY_DAYS
-            ):
-                item["state"] = ARCHIVED
-                transitions.append(
-                    LifecycleTransition(
-                        name,
-                        DECAYING,
-                        ARCHIVED,
-                        f"silent {_DECAY_AFTER_DAYS + _ARCHIVE_AFTER_DECAY_DAYS}+ days",
-                    )
+        elif (
+            state == DECAYING
+            and silent_days is not None
+            and silent_days >= _DECAY_AFTER_DAYS + _ARCHIVE_AFTER_DECAY_DAYS
+        ):
+            item["state"] = ARCHIVED
+            transitions.append(
+                LifecycleTransition(
+                    name,
+                    DECAYING,
+                    ARCHIVED,
+                    f"silent {_DECAY_AFTER_DAYS + _ARCHIVE_AFTER_DECAY_DAYS}+ days",
                 )
+            )
         result.append(item)
     return result, transitions
 

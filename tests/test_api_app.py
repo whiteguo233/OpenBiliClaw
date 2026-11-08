@@ -1647,10 +1647,8 @@ class TestBackendAPI:
         assert response.headers.get("cache-control") == "no-store"
         assert 'href="/web/assets/css/app.css?v=' in response.text
         assert 'href="/web/assets/css/classic.css?v=' in response.text
-        assert 'src="/web/assets/js/app.js?v=' in response.text
-        assert 'src="/web/assets/js/chat-agent-core.js?v=' in response.text
-        assert 'src="/web/assets/js/fish-settings.js?v=' in response.text
-        assert 'src="/shared/agent-chat.js?v=' in response.text
+        assert 'src="/web/assets/desktop-bundle.js?v=' in response.text
+        assert 'href="/shared/jev-settings.css?v=' in response.text
 
     def test_mobile_web_index_exposes_home_screen_metadata(self) -> None:
         from fastapi.testclient import TestClient
@@ -3171,7 +3169,7 @@ class TestBackendAPI:
         response = client.get("/api/qr-info")
 
         assert response.status_code == 200
-        assert response.json() == {"lan_ip": "192.168.1.7"}
+        assert response.json()["lan_ip"] == "192.168.1.7"
 
     def test_qr_info_endpoint_stays_available_in_degraded_mode(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3190,7 +3188,7 @@ class TestBackendAPI:
         response = client.get("/api/qr-info")
 
         assert response.status_code == 200
-        assert response.json() == {"lan_ip": "192.168.1.7"}
+        assert response.json()["lan_ip"] == "192.168.1.7"
 
     def test_qr_info_endpoint_detects_lan_ip_fresh_on_every_call(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3214,8 +3212,8 @@ class TestBackendAPI:
         first = client.get("/api/qr-info")
         second = client.get("/api/qr-info")
 
-        assert first.json() == {"lan_ip": "192.168.1.7"}
-        assert second.json() == {"lan_ip": "192.168.31.98"}
+        assert first.json()["lan_ip"] == "192.168.1.7"
+        assert second.json()["lan_ip"] == "192.168.31.98"
         # The fresh probe also refreshes the cache /api/health serves, so health
         # never regresses to the superseded address (a third _detect_lan_ip call
         # would exhaust the iterator and raise).
@@ -5602,7 +5600,7 @@ class TestBackendAPI:
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
+            base_url="http://127.0.0.1:8420",
         ) as client:
             first = asyncio.create_task(
                 client.post(
@@ -5669,8 +5667,8 @@ class TestBackendAPI:
             json={"platforms": ["douyin"], "actions": {"douyin": ["snapshot"]}},
         )
 
-        assert response.status_code == 403
-        assert response.json()["detail"] == "local_only"
+        assert response.status_code == 401
+        assert response.json()["error"] == "auth_setup_required"
 
     def test_extension_e2e_result_rejects_remote_clients_with_valid_payload(self) -> None:
         from fastapi.testclient import TestClient
@@ -5699,8 +5697,8 @@ class TestBackendAPI:
             },
         )
 
-        assert response.status_code == 403
-        assert response.json()["detail"] == "local_only"
+        assert response.status_code == 401
+        assert response.json()["error"] == "auth_setup_required"
 
     def test_extension_e2e_rejects_unknown_platform_via_schema(self) -> None:
         from fastapi.testclient import TestClient
@@ -6409,6 +6407,10 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {
             "initialized": True,
+            "sponsored_status": {
+                "notices": [],
+                "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest",
+            },
             "recommendation_count": 5,
             "pending_signal_events": 3,
             "last_refresh_at": "2026-03-10T12:00:00",
@@ -6426,6 +6428,8 @@ class TestBackendAPI:
             "candidate_eval_in_flight": 0,
             "candidate_eval_pending": 0,
             "candidate_eval_backoff_until": 0.0,
+            "candidate_eval_input_budget_blocked": 0,
+            "candidate_eval_invalid_evidence_blocked": 0,
             "candidate_eval_last_error": "",
             "candidate_eval_last_batch_seconds": 0.0,
             "candidate_eval_last_cached": 0,
@@ -7836,7 +7840,7 @@ class TestBackendAPI:
         # Share pytest's running event loop with the fire-and-forget publisher;
         # a request-scoped TestClient portal cancels it when the response ends.
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             response = await client.post(
                 "/api/recommendations/append",
@@ -19421,7 +19425,7 @@ class TestGuidedInitEndpoints:
         app, _ = self._make_app(tmp_path)
         monkeypatch.setattr(
             "openbiliclaw.llm.registry.build_llm_registry",
-            lambda _cfg: FakeRegistry(),
+            lambda _cfg, **_kwargs: FakeRegistry(),
         )
         monkeypatch.setattr(
             "openbiliclaw.llm.registry.build_embedding_service",
@@ -19493,7 +19497,7 @@ class TestGuidedInitEndpoints:
         app, _ = self._make_app(tmp_path)
         monkeypatch.setattr(
             "openbiliclaw.llm.registry.build_llm_registry",
-            lambda _cfg: SlowRegistry(),
+            lambda _cfg, **_kwargs: SlowRegistry(),
         )
         monkeypatch.setattr(
             "openbiliclaw.api.app._config_llm_probe_timeout_seconds",
@@ -20669,8 +20673,8 @@ class TestEmbeddingDiagnosisAndRepair:
         app.state.auth_gate.is_trusted_local = lambda request: False
         with TestClient(app) as client:
             resp = client.post("/api/embedding/repair")
-        assert resp.status_code == 403
-        assert resp.json()["error"] == "local_only"
+        assert resp.status_code == 401
+        assert resp.json()["error"] == "auth_setup_required"
 
     def test_repair_rejects_non_ollama_provider(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient

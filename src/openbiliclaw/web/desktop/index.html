@@ -33,6 +33,26 @@
   <link rel="stylesheet" href="/shared/custom-sources.css">
   <link rel="stylesheet" href="/web/assets/css/app.css">
   <link rel="stylesheet" href="/web/assets/css/classic.css">
+  <script src="/web/assets/js/mobile-qr.js" defer></script>
+  <script src="/shared/mobile-connection.js" defer></script>
+  <script src="/web/assets/js/pending-actions.js" defer></script>
+  <script src="/web/assets/js/saved-sync-core.js" defer></script>
+  <!-- Frontend helpers shared with the extension side panel (and, for source
+       status, the setup wizard); served from /shared because /web is rooted at
+       web/desktop. -->
+  <script src="/shared/dialogue-confirmation.js" defer></script>
+  <script src="/shared/agent-chat.js" defer></script>
+  <script src="/shared/source-status.js" defer></script>
+  <script src="/shared/custom-sources.js" defer></script>
+  <script src="/shared/i18n.js" defer></script>
+  <script src="/shared/director-client.js" defer></script>
+  <link rel="stylesheet" href="/shared/jev-settings.css">
+<link rel="stylesheet" href="/shared/sponsored-settings.css">
+<script src="/shared/sponsored-settings.js"></script>
+  <script src="/shared/jev-settings.js" defer></script>
+  <script src="/web/assets/js/chat-agent-core.js" defer></script>
+  <script src="/web/assets/js/fish-settings.js" defer></script>
+  <script src="/web/assets/js/app.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -394,6 +414,7 @@
         </div>
 
         <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
+
           <section class="llm-routing-section" aria-labelledby="llmInstancesHeading">
             <div class="llm-section-head">
               <div>
@@ -406,6 +427,7 @@
                 新建实例
               </button>
             </div>
+            <div id="llmProviderNotice" hidden></div>
             <div class="llm-instance-grid" id="llmInstanceList" aria-live="polite"></div>
           </section>
 
@@ -477,7 +499,7 @@
           </div>
 
           <div class="settings-subpanel is-active" data-model-settings-group="embedding" data-model-settings-panel="default">
-            <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider" translate="no"><option value="">未启用（不跟随聊天链）</option><option value="ollama">ollama</option><option value="openai">openai</option><option value="gemini">gemini</option><option value="openai_compatible">openai_compatible</option><option value="dashscope">dashscope (qwen3-vl)</option></select></label>
+            <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider" translate="no"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option><option value="">未启用（不跟随聊天链）</option><option value="ollama">ollama</option><option value="openai">openai</option><option value="gemini">gemini</option><option value="openai_compatible">openai_compatible</option><option value="dashscope">dashscope (qwen3-vl)</option></select></label>
             <label class="settings-field"><span>Embedding 模型</span><input id="embeddingModel" value="bge-m3"></label>
             <label class="settings-field"><span>Embedding API Key</span><input id="embeddingApiKey" autocomplete="off"></label>
             <label class="settings-field"><span>Embedding Base URL</span><input id="embeddingBaseUrl"></label>
@@ -1503,9 +1525,16 @@
               <h3 id="advancedEvaluatorHeading">候选评分模式</h3>
             </div>
             <div class="settings-advanced-fields">
-              <label class="settings-field full"><span>评分器模式</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
+              <label class="settings-field full"><span>候选评估器</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="jev">Jev（完整评估，纯文本）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
             </div>
-            <p class="settings-note-inline" id="evalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+            <p class="settings-note-inline" id="evalScorerHint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+            <details class="settings-note-inline">
+              <summary>评估模式说明</summary>
+              <p>Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+              <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+            </details>
+            <p class="settings-note-inline" id="jevEvaluatorStatus" role="status" aria-live="polite">正在读取 Jev provider 配置…</p>
+            <div id="jevConnectionSettings"></div>
           </section>
 
           <section class="settings-advanced-section" aria-labelledby="advancedRecommendationHeading">
@@ -2009,7 +2038,13 @@
     <div class="scrim" data-close="mobileQrDrawer"></div>
     <div class="drawer-panel mobile-qr-panel">
       <div class="drawer-head"><div><p class="eyebrow">Mobile web</p><h2>手机上也能用</h2></div><button class="icon-btn" data-close="mobileQrDrawer" type="button">×</button></div>
-      <p class="video-meta mobile-qr-lead">推荐点开直接拉起 B站 / 小红书等 App，躺着刷更顺手。</p>
+      <p class="video-meta mobile-qr-lead">相机打开网页版；App「扫码连接」填入后端。</p>
+      <label class="mobile-connection-field" for="mobileQrNetwork">连接网络
+        <select id="mobileQrNetwork" aria-describedby="mobileQrHint"></select>
+      </label>
+      <label class="mobile-connection-field" for="mobileQrPublicUrl">公网 / 自定义访问地址（可选）
+        <input id="mobileQrPublicUrl" type="url" placeholder="https://obc.example.com" autocomplete="off" spellcheck="false">
+      </label>
       <div class="mobile-qr-card">
         <div class="mobile-qr-canvas" id="mobileQrCanvas" aria-live="polite"></div>
         <code class="mobile-qr-url" id="mobileQrUrl"></code>
@@ -2018,8 +2053,8 @@
         </div>
       </div>
       <ol class="mobile-qr-steps" aria-label="使用步骤">
-        <li><span class="step-num">1</span>手机和这台电脑连同一个 WiFi</li>
-        <li><span class="step-num">2</span>用相机或浏览器扫码打开</li>
+        <li><span class="step-num">1</span>选择手机可访问的局域网、Tailscale 或公网地址</li>
+        <li><span class="step-num">2</span>用相机打开网页版，或在 App 设置中点「扫码连接」</li>
         <li><span class="step-num">3</span>「添加到主屏幕」，下次像 App 一样直接开</li>
       </ol>
       <p class="mobile-qr-hint" id="mobileQrHint" hidden></p>
@@ -2050,18 +2085,4 @@
     </svg>
     <span>顶部</span>
   </button>
-  <script src="/web/assets/js/mobile-qr.js" defer></script>
-  <script src="/web/assets/js/pending-actions.js" defer></script>
-  <script src="/web/assets/js/saved-sync-core.js" defer></script>
-  <!-- Frontend helpers shared with the extension side panel (and, for source
-       status, the setup wizard); served from /shared because /web is rooted at
-       web/desktop. -->
-  <script src="/shared/dialogue-confirmation.js" defer></script>
-  <script src="/shared/agent-chat.js" defer></script>
-  <script src="/shared/source-status.js" defer></script>
-  <script src="/shared/custom-sources.js" defer></script>
-  <script src="/shared/i18n.js" defer></script>
-  <script src="/web/assets/js/chat-agent-core.js" defer></script>
-  <script src="/web/assets/js/fish-settings.js" defer></script>
-  <script src="/web/assets/js/app.js" defer></script>
 </body></html>

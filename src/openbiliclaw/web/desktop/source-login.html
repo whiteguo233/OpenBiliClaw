@@ -18,13 +18,16 @@
 <script type="module">
 if(globalThis.OpenBiliClawI18n){let locale='zh-Hans';try{locale=localStorage.getItem('openbiliclaw.locale')||locale}catch{}void globalThis.OpenBiliClawI18n.init({locale,basePath:'/i18n/ui/'})}
 // Fixed destinations only: never accept an arbitrary return URL from the query.
-const mobile=location.pathname==='/m/desktop/source-login.html';
+const mobile=location.pathname.endsWith('/m/desktop/source-login.html');
+const suffix=mobile?'/m/desktop/source-login.html':'/web/source-login.html';
+const prefix=location.pathname.endsWith(suffix)?location.pathname.slice(0,-suffix.length):'';
+if(prefix.startsWith('//'))throw new Error('Invalid backend path');
 const returnLink=document.querySelector('#return-to-app');
-returnLink.href=mobile?'/m/#/chat':'/web/';
+returnLink.href=prefix+(mobile?'/m/#/chat':'/web/');
 returnLink.textContent=mobile?'返回手机对话':'返回 OpenBiliClaw';
 const draftId=new URLSearchParams(location.search).get('draft_id');
 const status=document.querySelector('#status'),screen=document.querySelector('#screen'),fields=document.querySelector('#fields');
-const base=`/api/custom-sources/drafts/${encodeURIComponent(draftId||'')}`;
+const base=`${prefix}/api/custom-sources/drafts/${encodeURIComponent(draftId||'')}`;
 const reopen=document.querySelector('#reopen');
 let lastImage='',busy=false,closed=!draftId,resumePending=false;
 const operations=[];

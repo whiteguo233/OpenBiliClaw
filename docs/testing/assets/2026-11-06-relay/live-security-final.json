@@ -1,0 +1,51 @@
+{
+  "real_upstream": true,
+  "synthetic_inputs_only": true,
+  "tests": [
+    {
+      "name": "published_rust_rejects_env_ca_mitm",
+      "ok": true,
+      "connections": 3,
+      "decrypted_bytes": 0,
+      "key_log_created": false
+    },
+    {
+      "name": "https_relay_embedding",
+      "model": "Qwen/Qwen3-8B",
+      "dimensions": 1024,
+      "ok": true,
+      "seconds": 0.42
+    },
+    {
+      "name": "https_relay_stream",
+      "model": "Qwen/Qwen3.5-4B",
+      "first_delta_seconds": 0.484,
+      "chunks": 3,
+      "usage": {
+        "prompt_tokens": 19,
+        "completion_tokens": 3,
+        "total_tokens": 22
+      },
+      "ok": true,
+      "seconds": 0.577
+    },
+    {
+      "name": "https_relay_stream",
+      "model": "Qwen/Qwen3-8B",
+      "first_delta_seconds": 0.591,
+      "chunks": 4,
+      "usage": {
+        "prompt_tokens": 20,
+        "completion_tokens": 4,
+        "total_tokens": 24
+      },
+      "ok": true,
+      "seconds": 0.75
+    }
+  ],
+  "production_relay_deployed": false,
+  "runtime_sha": "2414cb1f0d9ad084e1694d44da2911956dd8548f",
+  "mitm_error_type": "SponsoredUpstreamError",
+  "test_keychain_entry_removed": true,
+  "local_https_test_ca_only": true
+}

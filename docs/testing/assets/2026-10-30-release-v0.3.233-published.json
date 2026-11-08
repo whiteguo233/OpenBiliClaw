@@ -1,0 +1,176 @@
+{
+  "version": "0.3.233",
+  "release_commit": "8cf1e3f4d3a3356cd91890d4d25ac03f7db17972",
+  "tags": {
+    "backend-v0.3.233": "8cf1e3f4d3a3356cd91890d4d25ac03f7db17972",
+    "desktop-v0.3.233": "8cf1e3f4d3a3356cd91890d4d25ac03f7db17972",
+    "extension-v0.3.233": "8cf1e3f4d3a3356cd91890d4d25ac03f7db17972",
+    "openbiliclaw-v0.3.233": "8cf1e3f4d3a3356cd91890d4d25ac03f7db17972"
+  },
+  "aggregate_release": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.233",
+  "aggregate_is_latest": true,
+  "aggregate_assets": [
+    {
+      "name": "openbiliclaw-extension-v0.3.233-firefox.zip",
+      "bytes": 1575645,
+      "sha256": "5b3b2f80e9a9b706f890a70ab045fafe62a1e1683b18ee1095ca0726bbab0d69"
+    },
+    {
+      "name": "openbiliclaw-extension-v0.3.233-safari.dmg",
+      "bytes": 6619415,
+      "sha256": "ba562b16ec93534352db8aca864d37821d04a088d32ac802184a012ce1107805"
+    },
+    {
+      "name": "openbiliclaw-extension-v0.3.233.zip",
+      "bytes": 1693305,
+      "sha256": "20ceac7caba04cc2fe2f4a7d35ac9bd620a09d6fce489936621efb04b375625e"
+    },
+    {
+      "name": "OpenBiliClaw-macos-v0.3.233-arm64-with-embedding.dmg",
+      "bytes": 1316042395,
+      "sha256": "268bd9d690d5c26fb91eb8344c8e6d5419d2a4eb4546c5ae9631786da757e0ed"
+    },
+    {
+      "name": "OpenBiliClaw-macos-v0.3.233-arm64.dmg",
+      "bytes": 261390691,
+      "sha256": "8a785209ec855414adb73b43cbbb3cabdfcac0c0df6cbb81ff9d08b2197e0cd4"
+    },
+    {
+      "name": "OpenBiliClaw-windows-0.3.233-Setup.exe",
+      "bytes": 81587654,
+      "sha256": "eefdc15a739d45657e4f4412fa0c70bf9123d1ff7f44edf4e1b117879996c9a8"
+    },
+    {
+      "name": "OpenBiliClaw-windows-0.3.233-with-embedding-Setup.exe",
+      "bytes": 1095671926,
+      "sha256": "6063800340bbeb57447f28a1590fd8f205e54e5c1c40ae0b5eef67fc5f623cac"
+    }
+  ],
+  "extension_release": {
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.233",
+    "assets": [
+      {
+        "name": "openbiliclaw-extension-v0.3.233-firefox.zip",
+        "bytes": 1575645,
+        "sha256": "5b3b2f80e9a9b706f890a70ab045fafe62a1e1683b18ee1095ca0726bbab0d69"
+      },
+      {
+        "name": "openbiliclaw-extension-v0.3.233-safari.dmg",
+        "bytes": 6619415,
+        "sha256": "ba562b16ec93534352db8aca864d37821d04a088d32ac802184a012ce1107805"
+      },
+      {
+        "name": "openbiliclaw-extension-v0.3.233.zip",
+        "bytes": 1693305,
+        "sha256": "20ceac7caba04cc2fe2f4a7d35ac9bd620a09d6fce489936621efb04b375625e"
+      }
+    ]
+  },
+  "desktop_release": {
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/desktop-v0.3.233",
+    "prerelease": true,
+    "assets": [
+      {
+        "name": "OpenBiliClaw-macos-v0.3.233-arm64-with-embedding.dmg",
+        "bytes": 1316042395,
+        "sha256": "268bd9d690d5c26fb91eb8344c8e6d5419d2a4eb4546c5ae9631786da757e0ed"
+      },
+      {
+        "name": "OpenBiliClaw-macos-v0.3.233-arm64.dmg",
+        "bytes": 261390691,
+        "sha256": "8a785209ec855414adb73b43cbbb3cabdfcac0c0df6cbb81ff9d08b2197e0cd4"
+      },
+      {
+        "name": "OpenBiliClaw-windows-0.3.233-Setup.exe",
+        "bytes": 81587654,
+        "sha256": "eefdc15a739d45657e4f4412fa0c70bf9123d1ff7f44edf4e1b117879996c9a8"
+      },
+      {
+        "name": "OpenBiliClaw-windows-0.3.233-with-embedding-Setup.exe",
+        "bytes": 1095671926,
+        "sha256": "6063800340bbeb57447f28a1590fd8f205e54e5c1c40ae0b5eef67fc5f623cac"
+      }
+    ]
+  },
+  "docker": {
+    "images": {
+      "ghcr.io/whiteguo233/openbiliclaw-backend:0.3.233": {
+        "media_type": "application/vnd.oci.image.index.v1+json",
+        "manifests": {
+          "linux/amd64": "sha256:bbbba20f484781fa4f6aeb7635cf4553d9c14b997e6a2b026c9e5ec099457a6c",
+          "linux/arm64": "sha256:42cd51d73a103b7aa6001600283bb85891599b3712392aef589102a10deca2ad"
+        }
+      },
+      "ghcr.io/whiteguo233/openbiliclaw-ollama:0.3.233": {
+        "media_type": "application/vnd.oci.image.index.v1+json",
+        "manifests": {
+          "linux/amd64": "sha256:24c5acb18550dabf4b58cc166e56afd8b097151d005c8eb9ca02169e243146ee",
+          "linux/arm64": "sha256:8d487f99bdccce9e303fafcaf311cc209bb219a34e2c0024a365a2165ed7ba7f"
+        }
+      }
+    },
+    "verified_anonymously": true
+  },
+  "workflow_runs": {
+    "release_commit_ci": {
+      "id": 41021130565,
+      "conclusion": "success"
+    },
+    "backend_tag": {
+      "id": 41023734490,
+      "conclusion": "success"
+    },
+    "docker": {
+      "id": 41023734461,
+      "conclusion": "success"
+    },
+    "desktop": {
+      "id": 41023785752,
+      "conclusion": "success"
+    },
+    "extension": {
+      "id": 41023837692,
+      "conclusion": "success"
+    },
+    "release_completeness": {
+      "id": 41033401725,
+      "conclusion": "success",
+      "trigger": "workflow_dispatch"
+    }
+  },
+  "stores": {
+    "chrome_web_store": {
+      "workflow_run": 41083671263,
+      "conclusion": "success",
+      "crx_version": "0.3.233",
+      "upload_state": "SUCCEEDED",
+      "state": "PENDING_REVIEW",
+      "staged": false,
+      "replaced_pending_submission": false
+    },
+    "firefox_amo": {
+      "workflow_run": 41083702009,
+      "conclusion": "success",
+      "version": "0.3.233",
+      "channel": "listed",
+      "file_status": "unreviewed",
+      "addon_status": "public",
+      "review_url": "https://addons.mozilla.org/en-US/reviewers/review/3038353",
+      "privacy_policy_patch": "HTTP 406 warning retained (unchanged from 0.3.232)"
+    }
+  },
+  "mirrors": {
+    "gitee": {
+      "main": "8cf1e3f4d3a3356cd91890d4d25ac03f7db17972",
+      "tags": [
+        "backend-v0.3.233",
+        "desktop-v0.3.233",
+        "extension-v0.3.233",
+        "openbiliclaw-v0.3.233"
+      ]
+    },
+    "atomgit": "no remote or credentials configured; not pushed"
+  },
+  "remote_zip_download_verified": false,
+  "note": "Asset sizes and sha256 come from the GitHub API asset digest field; the release-assets download host timed out during the release window, so archives were not unpacked locally."
+}

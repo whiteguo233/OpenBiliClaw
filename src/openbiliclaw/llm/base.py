@@ -418,6 +418,7 @@ def describe_llm_failure(exc: BaseException) -> str | None:
     moderation = auth_failed = rate_limited = False
     timed_out = no_provider = empty_response = False
     ssl_failed = connect_failed = model_not_found = False
+    ollama_model_missing = False
     auth_error: LLMAuthError | None = None
     while current is not None and id(current) not in seen:
         seen.add(id(current))
@@ -428,6 +429,8 @@ def describe_llm_failure(exc: BaseException) -> str | None:
             "model" in message and "not found" in message
         ):
             model_not_found = True
+            if "ollama" in message:
+                ollama_model_missing = True
         if _is_auth_failure(current, message):
             auth_failed = True
             # First typed error along the chain. Wrappers (fallback / service)
@@ -473,11 +476,16 @@ def describe_llm_failure(exc: BaseException) -> str | None:
             "AI 服务上游因内容合规策略拒绝了本次请求；可更换一个不带内容审查的模型 / 服务商后重试。"
         )
     if model_not_found:
-        return (
-            "AI 服务找不到所配置的模型（HTTP 404）。本地 Ollama 模型可能尚未拉取"
-            "（先执行 `ollama pull <模型名>`），或模型名 / 访问权限填错。"
-            "请到设置页核对对话模型名称后重试。"
+        reason = (
+            "AI 服务找不到所配置的模型，或当前账号没有该模型的访问权限。"
+            "请到设置页核对所选 AI 服务、API 地址和对话模型名称，"
+            "确认服务端提供该模型且当前 API Key 有权使用后重试。"
         )
+        if ollama_model_missing:
+            reason += (
+                "Ollama 服务可能尚未安装该模型；请在运行该服务的机器上执行 `ollama pull <模型名>`。"
+            )
+        return reason
     if auth_failed:
         target = _auth_failure_target(auth_error)
         return (
@@ -534,6 +542,7 @@ class LLMResponse:
     usage: dict[str, int] | None = None  # token counts
     raw: Any = None  # Raw provider response
     tool_calls: list[dict[str, Any]] | None = None  # Phase 4: function calling
+    reasoning_content: str = ""  # Provider-required assistant history; never displayed.
 
 
 @dataclass

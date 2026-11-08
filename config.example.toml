@@ -23,17 +23,11 @@ host = "0.0.0.0"
 # 后端 API 监听端口。
 port = 8420
 
-# 局域网/远程访问的可选密码门禁。本机（127.0.0.1 直连）默认始终免登录。
+# 局域网/远程访问必须认证。可信本机（127.0.0.1 直连且同源）默认免登录。
 [api.auth]
-# 是否开启密码登录门禁。
-# 安全警告：enabled = false 且 host 绑定 0.0.0.0（默认组合）时，历史记录、画像、
-# 推荐和点赞/评论/关注等写接口对同一网络中的任何人完全开放（零鉴权）。
-# B 站凭据接口（/api/bilibili/auth/import|export|session）与设置写/探测接口
-# （PUT /api/config、/api/config/probe-service、/api/config/discover-models）
-# 不受此开关影响：它们始终要求本机访问或已登录会话，远程调用一律 403
-#（issue #299、#300）。
-# 只要端口可被局域网或公网访问，强烈建议设为 true 并用
-# `openbiliclaw set-password` 设置密码。
+# enabled=false 表示仅可信本机可以调用私有 API，不开放匿名远程访问。
+# 从手机、局域网或反向代理连接前，请先在本机设置页启用访问密码，
+# 或执行 `openbiliclaw set-password`；远程扩展还需单独配对设备密钥。
 enabled = false
 # 密码哈希（scrypt）。请勿手填明文；用 `openbiliclaw set-password` 或 init 设置。
 password_hash = ""
@@ -58,11 +52,85 @@ extension_access_keys = []
 # 扩展设备访问令牌有效期（小时），允许范围 1..168，默认 24。
 extension_token_ttl_hours = 24
 
+# 独立的 typed decision provider，不复用聊天或 embedding 凭据。
+# enabled 仅允许创建 client；实际请求由下面的导演/过滤独立路由控制。
+# Jev 连接与完整评估可在 Web/插件/移动设置页保存并后台应用。
+# 直接改 TOML 仍需完整重启；沿用环境变量时 Docker 须映射并重建容器。
+[decision.providers.jev]
+enabled = false
+model = "jev-1.13.0"
+# 自建/中转也必须兼容 Jev 原生协议，不是 Chat Completions。
+# 设置页支持 Base URL（自动补 /v1/systemone；已有 /v1 不重复）或完整接口。
+# TOML 始终保存解析后的完整 endpoint_url，例如 https://openrouter.ai/api/v1/systemone。
+endpoint_url = "https://api.typesafe.ai/v1/systemone"
+# 可在 Web/插件连接区保存本机 Token；留空则读取环境变量。不要提交真实值。
+api_key = ""
+api_key_env = "TYPESAFE_API_KEY"
+# 初始传输预算，并非实测 SLA。有限正秒数；max_attempts 包含首次请求。
+timeout_seconds = 2.0
+max_attempts = 2
+# 已知固定版本自动加载已确认容量；绝不自动换模型。未知模型须先登记双 token 上限。
+# 手工容量按精确模型 ID 隔离；切模型不会继承其他型号的容量。以下仅示意，勿照抄容量。
+# [decision.providers.jev.context_limits."your-exact-model-id"]
+# max_request_tokens = 64000
+# max_state_question_tokens = 32000
+
+[director]
+# 三种编排共用 off/shadow/enforce 灰度。shadow 记录导演提案、返回同 shortlist
+# 的确定性基线；不是旧 MMR 严格不干预，旧路径请用 off。
+mode = "off"
+strategy = "agent_jev" # jev_recurrent | agent_jev | agent_only
+decision_provider = "jev"
+planning_horizon_screens = 3
+plan_ttl_seconds = 300
+planning_budget_seconds = 20.0
+decision_budget_seconds = 8.0
+max_decision_calls = 10
+max_candidates = 40
+
+[discovery.semantic_filter]
+# 与导演独立。仅针对明确稳定避雷，探索候选保留；失败/证据不足 fail open。
+mode = "off"
+provider = "jev"
+# 初始 shadow 观察值，非校准结论。enforce 需要人工记录真实校准标签与固定模型。
+refusal_threshold = 1.0
+calibration_tag = ""
+calibration_model = ""
+max_candidates_per_cycle = 30
+max_calls_per_cycle = 1
+decision_budget_seconds = 2.0
+# embedding/Jev 不可同时 enforce。任一 shadow/learned 对照队列绕过双方拒绝。
+
+[discovery.jev_evaluation]
+# eval_scorer = "jev" 时替换完整候选评估，不隐式调用 LLM；原生仅文本。
+# 受控标签最多 254 项，每项最多 80 UTF-8 字节，不能重复。未识别主题/IP保留未知。
+# franchise_labels 为空时不识别新的 IP；可手动添加领域内规范名称。
+topic_labels = ["科技", "编程", "科学", "游戏", "影视", "音乐", "动漫", "生活", "美食", "旅行", "运动", "财经", "教育", "历史", "社会", "艺术", "其他"]
+franchise_labels = []
+# 工程 UTF-8 字节护栏，不是精确 token 计数；按完整候选拆批。
+# 超长单项先在本地选完整原文片段，必需信息仍超限则明确停放，输入上下文改变后再检查。
+# 0=按所选模型双上下文上限自适应；正数为额外更严上限，不得高于模型字节护栏。
+# jev-1.13.0 / 1.14.0 对应 32000/64000 bytes；旧配置的正值仍保留，不会静默放宽。
+# 工程字节上限取已确认 token 容量整数，不再额外预留 25%；不是精确 tokenizer。
+max_state_question_bytes = 0
+max_request_bytes = 0
+# 完整候选题组不拆开；整批超限时优先移到下一批。此处均为工程护栏。
+# 默认 64 是有界打包搜索上限，实际按双预算装批；不是官方题数限制或质量标定值。
+max_candidates_per_request = 64
+# 官方无独立题数上限；0=仅受双容量约束，正数至少 10（一套完整评估）。
+max_questions_per_request = 0
+# 单题 instructions/criteria 的 canonical JSON UTF-8 字节；0=仅受组合窗口约束。
+max_question_bytes = 0
+max_calls = 32
+budget_seconds = 30.0
+
 [llm]
 # v2：每个实例都是完整可调用端点（类型 + Base URL + 凭据 + 模型）。
 # default_chain 从左到右依次尝试；失败、超时或限流时降级到下一实例。
-# 可复制任意 [llm.instances.<id>] 表并换一个稳定 ID，从而配置同类型的多个账号/网关。
+# 可复制自有渠道的 [llm.instances.<id>] 表并换稳定 ID；内置免费实例不可复制或修改。
 routing_version = 2
+# 两个内置免费实例固定存在；不使用时从调用链移除，不能编辑或删除。
+builtin_providers_version = 2
 default_chain = ["deepseek"]
 # Shared max concurrency for LLM requests. Higher values replenish faster but
 # may hit provider/local-proxy rate limits sooner.
@@ -127,6 +195,21 @@ timeout = 1200
 #
 # default_chain = ["deepseek", "cheaperinference"]
 
+# 两个固定免费实例共用普通路由：将所需 ID 加入 default_chain / 模块链。
+# 下列配置由程序管理，不可编辑；可同时加入两个实例并调整顺序。
+[llm.instances.siliconflow-free]
+name = "硅基流动 · Qwen3-8B（免费）"
+provider_type = "siliconflow_free"
+enabled = true
+model = "Qwen/Qwen3-8B"
+# 无需 API Key / Base URL；凭据与端点由安全组件管理。
+
+[llm.instances.siliconflow-free-qwen35-4b]
+name = "硅基流动 · Qwen3.5-4B（免费）"
+provider_type = "siliconflow_free"
+enabled = true
+model = "Qwen/Qwen3.5-4B"
+
 [llm.instances.deepseek]
 name = "DeepSeek 官方"
 provider_type = "deepseek"
@@ -147,6 +230,7 @@ base_url = "https://api.deepseek.com"
 reasoning_effort = "medium"
 
 [llm.embedding]
+# 也可独立选 provider="siliconflow_free", model="BAAI/bge-m3", 1024 维；Key/URL 留空。
 # Embedding model for semantic similarity (topic dedup, fatigue, feedback)
 #
 # v0.3.32+ note: this section now owns its own ``api_key`` / ``base_url``.
@@ -220,6 +304,16 @@ cache_max_bytes = 0
 cache_high_watermark = 0.9
 # 淘汰停止水位（占用 / 预算 的比例，0..1，需 <= cache_high_watermark）
 cache_low_watermark = 0.7
+
+# 内置 Provider 的底层传输参数；实例选择和回退统一由 llm.instances / default_chain 管理。
+# 普通用户无需修改此段。旧 enabled/model/embedding_mode/回退字段只供升级兼容。
+[llm.sponsored]
+# 留空自动发现已验证的 Rust 组件。网页不能指定本机可执行文件。
+runtime_path = ""
+# 可选的已验证 HTTPS 中继；留空沿用发行版默认。
+relay_url = ""
+notify_on_fallback = true
+request_timeout_seconds = 180.0
 
 # Per-module routes. inherit=true 表示完整继承 [llm].default_chain；
 # 需要隔离质量/成本时改为 false，并按优先级填写实例 ID。
@@ -766,6 +860,7 @@ inspiration_search_enabled = true
 # mcporter 配置里有 `exa` 和 / 或 `you` server；填写 exa_api_key / you_api_key /
 # serply_api_key 后则直连 HTTP API。
 # 可选加入 "parallel"：匿名 Parallel Search MCP grounding，无需 API Key；默认链不变。
+# 可选加入 "keenable"：Keenable 搜索 API 匿名免费 grounding，无需 API Key；默认链不变。
 inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply"]
 # Exa / You.com / Serply 直连 API Key（可选）。填写后走 Python 直连 HTTP API，
 # 不再依赖本机 mcporter CLI；留空时回退到 mcporter（若已安装，Serply 无 mcporter
@@ -773,6 +868,8 @@ inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "e
 # Exa: https://exa.ai  →  x-api-key
 # You.com: https://you.com  →  x-api-key
 # Serply: https://serply.io（文档 https://serply.io/docs）→ X-Api-Key
+# Keenable 只使用免费匿名端点（https://api.keenable.ai/v1/search/public，
+#   带 X-Keenable-Title 标识调用方），没有 API Key 配置项。
 exa_api_key = ""
 you_api_key = ""
 serply_api_key = ""
@@ -796,6 +893,8 @@ candidate_eval_concurrency = 3
 eval_prefilter_mode = "shadow"
 # relevance 后端："llm"（默认，配置页显示为 Agent）；"shadow" 同跑 learned/LLM、以 LLM 为准并落审计；
 # "learned" 使用 learned relevance，但仍由 LLM 提供 temporal/topic/style/franchise 安全元数据。
+# "jev" 使用独立 Jev 完整评估，纯文本受控分类，不调用 LLM；须配置上方 provider/env。
+# Jev 不能与 multimodal_evaluation_enabled 或 semantic_filter 同开；模型换代须重做质量校准。
 # 两种校准模式都会绕过 normal eval cache，且把 prefilter enforce 当成 shadow；当前不减少 LLM 调用。
 eval_scorer = "llm"
 # 可选封面图评估。默认关闭；开启后 discovery evaluator 会在模型支持图像输入时

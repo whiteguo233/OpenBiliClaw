@@ -1,5 +1,9 @@
 # 蓝鱼实验室（`fish/`）
 
+插件接入修复（2026-10-23）：插件面板通过公共请求 helper 调用 `/api/fish/*`，修正重复 `/api/api/fish/*` 导致的 404。后端路由、账号隔离和默认禁用策略不变。
+
+扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
+
 > 状态：🧪 实验室功能，默认关闭，默认只预览不发布。
 > 设计说明与取舍见 [2026-10-19-blue-fish-lab-spec.md](../plans/2026-10-19-blue-fish-lab-spec.md)。
 
@@ -59,8 +63,8 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 登录有两种方式，两条路走同一个隔离校验：
 
 - **扫码**（推荐）：设置页点「扫码登录」，用鱼那个号的手机 B 站扫面板上的码。
-  后端调 `/x/passport-login/web/qrcode/generate` + `poll`，确认后从返回的跨域 URL 里
-  取出 Cookie 再走 `save_cookie` + `status`；确认时选「记住我 / 长期」，选 24 小时第二天就得重扫。
+  后端调 `/x/passport-login/web/qrcode/generate` + `poll`，确认后优先从本次响应的 `Set-Cookie` 里
+  取出 Cookie（兼容跨域 URL 参数回退），再走 `save_cookie` + `status`；确认时选「记住我 / 长期」，选 24 小时第二天就得重扫。
   二维码由后端用 `qrcode` 直接渲染成 SVG data URL（`fish/qr.py`），前端只设置 `<img src>`，
   不引第三方图片服务。
 - **粘贴 Cookie**：原来的方式，适合已经有 Cookie 串的场景。
@@ -237,7 +241,7 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 | PUT | `/api/fish/config` | 改配置，逐字段钳制，返回生效值 |
 | POST | `/api/fish/account` | 校验并保存鱼 cookie（与主号相同时拒绝并回滚） |
 | POST | `/api/fish/account/qrcode` | 生成扫码登录的二维码（返回 `qrcode_key` + SVG data URL，180 秒有效） |
-| GET | `/api/fish/account/qrcode/poll?qrcode_key=` | 轮询扫码状态；`confirmed` 时落 Cookie 并按隔离规则校验，失败回滚 |
+| GET | `/api/fish/account/qrcode/poll?qrcode_key=` | 轮询扫码状态；`confirmed` 时读取响应 Cookie（兼容 URL 回退）并按隔离规则校验，失败回滚 |
 | DELETE | `/api/fish/account` | 清除鱼 cookie |
 | POST | `/api/fish/run` | 跑一轮（`dry_run` 可覆盖配置） |
 | GET | `/api/fish/ledger?limit=50` | 读账本，最新在前 |

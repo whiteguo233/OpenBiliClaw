@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 import desktopCore from "../../src/openbiliclaw/web/desktop/assets/js/chat-agent-core.js";
 await import("../../src/openbiliclaw/web/shared/agent-chat.js");
-globalThis.location = { protocol: "http:", host: "test.local" };
+globalThis.location = new URL("http://test.local/m/");
 const mobile = await import("../../src/openbiliclaw/web/js/api.js");
 const popup = await import("../../extension/popup/popup-api.js");
 const desktopSource = readFileSync(new URL("../../src/openbiliclaw/web/desktop/assets/js/app.js", import.meta.url), "utf8");
@@ -27,6 +27,17 @@ function frame(type, data) {
 }
 
 for (const [surface, api] of [["mobile", mobile], ["popup", popup]]) {
+  test(`${surface}: a durable retry is distinguishable from a terminal error`, async () => {
+    const previous = globalThis.fetch;
+    globalThis.fetch = streamFetch([frame("error", { error: "正在后台重试", retrying: true })]);
+    try {
+      await assert.rejects(api.streamAgentChatTurn({ message: "你好" }), error => {
+        assert.equal(error.agentRetrying, true);
+        assert.equal(error.agentStreamError, true);
+        return true;
+      });
+    } finally { globalThis.fetch = previous; }
+  });
   test(`${surface}: EOF before done cannot report a completed agent turn`, async () => {
     const previous = globalThis.fetch;
     globalThis.fetch = streamFetch([frame("final", { text: "尚未持久化的答复" })]);

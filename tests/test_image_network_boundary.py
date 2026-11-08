@@ -223,6 +223,49 @@ class Stream(httpcore.AsyncNetworkStream):
 _IMAGE = b"HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\ndemo"
 
 
+async def test_repeated_covers_reuse_default_tls_context_but_revalidate_and_close_each_hop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    cached_factory = getattr(network, "_cached_default_ssl_context", None)
+    if cached_factory is not None:
+        cached_factory.cache_clear()
+    contexts: list[ssl.SSLContext] = []
+    original_factory = httpx.create_ssl_context
+    resolutions: list[str] = []
+    streams: list[Stream] = []
+
+    def create_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        context = original_factory(*args, **kwargs)
+        contexts.append(context)
+        return context
+
+    def resolve(host: str, *args: Any, **kwargs: Any) -> list[Any]:
+        resolutions.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
+
+    async def connect(_self: Any, host: str, port: int, **kwargs: Any) -> Stream:
+        assert (host, port) == ("1.1.1.1", 443)
+        stream = Stream([_IMAGE])
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(httpx, "create_ssl_context", create_context)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", connect)
+    for index in range(2):
+        assert await image_cache.fetch_cover_bytes(f"https://i0.hdslb.com/{index}.jpg") == (
+            b"demo",
+            "image/jpeg",
+        )
+    assert len(contexts) == 1
+    assert contexts[0].verify_mode == ssl.CERT_REQUIRED and contexts[0].check_hostname
+    assert resolutions == ["i0.hdslb.com", "i0.hdslb.com"]
+    assert len(streams) == 2
+    assert all(stream.closed and stream.names == ["i0.hdslb.com"] for stream in streams)
+
+
 @pytest.mark.parametrize(
     "proxy",
     [

@@ -1,6 +1,11 @@
 # 推荐导演：Jev 逐对编排、双速修正与纯 Agent 模式
 
-日期：2026-09-26。状态：**架构设计增补，尚未实现；不是已上线功能或可直接使用的配置**。
+日期：2026-09-26；集成更新：2026-10-22。状态：**三策略与独立过滤已接线并整合进 main，默认关闭；尚未发版，真实模型质量待实测**。
+
+实施状态：独立 Jev provider、三策略、原子屏提交／真实反馈及独立过滤已实现，详见
+[实施进度](2026-09-26-director-implementation-progress.md)、[决策模块](../modules/decision.md)
+与[运行时合同](../modules/director.md)。纯内核返回 tentative，应用运行时持有提交权。
+本文保留完整设计方向；当前 shadow 为同 shortlist 确定性 pair baseline，不等同旧 MMR 严格不干预实验；效果校准不是功能测试可证明的部分。
 
 本文落实用户的新要求：每次选择两张卡、逐对拼成一屏；支持 Jev 独立编排、Agent 预编排后由 Jev 局部修正、纯 Agent 预编排；Jev 同时是可供过滤使用的独立 provider。
 
@@ -435,7 +440,10 @@ provider = "jev"
 - `discovery/engine.py` 的既有 prefilter/evaluation 接线消费 FilterEvaluator；不把 Jev 特例散落到每个 source。
 - batch/presentation/feedback 身份桥先完成，避免在混合历史列表上假装拥有完整“屏”语义。
 
-本轮仅改设计文档与研究笔记。运行时代码、依赖、CLI、安装器和现行 config 未变，因此不把未实现方案写进已实现架构图或模块功能表。实现时按 CLAUDE.md 的 Documentation Requirements 同步所有受影响文档。
+本段配置和模块划分是完整方案草案，不是现行功能清单。后续已先行实现的独立 provider
+与配置见[实施进度](2026-09-26-director-implementation-progress.md)，未实现的导演和过滤
+路由不写成已交付能力。每个实施切片按 CLAUDE.md 的 Documentation Requirements 同步
+已实现架构图与模块、CLI、配置等受影响文档。
 
 ## 13. 分阶段实施与验收
 

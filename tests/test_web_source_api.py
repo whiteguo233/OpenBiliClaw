@@ -335,8 +335,10 @@ async def test_probe_web_source_fails_fast_at_two_concurrent_requests_and_recove
     )
     before = database.get_all_recipes()
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=sync_client.app),
-        base_url="http://testserver",
+        transport=httpx.ASGITransport(app=sync_client.app, client=("127.0.0.1", 50000)),
+        # Match the local TestClient origin; an untrusted synthetic Host is
+        # correctly rejected before reaching probe admission.
+        base_url=str(sync_client.base_url),
     ) as client:
         first = asyncio.create_task(
             client.post(

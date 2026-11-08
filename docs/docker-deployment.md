@@ -1,10 +1,31 @@
 # Docker 部署指南
 
+## 远程认证变更（2026-11-06）
+
+默认 `api.auth.enabled=false` 只开放可信本机私有 API。Docker bridge、局域网、HTTPS/反向代理通常属于远程访问，首次连接前须通过容器内 `openbiliclaw set-password` 或 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD` 配置密码；重启后登录。不能通过关闭密码来开放端口。详见[认证契约](modules/api-auth.md)。
+
+容器启动后，先在宿主机终端完成认证设置：
+
+```bash
+docker exec -it openbiliclaw-backend openbiliclaw set-password
+docker exec -it openbiliclaw-backend openbiliclaw ext-key generate
+docker exec -it openbiliclaw-backend openbiliclaw ext-key enable
+docker restart openbiliclaw-backend
+```
+
+Web 先打开 `http://127.0.0.1:8420/web/` 登录，再进入 `/setup/` 配置。扩展在设置页使用上面仅显示一次的设备密钥配对；它不是硅基流动的模型 Key。容器内 CLI 可直接管理配置。环境变量方式需要在 Compose 的 backend `environment` 或 `docker run -e` 显式传入，并重建容器，不能只在宿主机 export 而不传入容器。
+
+脚本安装等待扩展 Cookie 时，可在另一个终端完成这些步骤。再次执行 bootstrap 前，须将容器内最新的 `[api.auth]` 配置同步回宿主项目 `config.toml`（仍只保存在本机）；bootstrap 会把该文件同步到容器，避免旧配置覆盖新密码和设备密钥摘要。
+
+## 手机扫码连接（2026-10-26）
+
+桌面 Web / 插件「手机版」支持局域网、Tailscale、公网地址。Docker 用户应选手机可达的**宿主机地址与发布端口**，容器内部网卡 IP 无法保证被手机访问：可在「公网 / 自定义访问地址」输入 `http://<宿主机 LAN IP>:<发布端口>`，或现有 HTTPS 域名。浏览器扫码打开 `/m/`，新版 Android / iOS App「扫码连接」导入同一链接。镜像仍不内置 Tailnet helper；容器内也不保证能探测宿主机系统 Tailscale 地址，需要填写宿主机的 Tailscale URL 后生成二维码。扫码不改变 Docker 端口映射、代理或密码门禁。详见[手机扫码连接](mobile-connection.md)。
+
 > 向量 GPU → CPU 自动回退仅适用于后端进程可见的 loopback Ollama 端点。Compose 默认通过 `http://ollama:11434` 访问独立容器，不自动更改其执行模式；该容器仍按部署的 GPU/CPU 配置运行。
 
 [← 返回 README](../README.md)
 
-> 🔒 **局域网访问安全（可选密码门禁）**：容器把后端暴露在 `8420`，同网段设备都能访问。需要为局域网 / 远程设备加登录密码时（本机与浏览器扩展仍免登录），设置环境变量 `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…`（或进容器跑 `openbiliclaw set-password`）。若手动套其他反向代理，记得配 `[api.auth].trusted_proxies` 或让代理自行鉴权；仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见 [`docs/modules/api-auth.md`](modules/api-auth.md)。
+> 🔒 **容器访问需要认证**：容器的私有 API 只对可信本机免登录，映射端口后的宿主机浏览器通常也需要密码，扩展使用独立设备密钥。反向代理的鉴权不能代替应用密码；`trusted_proxies` 只配置可信转发解析。仓库自带的 Caddy HTTPS overlay 已把可信代理收紧到共享 loopback。详见上面的首次认证步骤与[认证契约](modules/api-auth.md)。
 
 > 🛜 **应用内 Tailnet 首版不属于 Docker 镜像能力**：macOS / Windows 桌面安装包会内置
 > `tsnet` helper，源码主机可用 Go 1.26.6 显式构建；当前 backend / prebuilt Docker 镜像不
@@ -12,11 +33,13 @@
 > 会继续运行，但远程入口会报告 helper 缺失。Docker 跨网络访问继续使用下文的 Caddy 公网
 > HTTPS overlay 或自管 TLS。完整边界见[应用内 Tailnet](modules/tailnet.md)。
 
+首次初始化先选语言：一键安装交互向导首先询问简体 / 繁体 / English；自动化可给 `scripts/agent_bootstrap.py` 传 `--language en`（或 `zh-Hans` / `zh-Hant`）。`/setup/` 页头也可保存语言；容器 CLI 可用 `docker exec -it openbiliclaw-backend openbiliclaw init --language zh-Hant`。不指定参数的非交互运行保留配置。安装日志与旧 CLI 提示尚未全部翻译。
+
 ## 前置条件
 
 - [Docker](https://docs.docker.com/get-docker/) 20.10+
 - [Docker Compose](https://docs.docker.com/compose/install/) V2（`docker compose` 命令）
-- 一个 LLM API Key（OpenAI / Claude / Gemini / DeepSeek / OpenRouter / OrcaRouter / Requesty）—— **Embedding 用 compose 自带的 Ollama 不再需要单独申请**
+- 在初始化页选择免费Qwen方案，或准备自有LLM API Key。免费方案同时提供云端BGE-M3文本向量；自有渠道可使用Compose附带的本地Ollama向量服务。
 
 ### 自带 Ollama embedding sidecar（bge-m3 已烤进镜像,离线开箱即用）
 
@@ -26,9 +49,9 @@
 - 源码构建路径(`docker-compose.yml`):`ollama` 服务用 `docker/ollama-bundled.Dockerfile` 本地构建(构建时联网拉一次 bge-m3 烤进镜像;之后运行离线)。
 - 万一烤好的种子缺失/损坏,healthcheck 会**明确报 unhealthy**(不静默降级);设 `OPENBILICLAW_OLLAMA_ALLOW_PULL=1` 可显式允许运行时联网补拉。
 
-后端容器首次启动时会自动把 `[llm.embedding] provider="ollama" model="bge-m3" base_url="http://ollama:11434/v1"` 写进生成的 `config.toml`,所以你**只需要给一个 chat 模型的 Key**,embedding 完全免费 + 离线可用。
+后端容器首次启动时会自动把 `[llm.embedding] provider="ollama" model="bge-m3" base_url="http://ollama:11434/v1"` 写进生成的 `config.toml`,供自有渠道使用本地向量；选择免费Qwen方案后，对话走硅基流动；向量默认云端BGE-M3，也可保留本地Ollama sidecar，无需填写共享Key。
 
-不需要这个 sidecar？删掉 `docker-compose.yml` 里 `ollama` 服务块和后端的 `OPENBILICLAW_SEED_OLLAMA_DEFAULTS` 环境变量即可。
+仅使用免费云端方案时，可以执行 `docker compose up -d --build --no-deps openbiliclaw-backend`，跳过Ollama sidecar；预构建方式使用 `docker compose -f docker-compose.prebuilt.yml up -d --no-deps openbiliclaw-backend`。已有向量配置会保留；选免费对话＋本地向量时也需要启动Ollama sidecar，不使用 `--no-deps`。
 
 ### 平台支持（v0.3.4+）
 
@@ -75,7 +98,7 @@ OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当
 
 ## 快速开始
 
-三种方式按省事程度排序。**无论选哪种，启动后端后都建议打开图形化引导页 `http://127.0.0.1:8420/setup/` 完成 AI 配置与前置检查**——它和桌面安装包是同一套向导：配置 LLM / embedding、选择初始化来源（B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub）、真实校验前置条件。Bangumi 与 GitHub 的公开 discovery 无需登录；两者只有填写公开用户名后才能提供对应收藏/starred 画像信号，GitHub PAT 仍为可选。微博公开 discovery 无需登录，但选择微博个人初始化必须让宿主机浏览器登录微博并保持扩展在线。
+三种方式按省事程度排序。**无论选哪种，启动后端后先完成上面的认证步骤，再打开图形化引导页 `http://127.0.0.1:8420/setup/` 完成 AI 配置与前置检查**——它和桌面安装包是同一套向导：配置 LLM / embedding、选择初始化来源（B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub）、真实校验前置条件。Bangumi 与 GitHub 的公开 discovery 无需登录；两者只有填写公开用户名后才能提供对应收藏/starred 画像信号，GitHub PAT 仍为可选。微博公开 discovery 无需登录，但选择微博个人初始化必须让宿主机浏览器登录微博并保持扩展在线。
 
 > ⚠️ **容器内「开始初始化」按钮不可用**：Docker 运行时后端会拒绝网页发起的图形化初始化（`unsupported_runtime`），向导页会直接给出替代命令。在 `/setup/` 完成配置和前置检查后，初始化本身在宿主机执行：
 >
@@ -132,11 +155,11 @@ $env:MODE="docker"; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliCl
 
 安装脚本会克隆 / 更新仓库，然后调用 `agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie`。bootstrap 的 Docker 顺序是：
 
-1. 在宿主机终端收集安装选择（LLM provider、embedding、B 站 Cookie 获取方式，以及小红书 / 抖音 / YouTube 初始化 opt-in；X / 知乎 / Reddit 请在 `/setup/` 引导页或后端设置页里开启）。Contract marker: human Docker one-line installer asks the same LLM provider first.
+1. 在宿主机终端收集安装选择（LLM provider、embedding、B 站 Cookie 获取方式，以及小红书 / 抖音 / YouTube 初始化 opt-in；X / 知乎 / Reddit 请在 `/setup/` 引导页或后端设置页里开启）。Contract marker: human Docker one-line installer asks language first, then the same LLM provider.
 2. 写入宿主机 `config.toml`。
 3. `docker compose up -d --build` 启动后端和 Ollama embedding sidecar。
 4. 把确认后的 `config.toml` / Cookie 文件同步到容器 `/app/runtime`。
-5. 等浏览器扩展把 B 站 Cookie 推到 `http://127.0.0.1:8420/api/bilibili/cookie`。
+5. 按首次认证步骤在容器设置密码和设备密钥，重启后配对扩展，再等待扩展把 B 站 Cookie 推到 `http://127.0.0.1:8420/api/bilibili/cookie`。
 6. 在容器运行时里按顺序检查全局 LLM 实例链，并单独检查 embedding 服务。
 7. 检查通过后自动运行 `openbiliclaw init`。
 
@@ -309,6 +332,43 @@ base_url = "https://relay.example.com/v1"
 > 当 `--provider openai` 显式给出但 `--llm-base-url` 未给（或选了官方），bootstrap 会清空它选中的 OpenAI 实例的旧 gateway URL，让 SDK 回到 `https://api.openai.com/v1`；其他实例和链顺序不受影响。旧配置文件仍按 `[llm.openai]` 兼容处理。
 
 **分模块链（可选）**：`[llm.routes.soul/discovery/recommendation/evaluation]` 默认 `inherit=true`；也可设 `inherit=false` 并提供有序 `chain`。典型用法是发现 / 评估优先便宜渠道，Soul 优先高质量渠道；自定义链耗尽后不会越界回到全局链。详见 [docs/modules/config.md](modules/config.md)。
+
+### 可选：Jev 决策与推荐导演
+
+模型仍由用户选择。`jev-1.13.0` 内置双容量登记；其它精确型号需在挂载的 TOML 中按
+`decision.providers.jev.context_limits."实际模型ID"` 填写核实后的两个 token 上限，完整
+重启后端生效，不自动换模型。评估字节护栏 0=auto，旧非零配置仍作额外收紧。
+画像按需加载无新依赖、数据迁移或安装步骤，详见[配置](modules/config.md#decisionprovidersjev)。
+
+导演三模式与独立语义过滤均默认关闭；它们使用现有依赖，无需安装 Jev SDK、模型
+或额外 sidecar。显式启用时，按[配置参考](modules/config.md#director)修改容器实际
+配置目录 `/app/runtime` 的 TOML，而不是宿主机未挂载的同名文件。`agent_only` 且
+过滤关闭时不需要 Jev；其余启用 Jev 的路由需独立凭据，不借用聊天 / embedding Key。
+
+宿主机的环境变量不会自动进入容器。在所用 Compose 文件的 backend 服务
+`environment` 中显式添加变量映射；以下只保存变量名，不保存 Key：
+
+```yaml
+services:
+  openbiliclaw-backend:
+    environment:
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?provide the Jev credential in the launch environment}
+```
+
+通过受控启动环境提供该变量；若 `api_key_env` 自定义，映射同名变量。不要输出 Key
+做校验，也不要提交包含秘密的 Compose / `.env` 文件。修改 TOML 或凭据后完整重建
+后端容器，使 API、推荐、发现进程一并重新启动；单纯刷新页面不生效，普通
+`docker compose restart` 也不会更新环境变量。源码 Compose 的命令为：
+
+```bash
+docker compose up -d --force-recreate openbiliclaw-backend
+```
+
+预构建部署使用同一命令并加 `-f docker-compose.prebuilt.yml`（放在 `up` 前）；保留
+原有 HTTPS 等 overlay。重建不会删除 named volumes。启动后检查日志与经过当前
+认证方式访问的 `GET /api/recommendations/director/status`；`config-show` 只验证配置
+展示，不会证明凭据可用或自动做付费探测。过滤先用 shadow；enforce 所需的模型固定
+与真实校准记录见配置参考，填一个标签本身不算质量验证。
 
 ## 日常命令
 
@@ -565,3 +625,21 @@ RSS / Atom / JSON Feed 不触发 Ego 准备，仍可通过 HTTP 建源、定期�
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
 macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行传输；逐段校验后才缓存，服务器忽略范围时回到单流。签名、系统信任及原生握手验证仍必须全部通过。Linux/Docker 的原生 Ego 支持范围未扩大。
+
+
+## 免费模型安装与切换
+
+初始化与原有 LLM 实例列表预填“硅基流动（免费）”，Embedding Provider 下拉也提供独立选项。桌面新安装在随包组件验证通过后默认启用8B和云端BGE-M3；已有配置保持用户选择。后端打包和Docker构建必须成功纳入当前平台固定的已签名SDK，缺失或版本不符会中止。更新应用时优先使用新包固定版本，旧active缓存不会遮住新凭据；源码安装仍可通过初始化页准备组件。
+
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件/PC模型设置把免费实例加入默认链或模块链；手机可选择主实例。模型在该实例中选择8B/4B，Embedding 在原下拉框独立选择，保存并等待应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+
+源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
+
+固定组件目录为 `sponsored-runtime-2026-11-06.2`（兼容 Core0.3.234）；本次实例统一改动尚需随应用发布，旧版应用不会因为 SDK 已发布自动获得新的统一入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+
+默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。
+
+
+### 免费中继发行模式
+
+默认兼容模式继续纳入固定验签的 Rust SDK。已部署并验收的官方中继地址写入发行默认后，安装包/镜像不携带上游 Key SDK，首次使用创建独立设备身份。手工配置 `llm.sponsored.relay_url` 仅改变调用路由，不会移除旧包中的凭据；生产迁移必须发布不含 Key 的包并由供应商撤销旧 Key。[部署顺序及限制](sponsored-relay.md)。

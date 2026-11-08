@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.231"
+version = "0.3.234"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,6 +26,8 @@ classifiers = [
 
 dependencies = [
     "httpx[socks]>=0.28,<1",
+    # Already installed by HTTPX; identify its CA bundle for image TLS reuse.
+    "certifi",
     # Public network-backend APIs pin Web and cover-image connections against DNS rebinding.
     "httpcore>=1.0,<2",
     "scrapetube>=2.1",
@@ -62,6 +64,7 @@ dependencies = [
     # Multiline chat input (issue #83): PromptSession with custom key bindings.
     "prompt_toolkit>=3.0",
     "pydantic>=2.0",
+    "cryptography>=41",
     "apscheduler>=3.10",
     "uvicorn>=0.32",
     # Include the driver for chat-created browser sources in every install mode;

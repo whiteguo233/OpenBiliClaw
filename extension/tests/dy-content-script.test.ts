@@ -1,11 +1,5 @@
 /**
- * Tests for the Douyin content-script entry's pure helpers.
- *
- * Task 4 completion (the gap I missed in the original commit). The
- * runScope orchestration touches window.scrollBy / setTimeout /
- * postMessage and isn't unit-testable here without elaborate DOM
- * mocks; the chrome-devtools MCP real-extension probe covers that
- * surface end-to-end.
+ * Tests for the Douyin content-script helpers and account API orchestration.
  *
  * Module isolation: zero imports from extension/src/content/xhs/.
  */
@@ -23,10 +17,309 @@ import {
   isDouyinSearchResultUrl,
   isSameWindowSameOriginDouyinMessage,
   isValidFeedExecuteMessage,
+  isValidHotExecuteMessage,
   isValidSearchExecuteMessage,
   isValidScopeExecuteMessage,
+  resolveHotSeedAwemeId,
+  runHot,
+  runScope,
   shouldReplayEarlyDiscoveryItems,
+  waitForCurrentVideoAwemeId,
 } from "../src/content/douyin.ts";
+import type { DouyinBootstrapItem, DouyinScope } from "../src/main/dy-fetch-tap.ts";
+import { installApiHarvester } from "../src/main/dy-fetch-tap.ts";
+
+function scopeMessage(scope: DouyinScope) {
+  return { task_id: "account-task", scope, max_items_per_scope: 1,
+    max_scroll_rounds: 5, max_stagnant_scroll_rounds: 2 };
+}
+
+function scopeItem(scope: DouyinScope): DouyinBootstrapItem {
+  return { scope, aweme_id: "owned-video", creator_sec_uid: "followed-creator",
+    title: "Account record", author: "Creator", author_sec_uid: "creator", cover_url: "",
+    url: "https://www.douyin.com/video/owned-video" };
+}
+
+for (const scope of ["dy_post", "dy_like", "dy_collect", "dy_follow"] as const) {
+  for (const kind of ["populated", "empty", "partial"] as const) {
+    test(`${scope} ${kind} API result never imports page recommendation cards`, async t => {
+      const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+      let domReads = 0;
+      Object.defineProperty(globalThis, "document", { configurable: true, value: {
+        querySelectorAll: () => {
+          domReads += 1;
+          throw new Error("Unrelated recommendation cards must not be harvested");
+        },
+      } });
+      t.after(() => {
+        if (previous) Object.defineProperty(globalThis, "document", previous);
+        else Reflect.deleteProperty(globalThis, "document");
+      });
+      const items = kind === "empty" ? [] : [scopeItem(scope)];
+      let apiCalls = 0;
+      const result = await runScope(scopeMessage(scope), {
+        navigate: async requestedScope => {
+          assert.equal(requestedScope, scope);
+          return { page_url: "https://www.douyin.com/user/self", profile_link_found: true, sub_tab_found: true };
+        },
+        prepare: async () => {},
+        identity: async () => ({ secUid: "MS4wSelf", source: "profile_self" }),
+        api: async (requestedScope, secUid, maxItems) => {
+          apiCalls += 1;
+          assert.deepEqual([requestedScope, secUid, maxItems], [scope, "MS4wSelf", 1]);
+          return { items, pages: 1, ...(kind === "partial" ? { error: "HTTP 429" } : {}) };
+        },
+      });
+      assert.equal(apiCalls, 1);
+      assert.equal(domReads, 0);
+      assert.deepEqual(result.items, items);
+      assert.equal(result.scope_count, items.length);
+      assert.equal(result.status, kind === "partial" ? "degraded" : kind === "empty" ? "empty" : "ok");
+      assert.equal(result.error, kind === "partial" ? "HTTP 429" : undefined);
+      assert.equal(result.debug?.api_items_harvested, items.length);
+      assert.equal(result.debug?.dom_items_harvested, 0);
+      assert.equal(result.debug?.sec_uid_source, "profile_self");
+    });
+  }
+}
+
+test("unavailable self identity degrades without reading account APIs or DOM", async () => {
+  const result = await runScope(scopeMessage("dy_collect"), {
+    navigate: async () => ({ page_url: "https://www.douyin.com/user/self", profile_link_found: true, sub_tab_found: true }),
+    prepare: async () => {},
+    identity: async () => ({ secUid: "", source: "", error: "identity_unavailable" }),
+    api: async () => { throw new Error("Account API requires self identity"); },
+  });
+  assert.deepEqual(result.items, []);
+  assert.equal(result.scope_count, 0);
+  assert.equal(result.status, "degraded");
+  assert.equal(result.error, "identity_unavailable");
+});
+
+test("a failed first API page stays degraded and empty", async () => {
+  const result = await runScope(scopeMessage("dy_like"), {
+    navigate: async () => ({ page_url: "https://www.douyin.com/user/self", profile_link_found: true, sub_tab_found: true }),
+    prepare: async () => {},
+    identity: async () => ({ secUid: "MS4wSelf", source: "profile_self" }),
+    api: async () => ({ items: [], pages: 0, error: "HTTP 404" }),
+  });
+  assert.equal(result.status, "degraded");
+  assert.equal(result.error, "HTTP 404");
+  assert.deepEqual(result.items, []);
+  assert.equal(result.scope_count, 0);
+});
+
+test("an unobserved API response cannot be reported as affirmative empty", async () => {
+  const result = await runScope(scopeMessage("dy_post"), {
+    navigate: async () => ({ page_url: "https://www.douyin.com/user/self", profile_link_found: true, sub_tab_found: true }),
+    prepare: async () => {},
+    identity: async () => ({ secUid: "MS4wSelf", source: "profile_self" }),
+    api: async () => ({ items: [], pages: 0 }),
+  });
+  assert.equal(result.status, "degraded");
+  assert.equal(result.error, "api_response_unobserved");
+  assert.deepEqual(result.items, []);
+});
+
+test("an API exception degrades without importing page observations", async () => {
+  const result = await runScope(scopeMessage("dy_like"), {
+    navigate: async () => ({ page_url: "https://www.douyin.com/user/self", profile_link_found: true, sub_tab_found: true }),
+    prepare: async () => {},
+    identity: async () => ({ secUid: "MS4wSelf", source: "profile_self" }),
+    api: async () => { throw new Error("Network unavailable"); },
+  });
+  assert.equal(result.status, "degraded");
+  assert.equal(result.error, "Network unavailable");
+  assert.deepEqual(result.items, []);
+});
+
+test("the default scope executor keeps a real bridge empty response authoritative", async t => {
+  const originals = ["window", "document", "location"].map(key => [
+    key, Object.getOwnPropertyDescriptor(globalThis, key),
+  ] as const);
+  t.after(() => {
+    for (const [key, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  const fetchPaths: string[] = [];
+  class FakeWindow extends EventTarget {
+    location = new URL("https://www.douyin.com/user/self");
+    fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input), this.location.origin);
+      fetchPaths.push(url.pathname);
+      assert.equal(init?.credentials, "include");
+      if (url.pathname === "/aweme/v1/web/user/profile/self/") {
+        assert.equal(url.searchParams.get("device_platform"), "webapp");
+        assert.equal(url.searchParams.get("aid"), "6383");
+        assert.equal(url.searchParams.get("channel"), "channel_pc_web");
+        assert.equal(url.searchParams.get("cookie_enabled"), "true");
+        return Response.json({ status_code: 0, user: { sec_uid: "MS4wSelf" } });
+      }
+      assert.equal(url.pathname, "/aweme/v1/web/aweme/post/");
+      return Response.json({ status_code: 0, has_more: false, aweme_list: [] });
+    };
+    postMessage(data: { type: string; requestId: string }): void {
+      const respond = (payload: unknown) => {
+        const event = new MessageEvent("message", { data: payload, origin: this.location.origin });
+        Object.defineProperty(event, "source", { value: this });
+        this.dispatchEvent(event);
+      };
+      queueMicrotask(() => {
+        if (data.type === "OPENBILICLAW_DOUYIN_API_REQUEST") {
+          // Recommendation traffic may arrive while the API request is pending.
+          respond({ type: "OPENBILICLAW_DOUYIN_AWEME_PAGE", scope: "dy_post",
+            items: [{ ...scopeItem("dy_post"), aweme_id: "unrelated-recommendation" }] });
+        }
+        respond(data);
+      });
+    }
+  }
+  const fakeWindow = new FakeWindow();
+  installApiHarvester(fakeWindow as unknown as Window);
+  const document = {
+    querySelector: () => null,
+    querySelectorAll: (selector: string) => {
+      assert.equal(selector.includes('/video/'), false, "must not scrape video cards");
+      return [];
+    },
+    getElementById: () => null,
+  };
+  for (const [key, value] of Object.entries({ window: fakeWindow, location: fakeWindow.location, document })) {
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  }
+  const result = await runScope(scopeMessage("dy_post"));
+  assert.equal(result.status, "empty");
+  assert.deepEqual(result.items, []);
+  assert.equal(result.scope_count, 0);
+  assert.equal(result.debug?.sec_uid_source, "profile_self");
+  assert.deepEqual(fetchPaths, ["/aweme/v1/web/user/profile/self/", "/aweme/v1/web/aweme/post/"]);
+});
+
+test("hot navigation resumes collection without resubmitting the board word", async () => {
+  await runHot({
+    task_id: "hot-navigation", sentence_id: "sentence", word: "热点", max_items: 12,
+    resume_after_navigation: true,
+  }, {
+    search: async input => {
+      assert.equal(input.resume_after_navigation, true);
+      return { task_id: input.task_id, keyword: input.keyword, items: [], scope_count: 0, status: "empty" };
+    },
+    related: async () => { throw new Error("word search must not use related"); },
+  });
+});
+
+test("the observed verification page stops hot collection before any upstream collector", async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { title: "验证码中间页" } });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  });
+  let upstreamCalls = 0;
+  const result = await runHot({ task_id: "challenge", sentence_id: "one", word: "热点", max_items: 12 }, {
+    search: async input => {
+      upstreamCalls += 1;
+      return { task_id: input.task_id, keyword: input.keyword, items: [], scope_count: 0, status: "empty" };
+    },
+    related: async () => { throw new Error("must stop before related too"); },
+  });
+  assert.equal(upstreamCalls, 0);
+  assert.equal(result.status, "failed");
+  assert.equal(result.error, "captcha_required");
+});
+
+test("positive partial videos cannot hide an explicit rate-limit response", () => {
+  assert.deepEqual(classifyDouyinDiscoveryCompletion({
+    source: "search", itemCount: 2, apiError: "HTTP 429",
+    uiTriggered: true, searchNavigationOk: true,
+  }), { status: "failed", error: "api_rate_limited" });
+});
+
+test("hot execution rejects a malformed navigation resume flag", () => {
+  assert.equal(isValidHotExecuteMessage({
+    task_id: "hot-navigation", sentence_id: "sentence", word: "热点", max_items: 12,
+    resume_after_navigation: "true",
+  }), false);
+});
+
+for (const status of ["ok", "failed"] as const) {
+  test(`hot-board words use the native search collector and preserve ${status}`, async () => {
+    const calls: string[] = [];
+    const msg = { task_id: "hot-task", sentence_id: "hot-sentence", word: "真实热点词", seed_aweme_id: "board-seed", max_items: 12 };
+    const result = await runHot(msg, {
+      search: async (input) => {
+        calls.push("search");
+        assert.equal(input.keyword, msg.word);
+        assert.equal(input.task_id, msg.task_id);
+        assert.equal(input.max_items, 12);
+        return {
+          task_id: input.task_id, keyword: input.keyword, status,
+          items: status === "ok" ? [{ scope: "dy_search", aweme_id: "news-video", title: "热点对应新闻" }] : [],
+          scope_count: status === "ok" ? 1 : 0,
+          ...(status === "failed" ? { error: "api_rate_limited" } : {}),
+        };
+      },
+      related: async (input) => {
+        calls.push("related");
+        return { task_id: input.task_id, sentence_id: input.sentence_id, word: input.word, status: "ok", items: [{ scope: "dy_hot", aweme_id: "unrelated-game", title: "其他游戏" }], scope_count: 1 };
+      },
+    });
+    assert.deepEqual(calls, ["search"]);
+    assert.equal(result.status, status);
+    assert.equal(result.scope_count, status === "ok" ? 1 : 0);
+    if (status === "ok") {
+      assert.deepEqual(result.items.map(i => [i.aweme_id, i.scope, i.sentence_id, i.hot_word]), [["news-video", "dy_hot", msg.sentence_id, msg.word]]);
+    } else {
+      assert.equal(result.error, "api_rate_limited");
+      assert.deepEqual(result.items, []);
+    }
+  });
+}
+
+test("hot without a word retains the seed-related collector", async () => {
+  const result = await runHot({ task_id: "hot-task", sentence_id: "hot-sentence", word: "", seed_aweme_id: "seed", max_items: 3 }, {
+    search: async () => { throw new Error("wordless task must not search"); },
+    related: async msg => ({ task_id: msg.task_id, sentence_id: msg.sentence_id, word: msg.word, items: [], scope_count: 0, status: "empty" }),
+  });
+  assert.equal(result.status, "empty");
+});
+
+test("hot without UI navigation uses its board seed without waiting for a video route", async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { href: "https://www.douyin.com/video/9999999999999999999" },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "location", previous);
+    else Reflect.deleteProperty(globalThis, "location");
+  });
+  assert.equal(await resolveHotSeedAwemeId(false, "7553058116880930083"), "7553058116880930083");
+  assert.equal(await resolveHotSeedAwemeId(false, ""), "");
+  assert.equal(await resolveHotSeedAwemeId(true, "7553058116880930083"), "9999999999999999999");
+});
+
+test("video route wait honors elapsed time when background timers are delayed", async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true, value: { href: "https://www.douyin.com/jingxuan" },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "location", previous);
+    else Reflect.deleteProperty(globalThis, "location");
+  });
+  let elapsed = 0;
+  t.mock.method(performance, "now", () => elapsed);
+  t.mock.method(globalThis, "setTimeout", (callback: () => void) => {
+    elapsed += 1_000;
+    queueMicrotask(callback);
+    return 0;
+  });
+  assert.equal(await waitForCurrentVideoAwemeId(2_000), "");
+  assert.ok(elapsed <= 3_000, `2s route wait used ${elapsed}ms with delayed timers`);
+});
 
 test("passive discovery buffer replays early items with dedupe, TTL, and a hard cap", () => {
   let now = 1_000;
@@ -56,14 +349,14 @@ test("passive discovery buffer replays early items with dedupe, TTL, and a hard 
   assert.deepEqual(buffer.drain("dy_feed"), { items: [], responsesObserved: 0 });
 });
 
-test("discovery completion keeps harvested items successful", () => {
+test("discovery completion keeps harvested items despite local capture failures", () => {
   assert.deepEqual(
     classifyDouyinDiscoveryCompletion({
       source: "search",
       itemCount: 1,
       injectStatus: "error: injection failed after DOM rendered",
       fetchTapInstallStatus: "unknown",
-      apiError: "HTTP 429",
+      apiError: "timeout",
       uiTriggered: false,
       searchNavigationOk: false,
     }),

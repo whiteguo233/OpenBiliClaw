@@ -5,6 +5,7 @@
 
 import {
   fetchRecommendations,
+  observeRecommendationPresentation,
   reshuffleRecommendations,
   appendRecommendations,
   fetchRuntimeStatus,
@@ -1186,6 +1187,7 @@ function renderCard(rawItem, index = 0) {
   const item = normalizeRecommendation(rawItem);
   const card = document.createElement("div");
   card.className = "card";
+  observeRecommendationPresentation(card, item);
   const url = buildContentUrl(item);
   const cardMedia = getRecommendationCardKind(item);
   if (cardMedia.kind === "text") card.classList.add("is-text-only");

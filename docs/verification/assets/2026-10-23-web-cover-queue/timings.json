@@ -1,0 +1,3287 @@
+{
+  "before": [
+    {
+      "i": 0,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1491,
+          "queue": 2,
+          "ttfb": 29,
+          "end": 1526,
+          "duration": 35
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1492,
+          "queue": 3,
+          "ttfb": 209,
+          "end": 1709,
+          "duration": 217
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1561,
+          "queue": 2,
+          "ttfb": 82,
+          "end": 1672,
+          "duration": 110
+        },
+        {
+          "path": "/api/ping",
+          "start": 1739,
+          "queue": 3,
+          "ttfb": 82,
+          "end": 1860,
+          "duration": 121
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1862,
+          "queue": 2,
+          "ttfb": 86,
+          "end": 1967,
+          "duration": 105
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1862,
+          "queue": 2,
+          "ttfb": 88,
+          "end": 1969,
+          "duration": 106
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1863,
+          "queue": 3,
+          "ttfb": 358,
+          "end": 2239,
+          "duration": 376
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1863,
+          "queue": 4,
+          "ttfb": 86,
+          "end": 1971,
+          "duration": 108
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1864,
+          "queue": 82,
+          "ttfb": 252,
+          "end": 2212,
+          "duration": 348
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 1866,
+          "queue": 106,
+          "ttfb": 361,
+          "end": 2344,
+          "duration": 478
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 1867,
+          "queue": 111,
+          "ttfb": 244,
+          "end": 2229,
+          "duration": 362
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 1868,
+          "queue": 345,
+          "ttfb": 117,
+          "end": 2335,
+          "duration": 468
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 1876,
+          "queue": 361,
+          "ttfb": 70,
+          "end": 2315,
+          "duration": 439
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 1877,
+          "queue": 363,
+          "ttfb": 71,
+          "end": 2315,
+          "duration": 439
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 1878,
+          "queue": 439,
+          "ttfb": 52,
+          "end": 2496,
+          "duration": 618
+        },
+        {
+          "path": "/api/config",
+          "start": 1879,
+          "queue": 438,
+          "ttfb": 373,
+          "end": 2695,
+          "duration": 816
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 1880,
+          "queue": 456,
+          "ttfb": 282,
+          "end": 2638,
+          "duration": 758
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 1881,
+          "queue": 463,
+          "ttfb": 288,
+          "end": 2639,
+          "duration": 758
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2224,
+          "queue": 273,
+          "ttfb": 144,
+          "end": 2665,
+          "duration": 441
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2225,
+          "queue": 414,
+          "ttfb": 67,
+          "end": 2720,
+          "duration": 495
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2228,
+          "queue": 412,
+          "ttfb": 69,
+          "end": 2721,
+          "duration": 494
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2229,
+          "queue": 437,
+          "ttfb": 59,
+          "end": 2732,
+          "duration": 503
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2238,
+          "queue": 457,
+          "ttfb": 58,
+          "end": 2758,
+          "duration": 520
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2239,
+          "queue": 483,
+          "ttfb": 47,
+          "end": 2782,
+          "duration": 543
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2242,
+          "queue": 480,
+          "ttfb": 56,
+          "end": 2782,
+          "duration": 541
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2243,
+          "queue": 490,
+          "ttfb": 54,
+          "end": 2793,
+          "duration": 550
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2245,
+          "queue": 514,
+          "ttfb": 52,
+          "end": 2815,
+          "duration": 570
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2246,
+          "queue": 537,
+          "ttfb": 43,
+          "end": 2837,
+          "duration": 591
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2248,
+          "queue": 535,
+          "ttfb": 43,
+          "end": 2838,
+          "duration": 590
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2249,
+          "queue": 544,
+          "ttfb": 51,
+          "end": 2851,
+          "duration": 602
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2251,
+          "queue": 564,
+          "ttfb": 55,
+          "end": 2876,
+          "duration": 624
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2252,
+          "queue": 587,
+          "ttfb": 91,
+          "end": 2937,
+          "duration": 685
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2254,
+          "queue": 585,
+          "ttfb": 91,
+          "end": 2938,
+          "duration": 684
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2255,
+          "queue": 596,
+          "ttfb": 105,
+          "end": 2971,
+          "duration": 715
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2256,
+          "queue": 620,
+          "ttfb": 1502,
+          "end": 4385,
+          "duration": 2128
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2257,
+          "queue": 682,
+          "ttfb": 1086,
+          "end": 4029,
+          "duration": 1772
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2257,
+          "queue": 682,
+          "ttfb": 1434,
+          "end": 4382,
+          "duration": 2125
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2257,
+          "queue": 714,
+          "ttfb": 1176,
+          "end": 4161,
+          "duration": 1904
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2259,
+          "queue": 1771,
+          "ttfb": 121,
+          "end": 4163,
+          "duration": 1905
+        },
+        {
+          "path": "/api/sources/credentials",
+          "start": 2763,
+          "queue": 1401,
+          "ttfb": 225,
+          "end": 4402,
+          "duration": 1639
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 2124,
+          "queue": 2,
+          "ttfb": 160,
+          "end": 2310,
+          "duration": 186
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 2125,
+          "queue": 2,
+          "ttfb": 420,
+          "end": 2553,
+          "duration": 427
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 2184,
+          "queue": 3,
+          "ttfb": 140,
+          "end": 2338,
+          "duration": 154
+        },
+        {
+          "path": "/api/ping",
+          "start": 2426,
+          "queue": 2,
+          "ttfb": 110,
+          "end": 2551,
+          "duration": 125
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 2557,
+          "queue": 2,
+          "ttfb": 147,
+          "end": 2722,
+          "duration": 166
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 2558,
+          "queue": 9,
+          "ttfb": 139,
+          "end": 2723,
+          "duration": 165
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2559,
+          "queue": 9,
+          "ttfb": 160,
+          "end": 2738,
+          "duration": 178
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 2568,
+          "queue": 2,
+          "ttfb": 138,
+          "end": 2725,
+          "duration": 157
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 2570,
+          "queue": 49,
+          "ttfb": 128,
+          "end": 2755,
+          "duration": 185
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 2574,
+          "queue": 152,
+          "ttfb": 182,
+          "end": 2914,
+          "duration": 340
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 2575,
+          "queue": 164,
+          "ttfb": 68,
+          "end": 2811,
+          "duration": 236
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 2576,
+          "queue": 180,
+          "ttfb": 149,
+          "end": 2912,
+          "duration": 336
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 2576,
+          "queue": 186,
+          "ttfb": 53,
+          "end": 2824,
+          "duration": 247
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2577,
+          "queue": 234,
+          "ttfb": 90,
+          "end": 2906,
+          "duration": 329
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2578,
+          "queue": 247,
+          "ttfb": 92,
+          "end": 2930,
+          "duration": 352
+        },
+        {
+          "path": "/api/config",
+          "start": 2578,
+          "queue": 328,
+          "ttfb": 235,
+          "end": 3148,
+          "duration": 569
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 2579,
+          "queue": 333,
+          "ttfb": 207,
+          "end": 3128,
+          "duration": 549
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 2580,
+          "queue": 335,
+          "ttfb": 201,
+          "end": 3126,
+          "duration": 546
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2730,
+          "queue": 200,
+          "ttfb": 160,
+          "end": 3093,
+          "duration": 363
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2731,
+          "queue": 362,
+          "ttfb": 55,
+          "end": 3156,
+          "duration": 424
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2734,
+          "queue": 393,
+          "ttfb": 52,
+          "end": 3184,
+          "duration": 450
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2735,
+          "queue": 394,
+          "ttfb": 54,
+          "end": 3187,
+          "duration": 451
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2737,
+          "queue": 411,
+          "ttfb": 42,
+          "end": 3203,
+          "duration": 465
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2738,
+          "queue": 418,
+          "ttfb": 47,
+          "end": 3212,
+          "duration": 474
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2747,
+          "queue": 438,
+          "ttfb": 49,
+          "end": 3240,
+          "duration": 493
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2749,
+          "queue": 439,
+          "ttfb": 51,
+          "end": 3242,
+          "duration": 493
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2751,
+          "queue": 452,
+          "ttfb": 42,
+          "end": 3258,
+          "duration": 507
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2752,
+          "queue": 461,
+          "ttfb": 46,
+          "end": 3268,
+          "duration": 516
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2754,
+          "queue": 486,
+          "ttfb": 52,
+          "end": 3299,
+          "duration": 544
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2755,
+          "queue": 487,
+          "ttfb": 55,
+          "end": 3301,
+          "duration": 546
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2758,
+          "queue": 501,
+          "ttfb": 47,
+          "end": 3309,
+          "duration": 551
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2759,
+          "queue": 510,
+          "ttfb": 42,
+          "end": 3324,
+          "duration": 565
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2761,
+          "queue": 539,
+          "ttfb": 66,
+          "end": 3382,
+          "duration": 621
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2762,
+          "queue": 540,
+          "ttfb": 69,
+          "end": 3418,
+          "duration": 656
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2763,
+          "queue": 547,
+          "ttfb": 162,
+          "end": 3477,
+          "duration": 714
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2763,
+          "queue": 562,
+          "ttfb": 149,
+          "end": 3483,
+          "duration": 720
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2763,
+          "queue": 619,
+          "ttfb": 165,
+          "end": 3576,
+          "duration": 813
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2763,
+          "queue": 656,
+          "ttfb": 116,
+          "end": 3570,
+          "duration": 806
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2764,
+          "queue": 713,
+          "ttfb": 54,
+          "end": 3560,
+          "duration": 795
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1868,
+          "queue": 3,
+          "ttfb": 118,
+          "end": 2011,
+          "duration": 143
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1870,
+          "queue": 4,
+          "ttfb": 236,
+          "end": 2149,
+          "duration": 278
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1930,
+          "queue": 3,
+          "ttfb": 142,
+          "end": 2077,
+          "duration": 146
+        },
+        {
+          "path": "/api/ping",
+          "start": 2148,
+          "queue": 9,
+          "ttfb": 152,
+          "end": 2311,
+          "duration": 162
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 2312,
+          "queue": 2,
+          "ttfb": 184,
+          "end": 2506,
+          "duration": 193
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 2313,
+          "queue": 2,
+          "ttfb": 184,
+          "end": 2507,
+          "duration": 194
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2314,
+          "queue": 2,
+          "ttfb": 238,
+          "end": 2560,
+          "duration": 246
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 2314,
+          "queue": 3,
+          "ttfb": 183,
+          "end": 2509,
+          "duration": 194
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 2315,
+          "queue": 128,
+          "ttfb": 178,
+          "end": 2627,
+          "duration": 312
+        },
+        {
+          "path": "/api/health",
+          "start": 2316,
+          "queue": 187,
+          "ttfb": 977,
+          "end": 3490,
+          "duration": 1175
+        },
+        {
+          "path": "/api/init-status",
+          "start": 2317,
+          "queue": 190,
+          "ttfb": 987,
+          "end": 3499,
+          "duration": 1182
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 2318,
+          "queue": 190,
+          "ttfb": 200,
+          "end": 2714,
+          "duration": 397
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 2323,
+          "queue": 186,
+          "ttfb": 135,
+          "end": 2648,
+          "duration": 325
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 2341,
+          "queue": 220,
+          "ttfb": 158,
+          "end": 2743,
+          "duration": 402
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 2345,
+          "queue": 283,
+          "ttfb": 48,
+          "end": 2678,
+          "duration": 333
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2347,
+          "queue": 302,
+          "ttfb": 35,
+          "end": 2690,
+          "duration": 342
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2348,
+          "queue": 330,
+          "ttfb": 35,
+          "end": 2716,
+          "duration": 368
+        },
+        {
+          "path": "/api/config",
+          "start": 2351,
+          "queue": 345,
+          "ttfb": 766,
+          "end": 3478,
+          "duration": 1126
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 2355,
+          "queue": 360,
+          "ttfb": 413,
+          "end": 3286,
+          "duration": 931
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 2356,
+          "queue": 361,
+          "ttfb": 409,
+          "end": 3285,
+          "duration": 929
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2616,
+          "queue": 127,
+          "ttfb": 172,
+          "end": 3130,
+          "duration": 514
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2618,
+          "queue": 512,
+          "ttfb": 379,
+          "end": 3522,
+          "duration": 904
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2621,
+          "queue": 666,
+          "ttfb": 233,
+          "end": 3528,
+          "duration": 908
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2624,
+          "queue": 664,
+          "ttfb": 234,
+          "end": 3530,
+          "duration": 906
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2627,
+          "queue": 851,
+          "ttfb": 72,
+          "end": 3570,
+          "duration": 942
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2628,
+          "queue": 863,
+          "ttfb": 80,
+          "end": 3583,
+          "duration": 955
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2678,
+          "queue": 822,
+          "ttfb": 87,
+          "end": 3601,
+          "duration": 923
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2680,
+          "queue": 843,
+          "ttfb": 84,
+          "end": 3635,
+          "duration": 955
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2686,
+          "queue": 843,
+          "ttfb": 91,
+          "end": 3644,
+          "duration": 958
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2688,
+          "queue": 843,
+          "ttfb": 100,
+          "end": 3645,
+          "duration": 958
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2738,
+          "queue": 833,
+          "ttfb": 99,
+          "end": 3688,
+          "duration": 950
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2739,
+          "queue": 845,
+          "ttfb": 108,
+          "end": 3703,
+          "duration": 964
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2741,
+          "queue": 860,
+          "ttfb": 105,
+          "end": 3719,
+          "duration": 978
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2742,
+          "queue": 894,
+          "ttfb": 86,
+          "end": 3737,
+          "duration": 994
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2745,
+          "queue": 901,
+          "ttfb": 85,
+          "end": 3753,
+          "duration": 1008
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2746,
+          "queue": 901,
+          "ttfb": 86,
+          "end": 3754,
+          "duration": 1008
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2747,
+          "queue": 941,
+          "ttfb": 158,
+          "end": 3915,
+          "duration": 1168
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2748,
+          "queue": 957,
+          "ttfb": 237,
+          "end": 3962,
+          "duration": 1214
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2748,
+          "queue": 972,
+          "ttfb": 228,
+          "end": 3971,
+          "duration": 1224
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2748,
+          "queue": 989,
+          "ttfb": 233,
+          "end": 3990,
+          "duration": 1242
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2749,
+          "queue": 1006,
+          "ttfb": 203,
+          "end": 3974,
+          "duration": 1225
+        }
+      ]
+    }
+  ],
+  "probe-status": [
+    {
+      "i": 0,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1955,
+          "queue": 77,
+          "ttfb": 43,
+          "end": 2086,
+          "duration": 132
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1956,
+          "queue": 79,
+          "ttfb": 206,
+          "end": 2246,
+          "duration": 291
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 2017,
+          "queue": 21,
+          "ttfb": 94,
+          "end": 2136,
+          "duration": 119
+        },
+        {
+          "path": "/api/ping",
+          "start": 2296,
+          "queue": 9,
+          "ttfb": 95,
+          "end": 2416,
+          "duration": 120
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 2419,
+          "queue": 44,
+          "ttfb": 334,
+          "end": 2813,
+          "duration": 394
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 2420,
+          "queue": 44,
+          "ttfb": 334,
+          "end": 2814,
+          "duration": 394
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2421,
+          "queue": 44,
+          "ttfb": 357,
+          "end": 2842,
+          "duration": 421
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 2422,
+          "queue": 45,
+          "ttfb": 340,
+          "end": 2816,
+          "duration": 395
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 2422,
+          "queue": 52,
+          "ttfb": 334,
+          "end": 2817,
+          "duration": 395
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 2425,
+          "queue": 391,
+          "ttfb": 188,
+          "end": 3016,
+          "duration": 592
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 2425,
+          "queue": 393,
+          "ttfb": 88,
+          "end": 2911,
+          "duration": 486
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 2426,
+          "queue": 392,
+          "ttfb": 152,
+          "end": 2985,
+          "duration": 559
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 2427,
+          "queue": 416,
+          "ttfb": 70,
+          "end": 2925,
+          "duration": 498
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2427,
+          "queue": 484,
+          "ttfb": 51,
+          "end": 2967,
+          "duration": 540
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2428,
+          "queue": 497,
+          "ttfb": 43,
+          "end": 2977,
+          "duration": 549
+        },
+        {
+          "path": "/api/config",
+          "start": 2429,
+          "queue": 539,
+          "ttfb": 261,
+          "end": 3235,
+          "duration": 806
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 2430,
+          "queue": 547,
+          "ttfb": 199,
+          "end": 3181,
+          "duration": 752
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 2431,
+          "queue": 555,
+          "ttfb": 192,
+          "end": 3182,
+          "duration": 751
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2838,
+          "queue": 0,
+          "ttfb": 71,
+          "end": 2909,
+          "duration": 71
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2839,
+          "queue": 0,
+          "ttfb": 77,
+          "end": 2917,
+          "duration": 77
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2842,
+          "queue": 0,
+          "ttfb": 76,
+          "end": 2918,
+          "duration": 76
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2843,
+          "queue": 0,
+          "ttfb": 82,
+          "end": 2925,
+          "duration": 82
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2845,
+          "queue": 0,
+          "ttfb": 81,
+          "end": 2926,
+          "duration": 81
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2846,
+          "queue": 0,
+          "ttfb": 102,
+          "end": 2948,
+          "duration": 102
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2848,
+          "queue": 0,
+          "ttfb": 108,
+          "end": 2957,
+          "duration": 108
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2849,
+          "queue": 0,
+          "ttfb": 109,
+          "end": 2958,
+          "duration": 109
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2851,
+          "queue": 0,
+          "ttfb": 108,
+          "end": 2959,
+          "duration": 108
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2852,
+          "queue": 0,
+          "ttfb": 108,
+          "end": 2960,
+          "duration": 108
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2855,
+          "queue": 0,
+          "ttfb": 106,
+          "end": 2961,
+          "duration": 106
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2856,
+          "queue": 0,
+          "ttfb": 106,
+          "end": 2961,
+          "duration": 106
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2865,
+          "queue": 0,
+          "ttfb": 98,
+          "end": 2962,
+          "duration": 98
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2867,
+          "queue": 0,
+          "ttfb": 96,
+          "end": 2963,
+          "duration": 96
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2869,
+          "queue": 0,
+          "ttfb": 120,
+          "end": 2989,
+          "duration": 120
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2870,
+          "queue": 0,
+          "ttfb": 120,
+          "end": 2990,
+          "duration": 120
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2871,
+          "queue": 146,
+          "ttfb": 202,
+          "end": 3233,
+          "duration": 362
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2871,
+          "queue": 311,
+          "ttfb": 117,
+          "end": 3365,
+          "duration": 494
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2872,
+          "queue": 311,
+          "ttfb": 111,
+          "end": 3323,
+          "duration": 451
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2873,
+          "queue": 361,
+          "ttfb": 149,
+          "end": 3410,
+          "duration": 537
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2874,
+          "queue": 362,
+          "ttfb": 62,
+          "end": 3361,
+          "duration": 487
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1883,
+          "queue": 62,
+          "ttfb": 62,
+          "end": 2026,
+          "duration": 143
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1884,
+          "queue": 66,
+          "ttfb": 264,
+          "end": 2264,
+          "duration": 380
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1938,
+          "queue": 25,
+          "ttfb": 77,
+          "end": 2059,
+          "duration": 122
+        },
+        {
+          "path": "/api/ping",
+          "start": 2145,
+          "queue": 7,
+          "ttfb": 64,
+          "end": 2266,
+          "duration": 121
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 2269,
+          "queue": 53,
+          "ttfb": 96,
+          "end": 2425,
+          "duration": 156
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 2270,
+          "queue": 54,
+          "ttfb": 95,
+          "end": 2426,
+          "duration": 156
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2271,
+          "queue": 54,
+          "ttfb": 106,
+          "end": 2450,
+          "duration": 179
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 2272,
+          "queue": 57,
+          "ttfb": 93,
+          "end": 2429,
+          "duration": 157
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 2273,
+          "queue": 57,
+          "ttfb": 99,
+          "end": 2442,
+          "duration": 170
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 2275,
+          "queue": 153,
+          "ttfb": 388,
+          "end": 2836,
+          "duration": 562
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 2276,
+          "queue": 154,
+          "ttfb": 64,
+          "end": 2504,
+          "duration": 229
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 2276,
+          "queue": 167,
+          "ttfb": 157,
+          "end": 2607,
+          "duration": 330
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 2277,
+          "queue": 173,
+          "ttfb": 56,
+          "end": 2512,
+          "duration": 235
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2278,
+          "queue": 227,
+          "ttfb": 46,
+          "end": 2561,
+          "duration": 283
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2278,
+          "queue": 234,
+          "ttfb": 51,
+          "end": 2571,
+          "duration": 293
+        },
+        {
+          "path": "/api/config",
+          "start": 2279,
+          "queue": 283,
+          "ttfb": 241,
+          "end": 2811,
+          "duration": 532
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 2280,
+          "queue": 292,
+          "ttfb": 237,
+          "end": 2817,
+          "duration": 537
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 2281,
+          "queue": 327,
+          "ttfb": 177,
+          "end": 2792,
+          "duration": 511
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2521,
+          "queue": 0,
+          "ttfb": 133,
+          "end": 2654,
+          "duration": 133
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2522,
+          "queue": 0,
+          "ttfb": 133,
+          "end": 2656,
+          "duration": 133
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2532,
+          "queue": 0,
+          "ttfb": 124,
+          "end": 2656,
+          "duration": 124
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2533,
+          "queue": 0,
+          "ttfb": 124,
+          "end": 2657,
+          "duration": 124
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2536,
+          "queue": 0,
+          "ttfb": 123,
+          "end": 2659,
+          "duration": 123
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2537,
+          "queue": 0,
+          "ttfb": 123,
+          "end": 2660,
+          "duration": 123
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2539,
+          "queue": 0,
+          "ttfb": 123,
+          "end": 2662,
+          "duration": 123
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2540,
+          "queue": 0,
+          "ttfb": 124,
+          "end": 2664,
+          "duration": 124
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2543,
+          "queue": 0,
+          "ttfb": 122,
+          "end": 2665,
+          "duration": 122
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2544,
+          "queue": 0,
+          "ttfb": 122,
+          "end": 2666,
+          "duration": 122
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2546,
+          "queue": 0,
+          "ttfb": 122,
+          "end": 2668,
+          "duration": 122
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2547,
+          "queue": 0,
+          "ttfb": 121,
+          "end": 2669,
+          "duration": 121
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2550,
+          "queue": 0,
+          "ttfb": 122,
+          "end": 2672,
+          "duration": 122
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2551,
+          "queue": 0,
+          "ttfb": 122,
+          "end": 2673,
+          "duration": 122
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2553,
+          "queue": 0,
+          "ttfb": 120,
+          "end": 2673,
+          "duration": 120
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2561,
+          "queue": 0,
+          "ttfb": 119,
+          "end": 2681,
+          "duration": 119
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2562,
+          "queue": 230,
+          "ttfb": 136,
+          "end": 2935,
+          "duration": 373
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2563,
+          "queue": 249,
+          "ttfb": 119,
+          "end": 2939,
+          "duration": 376
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2563,
+          "queue": 255,
+          "ttfb": 116,
+          "end": 2943,
+          "duration": 380
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2563,
+          "queue": 274,
+          "ttfb": 95,
+          "end": 2942,
+          "duration": 379
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2683,
+          "queue": 269,
+          "ttfb": 80,
+          "end": 3057,
+          "duration": 374
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2684,
+          "queue": 272,
+          "ttfb": 79,
+          "end": 3064,
+          "duration": 380
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 2152,
+          "queue": 65,
+          "ttfb": 85,
+          "end": 2331,
+          "duration": 179
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 2154,
+          "queue": 66,
+          "ttfb": 247,
+          "end": 2483,
+          "duration": 329
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 2207,
+          "queue": 18,
+          "ttfb": 112,
+          "end": 2363,
+          "duration": 156
+        },
+        {
+          "path": "/api/ping",
+          "start": 2420,
+          "queue": 7,
+          "ttfb": 126,
+          "end": 2606,
+          "duration": 185
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 2609,
+          "queue": 51,
+          "ttfb": 126,
+          "end": 2792,
+          "duration": 182
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 2610,
+          "queue": 52,
+          "ttfb": 128,
+          "end": 2805,
+          "duration": 195
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2611,
+          "queue": 52,
+          "ttfb": 203,
+          "end": 2885,
+          "duration": 274
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 2612,
+          "queue": 52,
+          "ttfb": 130,
+          "end": 2813,
+          "duration": 202
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 2612,
+          "queue": 52,
+          "ttfb": 144,
+          "end": 2824,
+          "duration": 211
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 2615,
+          "queue": 191,
+          "ttfb": 111,
+          "end": 2929,
+          "duration": 314
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 2615,
+          "queue": 199,
+          "ttfb": 87,
+          "end": 2905,
+          "duration": 290
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 2616,
+          "queue": 208,
+          "ttfb": 110,
+          "end": 2938,
+          "duration": 322
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 2617,
+          "queue": 269,
+          "ttfb": 44,
+          "end": 2935,
+          "duration": 318
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2625,
+          "queue": 281,
+          "ttfb": 38,
+          "end": 2961,
+          "duration": 336
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2626,
+          "queue": 304,
+          "ttfb": 57,
+          "end": 3152,
+          "duration": 526
+        },
+        {
+          "path": "/api/config",
+          "start": 2627,
+          "queue": 308,
+          "ttfb": 274,
+          "end": 3212,
+          "duration": 585
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 2628,
+          "queue": 311,
+          "ttfb": 246,
+          "end": 3202,
+          "duration": 574
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 2629,
+          "queue": 333,
+          "ttfb": 265,
+          "end": 3240,
+          "duration": 611
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2816,
+          "queue": 0,
+          "ttfb": 188,
+          "end": 3003,
+          "duration": 188
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2818,
+          "queue": 0,
+          "ttfb": 186,
+          "end": 3004,
+          "duration": 186
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2821,
+          "queue": 0,
+          "ttfb": 198,
+          "end": 3019,
+          "duration": 198
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2822,
+          "queue": 0,
+          "ttfb": 198,
+          "end": 3020,
+          "duration": 198
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2825,
+          "queue": 0,
+          "ttfb": 196,
+          "end": 3020,
+          "duration": 196
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2835,
+          "queue": 0,
+          "ttfb": 187,
+          "end": 3022,
+          "duration": 187
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2843,
+          "queue": 0,
+          "ttfb": 179,
+          "end": 3023,
+          "duration": 179
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2850,
+          "queue": 0,
+          "ttfb": 173,
+          "end": 3024,
+          "duration": 173
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2856,
+          "queue": 0,
+          "ttfb": 169,
+          "end": 3025,
+          "duration": 169
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2857,
+          "queue": 0,
+          "ttfb": 238,
+          "end": 3095,
+          "duration": 238
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2910,
+          "queue": 0,
+          "ttfb": 187,
+          "end": 3097,
+          "duration": 187
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2912,
+          "queue": 0,
+          "ttfb": 194,
+          "end": 3105,
+          "duration": 194
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2915,
+          "queue": 0,
+          "ttfb": 192,
+          "end": 3107,
+          "duration": 192
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2916,
+          "queue": 0,
+          "ttfb": 191,
+          "end": 3107,
+          "duration": 191
+        },
+        {
+          "path": "/api/saved/watch_later/status",
+          "start": 2926,
+          "queue": 0,
+          "ttfb": 183,
+          "end": 3109,
+          "duration": 183
+        },
+        {
+          "path": "/api/saved/favorite/status",
+          "start": 2928,
+          "queue": 0,
+          "ttfb": 183,
+          "end": 3111,
+          "duration": 183
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2928,
+          "queue": 224,
+          "ttfb": 147,
+          "end": 3352,
+          "duration": 424
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2929,
+          "queue": 274,
+          "ttfb": 158,
+          "end": 3367,
+          "duration": 438
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2930,
+          "queue": 283,
+          "ttfb": 178,
+          "end": 3397,
+          "duration": 467
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2930,
+          "queue": 311,
+          "ttfb": 172,
+          "end": 3421,
+          "duration": 491
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2970,
+          "queue": 383,
+          "ttfb": 58,
+          "end": 3417,
+          "duration": 447
+        }
+      ]
+    }
+  ],
+  "after": [
+    {
+      "i": 0,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1526,
+          "queue": 6,
+          "ttfb": 66,
+          "end": 1600,
+          "duration": 75
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1532,
+          "queue": 3,
+          "ttfb": 318,
+          "end": 1857,
+          "duration": 325
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1607,
+          "queue": 4,
+          "ttfb": 109,
+          "end": 1751,
+          "duration": 144
+        },
+        {
+          "path": "/api/ping",
+          "start": 1838,
+          "queue": 2,
+          "ttfb": 74,
+          "end": 1946,
+          "duration": 108
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1953,
+          "queue": 2,
+          "ttfb": 211,
+          "end": 2175,
+          "duration": 222
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1954,
+          "queue": 3,
+          "ttfb": 211,
+          "end": 2175,
+          "duration": 221
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1955,
+          "queue": 2,
+          "ttfb": 618,
+          "end": 2589,
+          "duration": 634
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1958,
+          "queue": 1,
+          "ttfb": 210,
+          "end": 2180,
+          "duration": 222
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1960,
+          "queue": 2,
+          "ttfb": 211,
+          "end": 2442,
+          "duration": 483
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 1962,
+          "queue": 215,
+          "ttfb": 546,
+          "end": 2735,
+          "duration": 774
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 1963,
+          "queue": 218,
+          "ttfb": 418,
+          "end": 2606,
+          "duration": 644
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 1963,
+          "queue": 480,
+          "ttfb": 214,
+          "end": 2664,
+          "duration": 700
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 1964,
+          "queue": 626,
+          "ttfb": 55,
+          "end": 2658,
+          "duration": 694
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 1965,
+          "queue": 642,
+          "ttfb": 68,
+          "end": 2687,
+          "duration": 722
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 1965,
+          "queue": 694,
+          "ttfb": 78,
+          "end": 2755,
+          "duration": 789
+        },
+        {
+          "path": "/api/config",
+          "start": 1967,
+          "queue": 698,
+          "ttfb": 235,
+          "end": 2905,
+          "duration": 938
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 1968,
+          "queue": 720,
+          "ttfb": 200,
+          "end": 2898,
+          "duration": 930
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 1969,
+          "queue": 768,
+          "ttfb": 184,
+          "end": 2927,
+          "duration": 958
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2349,
+          "queue": 406,
+          "ttfb": 160,
+          "end": 2923,
+          "duration": 573
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2350,
+          "queue": 549,
+          "ttfb": 108,
+          "end": 3017,
+          "duration": 667
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2351,
+          "queue": 555,
+          "ttfb": 106,
+          "end": 3039,
+          "duration": 688
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2353,
+          "queue": 571,
+          "ttfb": 90,
+          "end": 3039,
+          "duration": 687
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2363,
+          "queue": 565,
+          "ttfb": 41,
+          "end": 2990,
+          "duration": 627
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1654,
+          "queue": 10,
+          "ttfb": 47,
+          "end": 1736,
+          "duration": 82
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1655,
+          "queue": 9,
+          "ttfb": 306,
+          "end": 1976,
+          "duration": 321
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1713,
+          "queue": 2,
+          "ttfb": 57,
+          "end": 1797,
+          "duration": 84
+        },
+        {
+          "path": "/api/ping",
+          "start": 1802,
+          "queue": 2,
+          "ttfb": 109,
+          "end": 1955,
+          "duration": 153
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1964,
+          "queue": 2,
+          "ttfb": 157,
+          "end": 2134,
+          "duration": 170
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1965,
+          "queue": 3,
+          "ttfb": 162,
+          "end": 2146,
+          "duration": 181
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1966,
+          "queue": 3,
+          "ttfb": 196,
+          "end": 2186,
+          "duration": 220
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1968,
+          "queue": 9,
+          "ttfb": 167,
+          "end": 2157,
+          "duration": 189
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1970,
+          "queue": 164,
+          "ttfb": 111,
+          "end": 2252,
+          "duration": 282
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 1978,
+          "queue": 179,
+          "ttfb": 229,
+          "end": 2402,
+          "duration": 423
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 1980,
+          "queue": 206,
+          "ttfb": 83,
+          "end": 2285,
+          "duration": 305
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 1982,
+          "queue": 261,
+          "ttfb": 83,
+          "end": 2334,
+          "duration": 353
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 1983,
+          "queue": 270,
+          "ttfb": 51,
+          "end": 2312,
+          "duration": 329
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 1985,
+          "queue": 300,
+          "ttfb": 43,
+          "end": 2339,
+          "duration": 354
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 1994,
+          "queue": 319,
+          "ttfb": 57,
+          "end": 2373,
+          "duration": 379
+        },
+        {
+          "path": "/api/config",
+          "start": 1995,
+          "queue": 340,
+          "ttfb": 264,
+          "end": 2606,
+          "duration": 611
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 1996,
+          "queue": 344,
+          "ttfb": 207,
+          "end": 2550,
+          "duration": 554
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 1997,
+          "queue": 377,
+          "ttfb": 196,
+          "end": 2582,
+          "duration": 585
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2160,
+          "queue": 242,
+          "ttfb": 154,
+          "end": 2573,
+          "duration": 413
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2161,
+          "queue": 390,
+          "ttfb": 93,
+          "end": 2673,
+          "duration": 512
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2161,
+          "queue": 413,
+          "ttfb": 115,
+          "end": 2715,
+          "duration": 554
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2162,
+          "queue": 422,
+          "ttfb": 103,
+          "end": 2715,
+          "duration": 553
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2163,
+          "queue": 445,
+          "ttfb": 38,
+          "end": 2672,
+          "duration": 510
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1823,
+          "queue": 10,
+          "ttfb": 47,
+          "end": 1900,
+          "duration": 77
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1825,
+          "queue": 9,
+          "ttfb": 216,
+          "end": 2058,
+          "duration": 233
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1893,
+          "queue": 4,
+          "ttfb": 91,
+          "end": 2003,
+          "duration": 110
+        },
+        {
+          "path": "/api/ping",
+          "start": 2051,
+          "queue": 2,
+          "ttfb": 114,
+          "end": 2171,
+          "duration": 119
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 2174,
+          "queue": 3,
+          "ttfb": 228,
+          "end": 2413,
+          "duration": 239
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 2176,
+          "queue": 2,
+          "ttfb": 230,
+          "end": 2419,
+          "duration": 243
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2177,
+          "queue": 2,
+          "ttfb": 287,
+          "end": 2477,
+          "duration": 300
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 2178,
+          "queue": 3,
+          "ttfb": 230,
+          "end": 2423,
+          "duration": 245
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 2179,
+          "queue": 108,
+          "ttfb": 163,
+          "end": 2464,
+          "duration": 285
+        },
+        {
+          "path": "/api/activity-feed",
+          "start": 2183,
+          "queue": 239,
+          "ttfb": 153,
+          "end": 2591,
+          "duration": 409
+        },
+        {
+          "path": "/api/profile-summary",
+          "start": 2183,
+          "queue": 240,
+          "ttfb": 76,
+          "end": 2532,
+          "duration": 349
+        },
+        {
+          "path": "/api/delight/pending-batch",
+          "start": 2185,
+          "queue": 280,
+          "ttfb": 133,
+          "end": 2602,
+          "duration": 417
+        },
+        {
+          "path": "/api/notifications/pending",
+          "start": 2193,
+          "queue": 285,
+          "ttfb": 75,
+          "end": 2576,
+          "duration": 383
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2194,
+          "queue": 339,
+          "ttfb": 67,
+          "end": 2606,
+          "duration": 412
+        },
+        {
+          "path": "/api/chat/turns",
+          "start": 2195,
+          "queue": 388,
+          "ttfb": 102,
+          "end": 2737,
+          "duration": 542
+        },
+        {
+          "path": "/api/config",
+          "start": 2196,
+          "queue": 396,
+          "ttfb": 190,
+          "end": 2799,
+          "duration": 603
+        },
+        {
+          "path": "/api/recommendations/platform-availability",
+          "start": 2197,
+          "queue": 405,
+          "ttfb": 196,
+          "end": 2801,
+          "duration": 604
+        },
+        {
+          "path": "/api/qr-info",
+          "start": 2198,
+          "queue": 416,
+          "ttfb": 192,
+          "end": 2811,
+          "duration": 613
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2441,
+          "queue": 297,
+          "ttfb": 74,
+          "end": 2825,
+          "duration": 384
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2442,
+          "queue": 358,
+          "ttfb": 151,
+          "end": 2965,
+          "duration": 524
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2442,
+          "queue": 360,
+          "ttfb": 142,
+          "end": 2963,
+          "duration": 521
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2442,
+          "queue": 369,
+          "ttfb": 149,
+          "end": 2976,
+          "duration": 533
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2444,
+          "queue": 382,
+          "ttfb": 29,
+          "end": 2914,
+          "duration": 470
+        }
+      ]
+    }
+  ],
+  "after-both": [
+    {
+      "i": 0,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1415,
+          "queue": 2,
+          "ttfb": 17,
+          "end": 1445,
+          "duration": 30
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1417,
+          "queue": 2,
+          "ttfb": 224,
+          "end": 1653,
+          "duration": 236
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1487,
+          "queue": 2,
+          "ttfb": 57,
+          "end": 1572,
+          "duration": 85
+        },
+        {
+          "path": "/api/ping",
+          "start": 1623,
+          "queue": 2,
+          "ttfb": 75,
+          "end": 1741,
+          "duration": 118
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1744,
+          "queue": 2,
+          "ttfb": 102,
+          "end": 1855,
+          "duration": 111
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1745,
+          "queue": 4,
+          "ttfb": 100,
+          "end": 1855,
+          "duration": 110
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1746,
+          "queue": 5,
+          "ttfb": 127,
+          "end": 1879,
+          "duration": 133
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1748,
+          "queue": 4,
+          "ttfb": 98,
+          "end": 1856,
+          "duration": 108
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1749,
+          "queue": 31,
+          "ttfb": 87,
+          "end": 1871,
+          "duration": 122
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2014,
+          "queue": 2,
+          "ttfb": 274,
+          "end": 2314,
+          "duration": 300
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2015,
+          "queue": 2,
+          "ttfb": 284,
+          "end": 2325,
+          "duration": 311
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2015,
+          "queue": 3,
+          "ttfb": 280,
+          "end": 2324,
+          "duration": 309
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2015,
+          "queue": 4,
+          "ttfb": 287,
+          "end": 2329,
+          "duration": 314
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2017,
+          "queue": 5,
+          "ttfb": 220,
+          "end": 2275,
+          "duration": 259
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1388,
+          "queue": 2,
+          "ttfb": 26,
+          "end": 1426,
+          "duration": 38
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1389,
+          "queue": 3,
+          "ttfb": 197,
+          "end": 1593,
+          "duration": 203
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1440,
+          "queue": 2,
+          "ttfb": 45,
+          "end": 1518,
+          "duration": 77
+        },
+        {
+          "path": "/api/ping",
+          "start": 1619,
+          "queue": 2,
+          "ttfb": 74,
+          "end": 1741,
+          "duration": 122
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1744,
+          "queue": 5,
+          "ttfb": 89,
+          "end": 1850,
+          "duration": 106
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1746,
+          "queue": 4,
+          "ttfb": 91,
+          "end": 1851,
+          "duration": 105
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1748,
+          "queue": 4,
+          "ttfb": 121,
+          "end": 1875,
+          "duration": 127
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1749,
+          "queue": 4,
+          "ttfb": 89,
+          "end": 1852,
+          "duration": 103
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1751,
+          "queue": 5,
+          "ttfb": 93,
+          "end": 1859,
+          "duration": 108
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1991,
+          "queue": 2,
+          "ttfb": 1444,
+          "end": 3453,
+          "duration": 1462
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1992,
+          "queue": 2,
+          "ttfb": 1449,
+          "end": 3460,
+          "duration": 1468
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1993,
+          "queue": 3,
+          "ttfb": 1454,
+          "end": 3463,
+          "duration": 1470
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1994,
+          "queue": 4,
+          "ttfb": 1444,
+          "end": 3456,
+          "duration": 1462
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1997,
+          "queue": 2,
+          "ttfb": 1458,
+          "end": 3469,
+          "duration": 1472
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1647,
+          "queue": 2,
+          "ttfb": 34,
+          "end": 1687,
+          "duration": 40
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1648,
+          "queue": 3,
+          "ttfb": 272,
+          "end": 1994,
+          "duration": 345
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1701,
+          "queue": 2,
+          "ttfb": 51,
+          "end": 1764,
+          "duration": 63
+        },
+        {
+          "path": "/api/ping",
+          "start": 1766,
+          "queue": 3,
+          "ttfb": 99,
+          "end": 1872,
+          "duration": 106
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1874,
+          "queue": 7,
+          "ttfb": 131,
+          "end": 2025,
+          "duration": 151
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1875,
+          "queue": 7,
+          "ttfb": 132,
+          "end": 2026,
+          "duration": 151
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1876,
+          "queue": 8,
+          "ttfb": 154,
+          "end": 2044,
+          "duration": 168
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1881,
+          "queue": 120,
+          "ttfb": 54,
+          "end": 2068,
+          "duration": 187
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1883,
+          "queue": 142,
+          "ttfb": 56,
+          "end": 2093,
+          "duration": 211
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2047,
+          "queue": 3,
+          "ttfb": 124,
+          "end": 2191,
+          "duration": 144
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2047,
+          "queue": 4,
+          "ttfb": 136,
+          "end": 2197,
+          "duration": 150
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2048,
+          "queue": 5,
+          "ttfb": 122,
+          "end": 2191,
+          "duration": 143
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2048,
+          "queue": 15,
+          "ttfb": 122,
+          "end": 2194,
+          "duration": 146
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 2050,
+          "queue": 19,
+          "ttfb": 45,
+          "end": 2131,
+          "duration": 82
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2094,
+          "queue": 78,
+          "ttfb": 81,
+          "end": 2261,
+          "duration": 166
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2095,
+          "queue": 97,
+          "ttfb": 104,
+          "end": 2306,
+          "duration": 211
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2095,
+          "queue": 97,
+          "ttfb": 65,
+          "end": 2284,
+          "duration": 189
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2096,
+          "queue": 100,
+          "ttfb": 97,
+          "end": 2304,
+          "duration": 209
+        }
+      ]
+    }
+  ],
+  "final": [
+    {
+      "i": 0,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1338,
+          "queue": 3,
+          "ttfb": 18,
+          "end": 1366,
+          "duration": 28
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1342,
+          "queue": 2,
+          "ttfb": 252,
+          "end": 1605,
+          "duration": 263
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1407,
+          "queue": 2,
+          "ttfb": 14,
+          "end": 1457,
+          "duration": 51
+        },
+        {
+          "path": "/api/ping",
+          "start": 1478,
+          "queue": 2,
+          "ttfb": 74,
+          "end": 1594,
+          "duration": 115
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1597,
+          "queue": 3,
+          "ttfb": 140,
+          "end": 1750,
+          "duration": 153
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1598,
+          "queue": 2,
+          "ttfb": 141,
+          "end": 1751,
+          "duration": 153
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1601,
+          "queue": 5,
+          "ttfb": 141,
+          "end": 1757,
+          "duration": 156
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1778,
+          "queue": 3,
+          "ttfb": 104,
+          "end": 1895,
+          "duration": 117
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1779,
+          "queue": 3,
+          "ttfb": 99,
+          "end": 1892,
+          "duration": 113
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1779,
+          "queue": 5,
+          "ttfb": 115,
+          "end": 1912,
+          "duration": 133
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1780,
+          "queue": 6,
+          "ttfb": 101,
+          "end": 1902,
+          "duration": 122
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1873,
+          "queue": 5,
+          "ttfb": 128,
+          "end": 2013,
+          "duration": 140
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1874,
+          "queue": 5,
+          "ttfb": 132,
+          "end": 2018,
+          "duration": 144
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1878,
+          "queue": 25,
+          "ttfb": 105,
+          "end": 2015,
+          "duration": 137
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1882,
+          "queue": 32,
+          "ttfb": 102,
+          "end": 2021,
+          "duration": 140
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1336,
+          "queue": 3,
+          "ttfb": 24,
+          "end": 1366,
+          "duration": 30
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1338,
+          "queue": 5,
+          "ttfb": 199,
+          "end": 1602,
+          "duration": 264
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1389,
+          "queue": 3,
+          "ttfb": 30,
+          "end": 1426,
+          "duration": 37
+        },
+        {
+          "path": "/api/ping",
+          "start": 1473,
+          "queue": 2,
+          "ttfb": 70,
+          "end": 1628,
+          "duration": 155
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1632,
+          "queue": 2,
+          "ttfb": 129,
+          "end": 1773,
+          "duration": 141
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1633,
+          "queue": 3,
+          "ttfb": 128,
+          "end": 1774,
+          "duration": 141
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1635,
+          "queue": 3,
+          "ttfb": 140,
+          "end": 1785,
+          "duration": 150
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1636,
+          "queue": 2,
+          "ttfb": 127,
+          "end": 1775,
+          "duration": 139
+        },
+        {
+          "path": "/api/saved/favorite",
+          "start": 1638,
+          "queue": 137,
+          "ttfb": 24,
+          "end": 1800,
+          "duration": 162
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1799,
+          "queue": 3,
+          "ttfb": 124,
+          "end": 1938,
+          "duration": 139
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1800,
+          "queue": 4,
+          "ttfb": 129,
+          "end": 1948,
+          "duration": 148
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1801,
+          "queue": 4,
+          "ttfb": 129,
+          "end": 1947,
+          "duration": 146
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1802,
+          "queue": 5,
+          "ttfb": 129,
+          "end": 1947,
+          "duration": 146
+        },
+        {
+          "path": "/api/runtime-status",
+          "start": 1805,
+          "queue": 3,
+          "ttfb": 28,
+          "end": 1840,
+          "duration": 35
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1879,
+          "queue": 5,
+          "ttfb": 113,
+          "end": 2008,
+          "duration": 129
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1881,
+          "queue": 68,
+          "ttfb": 89,
+          "end": 2042,
+          "duration": 161
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1882,
+          "queue": 68,
+          "ttfb": 86,
+          "end": 2041,
+          "duration": 159
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "rows": [
+        {
+          "path": "/api/auth/status",
+          "start": 1518,
+          "queue": 2,
+          "ttfb": 27,
+          "end": 1564,
+          "duration": 46
+        },
+        {
+          "path": "/api/autostart-status",
+          "start": 1520,
+          "queue": 3,
+          "ttfb": 162,
+          "end": 1692,
+          "duration": 172
+        },
+        {
+          "path": "/api/auth/status",
+          "start": 1568,
+          "queue": 3,
+          "ttfb": 35,
+          "end": 1637,
+          "duration": 69
+        },
+        {
+          "path": "/api/ping",
+          "start": 1696,
+          "queue": 2,
+          "ttfb": 81,
+          "end": 1824,
+          "duration": 129
+        },
+        {
+          "path": "/api/chat/pending-confirmations",
+          "start": 1827,
+          "queue": 4,
+          "ttfb": 71,
+          "end": 1911,
+          "duration": 83
+        },
+        {
+          "path": "/api/recommendations",
+          "start": 1831,
+          "queue": 3,
+          "ttfb": 73,
+          "end": 1917,
+          "duration": 86
+        },
+        {
+          "path": "/api/saved/watch_later",
+          "start": 1835,
+          "queue": 3,
+          "ttfb": 77,
+          "end": 1928,
+          "duration": 93
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1935,
+          "queue": 2,
+          "ttfb": 108,
+          "end": 2052,
+          "duration": 117
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1936,
+          "queue": 2,
+          "ttfb": 119,
+          "end": 2075,
+          "duration": 139
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1936,
+          "queue": 4,
+          "ttfb": 110,
+          "end": 2061,
+          "duration": 125
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 1937,
+          "queue": 4,
+          "ttfb": 114,
+          "end": 2068,
+          "duration": 131
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2004,
+          "queue": 68,
+          "ttfb": 97,
+          "end": 2177,
+          "duration": 173
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2004,
+          "queue": 71,
+          "ttfb": 99,
+          "end": 2181,
+          "duration": 177
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2005,
+          "queue": 72,
+          "ttfb": 93,
+          "end": 2178,
+          "duration": 174
+        },
+        {
+          "path": "/api/image-proxy",
+          "start": 2005,
+          "queue": 75,
+          "ttfb": 92,
+          "end": 2181,
+          "duration": 176
+        }
+      ]
+    }
+  ]
+}

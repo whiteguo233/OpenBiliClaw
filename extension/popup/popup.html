@@ -4228,6 +4228,10 @@
       letter-spacing: -0.02em;
     }
 
+    .mobile-connection-field { display: grid; gap: 6px; margin: 0 0 14px; font-size: 13px; color: var(--text-secondary); }
+    .mobile-connection-field select, .mobile-connection-field input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-strong); color: var(--text-main); font: inherit; }
+    .mobile-connection-field select { cursor: pointer; }
+    .mobile-connection-field :focus-visible { outline: 2px solid var(--text-main); outline-offset: 2px; }
     .mobile-qr-card {
       display: flex;
       flex-direction: column;
@@ -4561,7 +4565,7 @@
       min-width: 0;
       flex-shrink: 0;
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 6px;
       padding: 4px;
       overflow-x: auto;
@@ -5072,11 +5076,13 @@
       overflow: hidden;
     }
 
-    @media (max-width: 430px) {
+    @media (max-width: 360px) {
       .settings-tabs {
-        grid-template-columns: repeat(6, minmax(92px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
+    }
 
+    @media (max-width: 430px) {
       .settings-model-discovery-control {
         grid-template-columns: 1fr;
       }
@@ -6883,10 +6889,16 @@
       <div class="mobile-header">
         <div>
           <p class="view-kicker">Mobile Web</p>
-          <h2 id="mobileQrTitle">手机扫码打开</h2>
+          <h2 id="mobileQrTitle">手机扫码连接</h2>
         </div>
         <button id="mobileQrBack" class="settings-back" type="button" title="返回" aria-label="关闭移动端二维码">&larr;</button>
       </div>
+      <label class="mobile-connection-field" for="mobileQrNetwork">连接网络
+        <select id="mobileQrNetwork" aria-describedby="mobileQrHint"></select>
+      </label>
+      <label class="mobile-connection-field" for="mobileQrPublicUrl">公网 / 自定义访问地址（可选）
+        <input id="mobileQrPublicUrl" type="url" placeholder="https://obc.example.com" autocomplete="off" spellcheck="false">
+      </label>
       <div class="mobile-qr-card">
         <div id="mobileQrCode" class="mobile-qr-code" aria-live="polite"></div>
         <p id="mobileQrUrl" class="mobile-url"></p>
@@ -6933,6 +6945,7 @@
       </div>
 
       <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
+
       <div class="settings-section">
         <div class="settings-section-head">
           <div>
@@ -6942,7 +6955,8 @@
         </div>
         <p class="settings-hint">每个实例独立保存 Provider 类型、模型、Base URL 与凭据；同一种 Provider 也可以创建多个渠道。插件内可维护默认 fallback 链，模块自定义链继续在 PC Web 配置。</p>
         <div id="cfgLlmRoutingSummary" class="settings-routing-summary">
-          <div id="cfgLlmInstanceList" class="settings-llm-instance-list" aria-live="polite"></div>
+          <div id="cfgLlmProviderNotice" hidden></div>
+<div id="cfgLlmInstanceList" class="settings-llm-instance-list" aria-live="polite"></div>
 
           <div class="settings-llm-chain-head">
             <div>
@@ -7225,7 +7239,7 @@
         </p>
         <div class="settings-field">
           <label for="cfgEmbeddingProvider">Provider</label>
-          <select id="cfgEmbeddingProvider">
+          <select id="cfgEmbeddingProvider"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option>
             <option value="">(不启用 embedding)</option>
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini</option>
@@ -8754,14 +8768,22 @@
       <div class="settings-section">
         <h3>候选评分模式</h3>
         <div class="settings-field">
-          <label for="cfgEvalScorer">评分器模式</label>
+          <label for="cfgEvalScorer">候选评估器</label>
           <select id="cfgEvalScorer" aria-describedby="cfgEvalScorerHint">
             <option value="llm" selected>Agent（默认）</option>
+            <option value="jev">Jev（完整评估，纯文本）</option>
             <option value="shadow">Shadow（校准观察）</option>
             <option value="learned">Learned（仅相关性，实验性）</option>
           </select>
         </div>
-        <p class="settings-hint" id="cfgEvalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+        <p class="settings-hint" id="cfgEvalScorerHint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+        <details class="settings-hint">
+          <summary>评估模式说明</summary>
+          <p>Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+          <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+        </details>
+        <p class="settings-hint" id="cfgJevEvaluatorStatus" role="status" aria-live="polite">正在读取 Jev provider 配置…</p>
+        <div id="cfgJevConnectionSettings"></div>
       </div>
 
       <div class="settings-section">
@@ -9094,9 +9116,16 @@
        the backend. Classic scripts run before the module below so popup.js can
        read their globals. -->
   <script src="shared/i18n.js"></script>
+  <script src="shared/mobile-connection.js"></script>
   <script src="shared/dialogue-confirmation.js"></script>
+  <script src="shared/director-client.js"></script>
   <script src="shared/source-status.js"></script>
   <script src="shared/custom-sources.js"></script>
+
+  <link rel="stylesheet" href="shared/jev-settings.css">
+<link rel="stylesheet" href="shared/sponsored-settings.css">
+<script src="shared/sponsored-settings.js"></script>
+  <script src="shared/jev-settings.js"></script>
   <script src="shared/agent-chat.js"></script>
   <script type="module" src="popup.js"></script>
   <script type="module" src="popup-fish.js"></script>

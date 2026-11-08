@@ -76,7 +76,7 @@ python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-fo
    - **★ 2) 中转站 / OpenAI 协议兼容服务 ★第二推荐** —— **国内用户买中转站 / OneAPI Key 走这个**。也覆盖 Kimi / 通义 / 智谱 / 商汤日日新 / Yi / MiniMax 官方 + Azure / vLLM / LMStudio。选这个进**子菜单(10 个 preset)**:
      - **★ a) 中转站 / OneAPI / 公司团队 LLM 网关(大多数人选这个)** —— Base URL 自填 / 默认 `gpt-5-nano`;按你充值的中转站给的模型清单填
      - **b) Kimi (Moonshot AI) 官方** —— `https://api.moonshot.ai/v1` / 默认 `kimi-k2.6`。⚠ 旧 K2-series 2026/05/25 停服
-     - **c) MiniMax 官方** —— `https://api.minimax.io/v1` / 默认 `MiniMax-M2.7`(4/2026)
+     - **c) MiniMax 官方** —— `https://api.minimax.io/v1` / 默认 `MiniMax-M3.1-Flash`(1M ctx / 自适应推理);备选 `MiniMax-M3`,旧模型与自定义 ID 仍可用
      - **d) 通义千问 (阿里 DashScope) 官方** —— `https://dashscope.aliyuncs.com/compatible-mode/v1` / 默认 `qwen-plus`
      - **e) 智谱 ChatGLM 官方** —— `https://open.bigmodel.cn/api/paas/v4` / 默认 `glm-4.7-flash`(免费档);旗舰 `glm-5`
      - **f) 商汤日日新 (SenseNova) 官方** —— `https://token.sensenova.cn/v1` / 默认 `deepseek-v4-flash`(已实测连通)。新用户免费额度，零成本体验(issue #193);embedding 未验证，Phase 3 默认独立 Ollama bge-m3
@@ -220,6 +220,8 @@ exact-origin、DNS/socket pin、lease 与 seen/checkpoint 边界保持一致。
 - `get-profile`
 - `recommend --limit 5 [--source-platform <platform>]`
 - `reshuffle` / `append` — 换一批或追加
+- `restore [--stream-ref openclaw]` — 导演模式只恢复已提交屏幕，不生成
+- `present --batch-ref ... --ack-id ... --item-key ...` — 仅确认人实际看到的卡片子集
 - `get-delight` / `respond-delight` — 惊喜推荐及反馈
 - `activity-feed` / `platform-availability`
 - `next-probe` / `respond-interest-probe` — 兴趣假设四态反馈
@@ -332,6 +334,29 @@ uv run python -m openbiliclaw.integrations.openclaw.cli submit-feedback \
 ```
 
 `--request-id` 必填，trim 后必须为 1–400 字符。同一个用户动作因超时、响应丢失或 agent 重试而再次提交时必须复用；不同动作即使 recommendation/type/note 相同，也应生成新的 ID。
+
+### 可选：推荐导演模式
+
+默认 `[director].mode = "off"`，既有命令无需改变。开启后支持 `jev_recurrent`、
+`agent_jev`、`agent_only` 三种策略；配置见 [导演模块](modules/director.md)。推荐消费使用
+同一个完整屏幕合同，`recommend / append / reshuffle` 额外要求稳定 `--request-id`
+（1–128 字符），并可传 `--stream-ref`、`--explicit-intent`，每屏 1–20 张卡：
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli recommend --limit 4 --request-id screen-1
+uv run python -m openbiliclaw.integrations.openclaw.cli restore
+uv run python -m openbiliclaw.integrations.openclaw.cli append --limit 4 --request-id screen-2
+uv run python -m openbiliclaw.integrations.openclaw.cli reshuffle --limit 4 --request-id swap-2
+```
+
+`append` 推进下一屏，`reshuffle` 保留方向并排除换屏链中的旧卡片；返回的 `batch_ref`
+需随反馈传入 `--batch-ref`。工具结果不算曝光：只有宿主实际向用户呈现后才能用
+`present --batch-ref <返回值> --ack-id <稳定ID> --item-key <实际可见卡片>` 确认子集；
+没有可见性确认能力时不调用 present，保留未曝光并等待真实反馈。
+
+CLI 会自动关闭请求期间的模型/provider 与数据库资源，同配置短命令重建保留未来计划。
+`[discovery.semantic_filter]` 可独立开启，不要求同时开启导演；启用 enforce 前必须具备
+与固定模型绑定的本地校准标识，不将默认阈值视为已验证效果。
 
 惊喜卡片支持同样的反馈闭环：
 

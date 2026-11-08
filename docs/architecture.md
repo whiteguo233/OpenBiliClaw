@@ -2,9 +2,40 @@
 
 ## 系统概览
 
+```text
+trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
+source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
+
+LAN / system Tailscale interfaces + ready embedded helper + effective listener
+  → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
+public/custom HTTP(S) URL ──────────────────────┘
+  → phone camera → <prefix>/m/ Mobile Web
+      → <prefix>/{api,shared,i18n/ui} + WebSocket + image proxy
+  → native App camera / gallery → local QR decoder
+      → saved backend + direct / embedded Tailscale transport
+```
+
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
+packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content versions; precompressed gzip)
+                               → /web/assets/desktop-bundle.js?v=… → one defer request from /web
+shared sources / original asset paths → mobile / extension; no Node build or install/config changes
+
+runtime-stream clients → API PresenceTracker (connect/disconnect; 20s heartbeat)
+                      → atomic data/runtime/extension_presence.json (60s active lease)
+                      → full/discovery worker presence gate → browser task queues
+
+Douyin account bootstrap → MAIN profile/self + web parameters → self-scoped paginated API
+                        → API rows only (including valid partial) → reject reported DOM/zero-API rows → staged task result → profile events
+                        → affirmative empty stays empty; unknown page cards never become account signals
+
+Douyin confirmed discovery failures → dy_tasks-derived retry_at (15/30m exponential; cap 6h)
+                                   → producer pre-keyword-claim / client / pending-task gates
+Douyin native search stream → original Response returned immediately to page
+                            → bounded clone JSON frames → partial ACK / failed → dy_tasks
+dy_tasks hot choices (6h) → fresh runtime plugin client → prefer unselected board words
+
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume
@@ -18,6 +49,40 @@ recommendation request → main API → optional Unix-socket recommendation proc
 main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
+
+optional Director (default off; separate decision credentials):
+  local profile catalog → on-demand projection (intent / shortlist / byte budget)
+  profile view + latest 3 experienced screens + bounded shortlist
+    → shared screen policy (brief / evidence / soft roles)
+      ├→ recurrent Jev pairs
+      ├→ Agent horizon + Jev local repairs
+      └→ Agent-only horizon (no Jev orchestration)
+         Agent plan → local short refs / canonical restore → strict validation
+                    → at most one correction within original deadline
+    → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
+    → immutable batch → visible ACK / exact click & feedback → future drafts
+  independent discovery semantic filter → shared bounded decision provider → Jev
+    → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
+
+candidate full evaluator (settings switch; LLM default):
+  Web / popup / mobile shared Jev connection form → config API → validated local settings
+    → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
+  Jev: local profile catalog → per-candidate projection + selected-model context budget
+    mandatory baseline + optional positive facts (borrow room before excerpting)
+    + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
+    → detached snapshot → worker-thread source spans / coverage + profile projection
+    → service-loop complete-question-group batch packing (cancellation dispatches nothing)
+    → identical selected profile fields shared once → first-fit open-batch backfill
+    dual byte ceilings use configured capacity integers (no extra 25%); not exact tokenizer
+  named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
+    Jev: 8 questions / candidate; joint temporal outcome + independent representative excerpt
+      hard-state options bind class/scope/state/source/deadline before one native request
+      controlled taxonomy / IP + exact source spans + model-bound dual byte guards
+  → shared metadata validation / separate cache → admission / legacy pool recovery
+  local input overflow → typed InputBudgetFailure → lease-CAS failed_eval (no retry)
+    → profile / negative evidence / evaluator context changed → bounded requeue
+  native INVALID / contradictory evidence → typed refusal → lease-CAS parking
+    → endpoint or evidence context changed → bounded requeue; token rotation is not a retry
 
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
 public clients ─ HTTPS（可选）→ Caddy :443 ─ shared-loopback HTTP ─────────────────────────────┤
@@ -158,11 +223,12 @@ Douyin source supply: daemon presence gate (explicit manual call bypasses it)
                      → one shared plugin-cycle wait budget → terminal dy_task → pending_eval
                      absent → zero enqueue; timeout/error/budget → bounded retry floor
 
-cover images: UI proxy foreground ───┐
-              refresh prefetch bg ───┴→ app-stable ImageFetchCoordinator(total 4 / bg 3, fg priority)
-                                      → cache-key singleflight → host allowlist + public DNS (proxy: fixed DoH)
-                                      → pinned IP (direct / CONNECT / SOCKS; original Host + TLS)
-                                      → atomic disk cache
+cover display: UI → main API pooled internal HTTP → image service
+                  (or in-process coordinator when service is unavailable)
+cover bytes: foreground + background prefetch → coordinator(total 10 / bg 8, foreground priority)
+             → disk cache hit / singleflight miss → allowlist + public DNS + pinned IP/TLS
+                                                  → atomic original disk cache
+foreground display only: original bytes → bounded 640px rendition LRU (128 / 16 MiB) → UI
 
 Instagram manual replenish → source quota + producer/task locks → topic/creator
                           → explicit bounded eval + copy (scheduler may be off)
@@ -187,6 +253,9 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → raw user intent + ToolTextGuard(delta/final) + explicit named-call evidence
+                 → missing evidence / protocol-only reply → one corrective attempt
+                 → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
                  → hard_write call → ApprovalStore pending card → approve endpoint queues background execution + config_update_hook → settings apply queue / last-good + ledger audit
@@ -247,11 +316,11 @@ candidate evaluation → effective profile view + exact tail-recall pool + negat
 1. **用户交互层** — Chrome / Firefox 插件负责受支持站点的普通行为采集、登录态只读任务与侧边栏；Linux.do / V2EX / 微博 / Instagram 使用隔离任务 tab，微博与 Instagram 普通页面不做行为采集。插件与移动 Web（`/m`）、桌面 Web（`/web`）共用本地 API；`OpenBiliClaw-mobile` 的 Android / iOS 原生 App 可通过两端各自内嵌的 tsnet 从同一 tailnet 访问电脑后端，其 Web / Linux / macOS / Windows Flutter 构建不在该路径支持面。可选密码门禁保护局域网 / 远程访问。
 2. **外部集成层** — OpenClaw adapter / skill wrappers / 本地 API / Codex CLI 凭据导入等对外接入边界
 3. **Agent 核心层** — 自研编排器 + Soul Engine + Discovery Engine + Recommendation Engine + Skill System；抖音手动 discovery 与 daemon 共用正式 producer、统一关键词生命周期和待评估候选链，debug-only `discover-douyin` 才直接调用源服务
-4. **LLM 实例路由层** — `config / Web UI -> [llm.instances.<id>] -> 全局或分模块有序实例链 -> LLMRegistry -> Provider adapter`。实例 ID 是路由、健康与 cooldown 身份，adapter 类型只是协议实现，因此同类型的多个 Base URL / token / model 可以同时存在。模块默认继承全局链；自定义链只在链内降级，耗尽后不越界。配置界面另有两条无写入恢复支路：`draft -> /api/config/probe-service -> temporary registry -> stable total gate` 做目标实例/链真实探测，`draft -> /api/config/discover-models -> exact instance GET /models` 只返回模型 ID 与本地 Effort 建议。两者在 active registry 启动失败的 degraded 状态仍精确放行，但不改变配置、不放开业务 API。
-   配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext 局部应用或 rebuild -> apply-status/config_reloaded`；完整候选仅改变已知五项 agent 设置时替换 loop，在途回合与学习 owner 不动，其他变更保留安全排空后 rebuild。失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。
+4. **LLM 实例路由层** — `config / Web UI -> [llm.instances.<id>] -> 全局或分模块有序实例链 -> LLMRegistry -> Provider adapter`。实例 ID 是路由、健康与 cooldown 身份，adapter 类型只是协议实现，因此同类型的多个 Base URL / token / model 可以同时存在；`siliconflow_free` 使用相同实例结构，固定提供 Qwen3-8B / Qwen3.5-4B 两个只读实例；凭据与地址由受保护 adapter 内部管理。模块默认继承全局链；自定义链只在链内降级，耗尽后不越界。配置界面另有两条无写入恢复支路：`draft -> /api/config/probe-service -> temporary registry -> stable total gate` 做目标实例/链真实探测，`draft -> /api/config/discover-models -> exact instance GET /models` 只返回模型 ID 与本地 Effort 建议。两者在 active registry 启动失败的 degraded 状态仍精确放行，但不改变配置、不放开业务 API。
+   配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext 局部应用或 rebuild -> apply-status/config_reloaded`；完整候选仅改变已知五项 agent 设置时替换 loop；仅改变默认实例链时原地更新 registry 顺序，在途回合与学习 owner 不动，其他变更保留安全排空后 rebuild。失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。
    发布日期偏好按来源配置（`[sources.<name>].recommendation_date_*`），默认 `all`。发现策略在 LLM 评估前硬过滤范围外候选；`RuntimeContext -> Database effective inventory -> PoolCurator -> RecommendationEngine` 继续保留 `weight` 语义（软降分或推荐出口严格忽略）。严格模式还把 UTC 边界下推到 B 站 API / 扩展网页搜索。
    跨机器迁移走第三条、与热重载隔离的控制流：`本机桌面设置 -> export .obcbackup -> 新机器 import(request_id) -> processing(uploading|validating) -> pending -> status 对账 / cancel -> 重启`。导出数据固定来自本进程已锁住的 active data dir；导入端点从不替换 live `Database` / `MemoryManager` 或 UI 偏好。断连后的桌面端保留 request ID，最多强制查 3 次并对 `idle/cancelled` 间隔 500ms 再确认；每次打开「通用」也强制查询。只有下一进程先同时取得项目与 canonical data-dir runtime lock，才通过 journaled replace 激活配置和数据；成功回执用配置 SHA-256 + 严格递增 DB epoch 绑定活动代际，使断电后复活的旧 marker 只能被验证、清理而不能重放。status 报告 `applied` 后，桌面端按 `migration_id` 在每个浏览器只应用一次白名单偏好，避免旧 status 覆盖用户后续修改。来源包会移除整段 `[api.auth]`，机器专属路径 / 网络字段和目标机整段 `api.auth` 继续作为基线；应用时再轮换文件 session secret、把数据库 auth epoch 严格提升到来源 / 目标当前值之上，并关闭 / 清空扩展设备访问。
-5. **多源适配层（v0.3.0+）** — `sources.platforms` 统一注册 B 站 / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / Instagram / Web 的平台别名、strategy 与 URL 身份。Linux.do 通过同源只读插件任务接入公开 discovery 与个人信号；Bangumi 使用官方匿名 API 与可选令牌；V2EX 使用官方匿名 API / Feed、可选 PAT 与四类账号分区 bootstrap；微博公开 discovery 由后端匿名直连，个人初始化由同源扩展任务读取收藏、关注和 mentions；GitHub 使用官方 REST API，公开 repository 以匿名/可选 PAT 方式进入 search/ranked/latest，公开 starred repositories 仅在 init/on-demand 形成画像信号，私有仓库和站内写操作始终拒绝。Instagram 的 topic/creator discovery 与 liked/saved/following 初始化由隔离浏览器任务执行，后端不接收 Cookie 或原始响应。Web 兼容公开 typed recipe，并以独立来源承载经试跑与审批的 HTTP Feed / Ego Lite 发现流程；试跑不启用调度。所有来源统一归一化后进入候选评估链，不执行站内写操作。
+5. **多源适配层（v0.3.0+）** — `sources.platforms` 统一注册 B 站 / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / Instagram / Web 的平台别名、strategy 与 URL 身份。Linux.do 通过同源只读插件任务接入公开 discovery 与个人信号；Bangumi 使用官方匿名 API 与可选令牌；V2EX 使用官方匿名 API / Feed、可选 PAT 与四类账号分区 bootstrap；微博公开 discovery 由后端匿名直连，个人初始化由同源扩展任务读取收藏、关注和 mentions；GitHub 使用官方 REST API，公开 repository 以匿名/可选 PAT 方式进入 search/ranked/latest，公开 starred repositories 仅在 init/on-demand 形成画像信号，私有仓库和站内写操作始终拒绝。Instagram 的 topic/creator discovery 与 liked/saved/following 初始化由隔离浏览器任务执行，后端不接收 Cookie 或原始响应。Web 兼容公开 typed recipe，并以独立来源承载经试跑与审批的 HTTP Feed / Ego Lite 发现流程；试跑不启用调度。所有来源统一归一化后进入候选评估链，不执行站内写操作。 GitHub 与 Instagram 显式初始化在暂停后台期间自行完成来源 producer、评估和推荐文案，不调用未选择的 B站发现。通用网页抽取以规范化完整 HTTP(S) URL 生成稳定身份，避免模型简称 ID 合并不同网页；原生平台 ID 不变。
 6. **保存同步编排层（API/runtime + B 站 adapter + 三个图形化保存界面 + CLI 配置可见）** — canonical saved identity + normalized membership / native state + `/api/saved/*` + capability router + local-first `SavedSyncService` + `BilibiliNativeSaveAdapter`；六平台扩展保存 adapter 已按能力/目标矩阵注册，经稳定的 `ExtensionNativeSaveBroker` 入队，完整 broker flow 为 `extension_native_save_jobs -> /api/sources/<slug>/next-task -> installed extension`（具体 source 前缀为 `/api/sources/{xhs,dy,yt,x,zhihu,reddit}`），再由 authenticated `task-result` 回传安全状态。task tab 在 `about:blank` 阶段先登记 owner，首次导航与 reload 都隔离普通 collector；抖音 / 小红书 / YouTube / 知乎的不确定 mutation 先终止旧 sender，再走 `reload -> fresh document READY -> verification_only` 只读支路，只有 persisted target state 的正面证据可升级 `already_synced`。callback 要求 2xx，并且只对完全相同的 canonical terminal replay 幂等 ACK。trusted-local `/api/extension/e2e/run` 的 dedicated native-save 模式只接受与 generic actions 互斥的 exact authorization，提交一个 canonical item 到同一 saved-sync/broker flow，并只回传六字段结果；通用 DOM runner 永不执行 favorite/bookmark。历史 `unsupported_adapter_missing` 行可重新同步，但真正的 `unsupported_content_type` 保持终态。YouTube favorite 使用 exact `OpenBiliClaw`、watch-later 使用 `YouTube Watch Later`；知乎按当前全局 `收藏 / 已收藏` 开关路由到 `知乎收藏`，不声明命名收藏夹且永不点击初始“已收藏”；其余平台回退原生收藏/书签/Saved，Bilibili favorite/watch-later 使用 direct adapter。插件、移动 Web 与桌面 Web 共享 `item_key`，以 bounded request、retained list、per-key mutation fence、reload task recovery / item ownership 和 visibility-aware durable tracker 呈现同步状态；CLI 只通过 `config-show` 展示默认关闭的自动同步配置，不提供保存 / 同步动作命令
 7. **多层网状记忆存储** — Core / Episodic / Semantic / Working Memory（SQLite + 向量索引 + JSON）
 
@@ -313,6 +382,10 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 
 ## 模块职责
 
+### Desktop static assets (`api/desktop_assets.py`)
+
+`DesktopAssets` 将包内固定清单的桌面与共享脚本按原依赖顺序拼接，保留最近两个内容版本及其预压缩 gzip 表示；桌面 HTML 只引用一次带版本的 defer 请求。原共享源码与静态资源入口继续供移动端、插件和开发工具使用，无 Node 构建、安装步骤或配置变化。版本缓存、编码协商和鉴权边界见 [API 模块](modules/api.md#桌面首屏静态脚本2026-10-23)。
+
 ### Durable agent stream ownership (`api/` / `soul/`)
 
 `POST /api/chat/agent/stream` 的 durable producer 由 API application 持有，与 HTTP SSE 订阅的生命周期分离。浏览器断连后原 loop 继续，逐事件落库并完成回复；同一 turn 的重试在稳定对话 lease 内检查终态，只重放已存过程和回复。应用关闭会取消 producer，剩余 pending 由启动恢复处理。模型短期上下文按 `session_id` 装载，长期画像仍共享；canonical reply binding 同时进入 prompt 与学习任务。
@@ -321,6 +394,7 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - 任务调度和策略决策
 - 多步推理和自省优化
 - Skill 注册、发现和调度
+- `tool_text.py` 检查流式及最终正文中的完整工具封套，并隔离其后无执行依据的完成声明；用户原文与自动拼接的模型上下文分开传递，代码/原样数据请求保留。纯协议空答复最多纠正一次，文本不进入工具执行或审批路径。
 - 「聊一聊」chat agent loop（2026-09-23）：`loop.py` 多跳工具调用循环（`[agent] loop_max_steps` 默认 64 跳，事件流 thinking/tool_call/tool_result/approval_request/final）；`tools/` JSON Schema 工具注册表 + read / soft_write / hard_write 三级权限与 v1 标准工具集；`skill.py` SKILL.md 目录加载（`skills_builtin/` 内置 4 个 + `{data_dir}/skills/` 用户覆盖）；`tasks.py` durable 后台任务中心（只读 loop + `propose_suggestion` 建议清单 + 完成后 `agent_task_summary` 汇总 turn 回写来源会话）；`approvals.py` L2 hard_write 审批门（`chat_approvals.json` 单文件状态机 pending → approved → executing → executed / failed，另有 rejected / expired，决策写 `profile_update_ledger` 审计；approve 端点异步化——立即返回，`chat_approval_execute` 后台任务执行并回写终态，2026-09-25）
 
 ### Blue Fish Lab (`fish/`)
@@ -360,6 +434,8 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - Phase 2 cognition prompt 边界由 `CognitionEventViewV1` + `CognitionProfileViewV1` 提供 provider-independent 的确定性投影，并按 stable soul / preference → volatile cognition → current batch 排序。生产配置逐 task 选择视图：只有真实 SenseTime gate 通过的 `soul.awareness_confusions` 默认 compact-v1；Preference、Insight 与 plain `soul.awareness` 均保持 legacy，不能由一个聚合开关整体切换。
 - Phase 3 继续保持 legacy/compact 选择不变，只收紧 analyzer 送入 builder 的请求集合：Preference 自动预算路径从每个剩余 offset 按独立 chunk 的真实 prompt shape 二分找最大前缀，偏斜的大事件仍交给既有单条 compact recovery。Insight 的 Phase 3 固定 `latest-20 ∪ latest-20 judged/validated` 视图现保留为异常回退/历史 control；生产视图最多 40 条，按 latest-8、judged-8、当前 awareness/profile 相关性 16、重要性/多样性 8 四路选择并加权补位。同状态近重复只竞争 prompt 槽，不同确认状态分别保留，随后仍与完整 durable hypothesis ledger 合并并保存。因此 token 优化边界位于 `CognitionCycle/PreferenceAnalyzer → prompts.py` 之间，不改变 MemoryManager 的持久层、system/output contract、max-token ceiling 或 provider 路由。
 - 认知画像流水线（`soul/ledger.py` + `soul/dialogue_anchor.py` + `soul/confusion.py` + `soul/posture_gate.py`）：兴趣层的事件驱动写入已经收敛为一条 `ProfileUpdatePipeline → INTEREST` 路径，行为、对话与 feedback 都是管线信号，其中 feedback 带优先级阈值；旧反馈批默认退役，仅 `unified_interest_line=false` 回退时恢复。其上叠加统一审计与一致性纪律。**单锚**由 queue admission 冻结成带 kind/ref/generation 的 persisted/reserved/failed/absent snapshot；worker 只做 exact validation，绝不把受理时的 generation 0 升级成执行时出现的未来锚。**对象结算**在 `SoulEngine` 中拆成公开 `submit_*` 与 worker-only `_apply_*`；11 个 declared kind 的生产入口已全部接入一个 in-memory queue/actual worker，锚 relation 和普通 chat settles 在当前 learn worker task 内直接 apply，不递归排队或 inline dispatch。guard 校验 actual worker Task + lifecycle nonce，不存在 child 临时授权；request task、active child 与跨 job detached child 均不能进入 protected façade 或冒充队外 producer。`card_settlements` 只保存 immutable winner、result、stable event identity 与 `applied`，数据库级文件锁、5 分钟 lease、claim token、三段 CAS、discussion attempt token 与恢复 scanner 已删除。apply 顺序固定为 event → object → derived → rebuild marker → applied → projection → exact-generation anchor release；前四类 effect 可幂等重放，`applied=1` 后的显式 retry 只补 ledger observer / projection / anchor publication。结算与 revise-derived 台账使用稳定 hash effect key，首次 audit 写失败不阻断业务，恢复后补写不重复。列表/单 turn GET 只 submit `card.reconcile`，由 worker 补 publication 或修复无活锚 orphan discussion。队列 job 不落盘；重启后由 action retry/GET reconcile 重新 admission，不增加 scanner/job table。疑惑锚对象段仍先入 `confusions.replay_queue`（FIFO 5、精确队头、四类解锚清空台账），12h cycle 只枚举并提交专属 attribution replay。疑惑 topic 冻结、held 重放与代理证据折价不变。**态势门控**继续只覆盖深层对话候选与 soul 整份重建；VALUES/CORE 管线层已退役，三模式仍为 off/shadow/enforce。
+- 事件时间溯源（`event_provenance.py`）：cognition prompt 边界统一投影事件——`events.created_at` 是写入时刻，永不进入模型；只有 `metadata.timestamp`（历史 `view_at` / 收藏 `fav_time` / 关注 `mtime`）算发生时间，缺失的行标 `time_quality=ingest`（时间未知）。`metadata.snapshot` / `import_source` 标记的账号存量关注合并成一行「导入存量：关注了 N 位创作者（时间区间）」，创作者名单保留在 `metadata.creators`；单条新增关注仍按真实行为处理。该投影由偏好 / 觉察 / 觉察+疑惑三个 builder 共用，输入行不被修改。
+  - 平台时间契约（2026-10-27 审计）：读取侧 `event_format.parse_event_timestamp` 认 `timestamp` 以及所有交互时间私有键（`INTERACTION_TIME_KEYS`：`view_at` / `fav_time` / `mtime` / `watched_at` / `interaction_time` / `starred_at` / `liked_at` …），**永不**把 `published_at` / `pubtime` / `created_at`（内容发布时间）当行为时间。有真实交互时间的来源：B 站历史 `view_at`、B 站收藏 `fav_time`、B 站关注 `mtime`、YouTube Takeout `watched_at`、linux.do / 微博 / 知乎 `interaction_time`、GitHub `starred_at`；只有内容发布时间、拿不到「用户何时点的」的来源：小红书、抖音、TikTok、Instagram、Reddit、V2EX、X 点赞/书签——这些行一律按「时间未知」处理，不猜、不用发布时间顶替。
 - 分类词表（`taxonomy.py`）：偏好层一级分类收敛到固定 `CATEGORY_VOCAB`，`PreferenceAnalyzer` 在写入前用精确命中 / embedding 最近邻 /「其他」兜底解析，避免自由文本分类污染长期画像。
 - 分类迁移与画像整理：`CategoryMigrator` 通过 `profile-consolidate --migrate-categories` 把存量自由分类迁到固定词表；`ProfileConsolidator` 的 12h 整理流程按 `(name, category)` 处理同名异义主题，支持 LLM 用 `{name, category}` 精确引用成员。
 - 用户画像覆盖层（`overrides.py`）：用户手动编辑存独立 `profile_overrides.json`，在读收口 `get_profile()` 与镜像收口 `sync_profile_files()` 叠加到 AI 画像之上（有效画像 = AI ⊕ 覆盖），画像重建不覆盖用户编辑；删 / 拉黑经有效 dislikes 影响 discovery / recommendation / delight 硬过滤（Phase 1 后端；编辑 UI 见 Phase 2/3）
@@ -443,6 +519,7 @@ Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公�
 
 ### Recommendation Engine (`recommendation/`)
 - 推荐排序与朋友式推荐表达生成；统一从候选池读取
+- `recommendation/director/` 默认关闭；启用后提供 Jev 二卡递推、Agent 多屏草稿 + Jev 局部修补、纯 Agent 预排。`policy.py` 将画像、最近三屏真实经历与 ≤40 张个性化候选转为共用的屏目标／证据／软角色上下文：Jev 一次选择 pair + role，Agent 先判断有用供给，再规划最多三屏 brief 和具体配对。`planner_refs.py` 仅在 Agent seam 使用 `c0..` 短引用，还原所选／遗漏而不改 evidence refs；`horizon_coverage.py` 统一目标覆盖与合法提前结束，保留初始 completion。首次非法 JSON／结构／引用／覆盖可在原总 deadline 内纠正一次（总调用 ≤2，已知用量累计），网络／超时不因此重试；修补保留原职责及语义短尾，不机械补满。校验并原子提交 ≤20 张的不可变屏，真实可见 ACK 和精确反馈影响后续草稿。服务失败明确回退，配置／策略换代使旧计划失效；没有固定探索配额，局部硬可行性与标题重复诊断不代表语义质量或全局最优认证。隔离验收脚本通过只读生产数据快照与真实 loopback HTTP／Luna 调用检查该链路，不启动发现／长期学习／恢复／Jev，不向源数据写入。详见[运行时合同](modules/director.md)。
 - 文案生成与 admitted backlog 解耦：canonical `copy_ready` 使用全部 serve gate 但不套 topic 展示窗口。正数水位生成量为 `max(copy_ready_target-copy_ready, min(pool_target-available, admitted_pending_available))`，再受全部 pending 与单批上限钳制；锁内先领取能净增 topic 展示窗口的行，公开目标达到后只维持 copy-ready 水位。serve/feedback/delight/maintenance 只发非阻塞 refill 通知，provider 工作由 coordinator 承担并在 expression lock 内复核缺口。`0` 是 legacy drain-all 回滚，任何模式都不放松非空文案硬门。
 - 惊喜队列 `GET /api/delight/pending-batch` 的完整阈值和候选读取在 FastAPI 线程池执行，避免手机刷新时占住主 API 事件循环、拖住独立推荐进程的转发响应；队列筛选和返回结构不变。
 - 惊喜推荐复用普通推荐的 copy-ready 与 canonical `seen_items` 状态门：`pool_expression / pool_topic_label` 未同时生成，或身份已经看过时，候选不进入惊喜打分、动态阈值样本、计数或 pending 出口。正式文案就绪后才复用 Evo 的 `relevance_score` 打分，并由条件写入原子同步 `delight_reason / delight_hook`；pending API、CLI 与 runtime stream 继续校验精确快照。evaluator 的内部 `relevance_reason` 永不作为惊喜状态或 UI 推荐理由；旧版错写快照在正式文案就绪后由后台 backfill 修复。普通推荐只在高分行已被 profile-aware 惊喜打分并同步快照后让出该行。移动 Web、桌面 Web 与插件的“×”统一调用 `dismiss`：它不是临时隐藏，而是把 canonical identity 写入 `seen_items` 后永久消费该惊喜。
@@ -611,6 +688,31 @@ flowchart LR
 `i18n/output_language.py` 把 locale 作为 `<output_language>` 指令附加到 user prompt 末尾，
 保持 system prompt 字节静态。详细契约见 [多语言模块](modules/i18n.md)。
 
+### Decision Providers (`decision/`，独立基础模块)
+
+独立 typed decision 合同及 Jev HTTP adapter，接受显式调用者提供的状态和具名问题，
+返回经过严格校验的 Choice / Score / Noul 证据与模型 / 输入归因。它不实现聊天
+`LLMProvider.complete()`，不加入 `[llm]` fallback 链，也没有候选池、推荐历史或画像
+写权限。配置为默认关闭的 `[decision.providers.jev]`，本机保存 Token 优先，空值沿用环境变量；
+自建 HTTP client 遵循现有海外网络策略。
+
+`decision/context_budget.py` 集中解析精确所选模型的双上下文容量与 UTF-8 工程护栏，
+不路由/切换模型；未知容量必须显式登记。`soul/profile_views.py` 管理本地全目录与
+按需投影，完整评估按每条候选选事实，导演按意图与 shortlist 选事实；必需负偏好原树
+不裁，原始画像不写。源摘要、选择策略、实际视图与容量分层绑定缓存/计划/请求身份。
+
+`RuntimeContext` 显式配置 `DirectorRuntime`，在同一实例内共享有界队列／并发／熔断的 decision provider，
+供编排、独立发现过滤或纯 Jev 完整评估借用；重载切换 epoch，关闭旧任务和 provider。模型只返回证据，
+没有提交权限。三端增加屏身份和真实可见确认，不新增模式设置控件；TOML 为配置入口。
+`agent_only` + 过滤 off + 非 Jev 完整评估不创建 Jev client、不读取其凭据。
+完整评估设置页可同时保存 URL/Token/模型/容量并切换模式；Token 仅本机 TOML 保存，读取响应不回显，
+也兼容原有 env。三端共用 `shared/jev-settings.js`，后端严格校验、后台重建；Jev 原生仅文本，不补生成式元数据，
+未知明确保留，错误不会回退 LLM。API、CLI、OpenClaw 与旧池补评共用此选择。
+三端显式测试草稿另走 `probe-service(kind=jev) → api.jev_probe → 合成画像/内容 → 完整 evaluator → native provider`，
+只返回安全结果，不保存配置/候选，不读真实画像。主评估中的矛盾时效证据作为 typed refusal
+按租约停放，同画像/模型/容量下不重复付费；不把矛盾改成有效“未知”，与输入超限分别统计。
+详见[模块文档](modules/decision.md)和[评估合同](modules/discovery.md)。
+
 ### LLM Providers (`llm/`)
 - 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）
 - `[llm.instances.<id>]` 为每个端点保存独立 `provider_type` / Base URL / token / model；registry 以实例 ID 注册，同一个 adapter 可实例化多次。`default_chain` 可包含任意数量实例，失败与限流 cooldown 都只影响当前实例
@@ -717,10 +819,42 @@ PyInstaller + Ollama/Tailnet/可选模型资源
 
 两个桌面 workflow 共用 `.github/actions/macos-signing`，从 Actions Secrets 临时导入钥匙串，交给 `packaging/build.py`；无运行时 Apple 依赖。详见[打包模块](modules/packaging.md)。
 
-可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](modules/discovery.md#可选-keenable-grounding)。
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
+
+
+## 免费模型路由与运行组件（实例统一改动待发布）
+
+```text
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
+```
+
+`llm/sponsored_profiles.py` 定义十个获批任务契约，选择模型只映射到已签名 task ID，不接收请求侧任意模型、URL 或 Key。业务 Prompt 保持由 Core 维护；文本/结构化任务走真实 SSE，JSON 数组不强制 `json_object`，工具由 Core 解析和执行。8B/4B 分别有 128K/256K 上下文上限，使用保守输入估计并为输出预留空间，超限不截断。已经发出内容的流失败不重放。
+
+`sponsored_status.py` 将真实IPC失败与成功恢复映射为按聊天/向量独立的本地状态；API和后台worker共享通知文件，页面轮询只读状态。向量选择经配置重建进入云端签名任务或本地Ollama，已存在的向量provenance边界防止跨源混用。
+
+`runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；五平台SDK已公开发行，本次实例统一改动尚未发布。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
+
+
+中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。

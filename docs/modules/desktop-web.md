@@ -1,5 +1,102 @@
 # 桌面 Web（Desktop Web UI）
 
+## 远程访问设置引导（2026-11-06）
+
+| 已实现能力 | 契约 |
+| --- | --- |
+| 未启用密码时 | 远程私有 API 被拒，页面提示先在后端电脑设置密码；本机默认仍免登录。 |
+| 状态入口 | `GET /api/auth/status` 的 `setup_required` 显示设置引导；开启后 Web 使用密码登录，扩展使用设备密钥配对。 |
+
+公开接口与错误码见 [API Auth](api-auth.md)。关闭开关的说明改为仅允许本机访问，不能继续显示局域网免密。
+
+
+## 硅基流动固定实例（2026-11-07，待随应用发布）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 普通 LLM 实例 | Qwen3-8B 与 Qwen3.5-4B 各是一个固定实例，与自有渠道共用实例列表、默认链和模块链；卡片标注只读，只有测试入口，不能编辑、删除、停用或复制。 |
+| 独立 Embedding | 在原 Embedding Provider 下拉选择硅基流动 BGE-M3（1024维）或本地 Ollama；与聊天实例独立，不覆盖另一份隐藏配置。“默认 / 备选”仍是单端点加构建期备选，不是 LLM 式多实例运行时调用链。 |
+| 手机配置并存 | 固定免费 LLM / Embedding 选择与 Jev 原生探测共用现有设置页；Jev 表单通过 `probeJevConfig` 测试当前草稿，保存 Jev 时不改未变更的聊天 / 向量配置。 |
+| 初始化与切换 | 初始化保存普通实例和向量配置；PC / 插件可把另一免费实例加入备用链，手机可选择主实例，Provider 选择框纵向排列、约束宽度并保持 44px 点击高度，避免长模型名溢出窄屏；完整链编辑通过 PC 设置。选择免费服务不隐式添加付费备用。 |
+| 安装、探测与通知 | 内置实例测试自动准备签名组件，普通实例探测只测该实例，Embedding 单独探测。凭据通知按实际启用能力保留，状态刷新保留恢复按钮和未保存草稿。 |
+
+公开接口：内置实例的 `read_only=true` 由后端计算；`PUT /api/config` 拒绝其任意字段修改及新建副本，整体替换实例列表时保留被省略的内置项；仅改变调用链可生效。`GET/PUT /api/config` 使用 `llm.instances`、`default_chain`、`routes` 与 `embedding`；`POST /api/config/probe-service` 使用 `kind=llm_instance`（带 `instance_id`）或 `kind=embedding`；模型发现返回获批的两个 ID。组件就绪和凭据通知仍通过兼容的 `llm.sponsored` 元信息输出，组件安装沿用 `POST /api/config/sponsored/prepare`，不向页面暴露共享 Key、路径或任意运行命令。 手机端只提交用户实际改动的 LLM/Embedding 字段，保存 Jev、语言或同步选项不会强制迁移未改动的旧 LLM 配置。
+
+共享前端 `syncInstance()` / `syncEmbedding()` 只控制普通字段；`renderNotice()` / `updateStatus()` 渲染无凭据通知。原 `mount()` 独立方案表单已移除。已有免费开关配置在后端迁移为实例和链。免费实例仅启用文本 / JSON / 工具能力，BGE 不支持图片向量；图片能力是可选能力，不影响初始化。
+
+## 手机扫码连接（2026-10-26）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 三种网络 | 「手机版」可选择局域网、系统 / 应用内 Tailscale、公网或自定义地址。 |
+| 可访问地址 | 已保存的回环地址不再覆盖局域网探测；仅监听本机时隐藏 LAN / 系统 Tailscale 二维码；没有地址时禁用复制。 |
+| 统一链接 | 相机扫码打开 `/m/`，新版原生 App「扫码连接」解析同一链接并保存后端；仅应用内节点带 `obc_connection=tailscale`。 |
+
+公开前端接口：`/shared/mobile-connection.js` 的 `OBCMobileConnection.connectionChoices()` 生成地址选项，`createPanel()` 管理选择、输入、加载与复制状态；插件随包复制同一源码。每次打开重新请求 `GET /api/qr-info`，失败或空响应不复用旧 Wi-Fi 地址。二维码本机编码，短链接用 QR v5，长链接用 v10（最多 271 UTF-8 字节），不调用第三方二维码服务。配置字段不变。使用与协议见[手机扫码连接](../mobile-connection.md)。
+
+## 首屏静态脚本交付（2026-10-23）
+
+```text
+包内桌面/共享脚本 → DesktopAssets（固定依赖顺序；最近两个内容版本；预压缩 gzip）
+                 → /web/assets/desktop-bundle.js?v=… → /web 一次 defer 请求
+共享源码/原资源入口 → 移动端/插件；无需 Node 构建，无安装或配置变化
+```
+
+源码 `index.html` 保留独立脚本标签，真实 API 响应将 15 个脚本按原顺序合并成一次 defer 请求；主题恢复等内联代码保持原位。模块 `api/desktop_assets.py` 只读取固定包内资源，按全部脚本、5 个样式表和 HTML 输入生成内容版本，并缓存最近两个构建及 gzip 表示。来源管理的 `custom-sources.js` 在主应用初始化前加载，其脚本与样式修改都会更新版本。输入不变时复用构建；不改变 JavaScript 的解析、初始化和业务请求内容。静态文件仍公开，推荐等业务接口继续受密码门禁保护。
+
+| 公开入口 | 行为 |
+| --- | --- |
+| `GET /web`、`/web/`、`/web/index.html` | 同一份 `no-store` 页面，引用带内容版本的脚本包。 |
+| `GET /web/assets/desktop-bundle.js?v=<version>` | 返回对应保留版本，按 gzip/identity 协商编码，支持 ETag/304；未知或已淘汰版本返回 404，不替换成新内容。 |
+| 原 `/web/assets/js/*`、`/shared/*` | 继续提供独立源文件，兼容移动端、插件共享代码与开发工具。 |
+
+完整 HTTP 缓存与编码约定见 [API 模块](api.md#桌面首屏静态脚本2026-10-23)。`tests/test_desktop_asset_bundle.py` 覆盖依赖顺序、拼接语法、版本失效与淘汰、编码协商、缓存复用及鉴权边界。
+
+## 性能采样后的启动优化（2026-10-23）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 默认简体快速启动 | 共用 i18n 运行时不下载恒等词库、不扫描原始中文 DOM；语言切换仍恢复源文本。 |
+| 滚动控件合并测量 | 回到顶部控件把启动、滚动、窗口变化的布局读取合并到下一帧，避免在首屏构建中强制布局。 |
+
+公开 API 与配置不变。真实页面、冷热缓存、语言切换及网络安全回归见[性能采样验收](../verification/2026-10-23-profiled-startup.md)。
+
+## 启动关键路径（2026-10-23）
+
+已实现：defer 脚本保持依赖顺序并移到 head，提前发现资源；恢复连接地址和前端偏好后立即开始鉴权，与首屏渲染重叠。隐藏的局域网鉴权／开机自启动设置不再启动即查询，首次禁用控件，打开设置后读取服务器状态。登录门禁、公开 API、配置与依赖不变。真实交替测试仅证实小幅热启动收益，冷启动未改善，详见[启动验收](../verification/2026-10-23-startup-latency.md)。
+
+## 首屏请求调度（2026-10-23）
+
+推荐卡片的收藏／稍后再看状态查询不再在建卡过程中同步扇出：统一在后续任务中发送，最多两个在途请求，失败也会释放名额。实际保存／取消操作保持直接调用，沿用 mutation registry 的版本保护。辅助首屏水合任务以两个 worker 独立处理，推荐、运行状态和待确认提示仍立即启动，单项失败不终止其余任务；运行状态首读结束即建立实时连接，不等待辅助面板完成。公开 API、配置、依赖和安装流程不变。性能数据与回归范围见 [整页排队优化记录](../verification/2026-10-23-web-cover-queue.md)，追加八轮真实请求对照见 [A/B 验收](../verification/2026-10-23-cover-live-ab.md)。
+
+## 完整候选评估器选项
+
+设置主说明收敛为一句：“选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。”
+服务连接开关直接标注“不切换评估器”；评估模式和地址 / Token 技术说明默认折叠，数据发送与测试计费提醒仍可见。
+桌面、移动 Web 和插件保持一致；仅调整文案与信息层级，公开 API、配置字段、调用路由及 CLI 均不变。
+回归入口：`tests/test_jev_connection_form.py` 检查只启用连接仍保留原评估器、技术说明默认折叠且可键盘展开；
+`test_desktop_web_settings_save_e2e.py`、`test_jev_settings_popup.py`、`test_jev_settings_mobile.py`
+检查三端一句话说明及配置保存。手工复核路径为“设置 → 高级功能 → 候选评分模式”，展开两类说明后仍可查看完整限制。
+测试修正、间歇性通用刷新失败及原分支对照见[本轮验证记录](../verification/2026-11-07-jev-settings-copy.md)。
+该提交的真实 OpenRouter 复验已覆盖桌面 / 实际插件保存和候选评估、默认 LLM 路由保持及容量缩小；移动 Web 后续草稿探测出现 `invalid_response`，整体未全通过，调大恢复 / 重启本轮未执行，见同一记录的真实请求章节。
+
+三端共用 Jev 表单增加“测试连接与评估”，以当前草稿调用 `POST /api/config/probe-service`
+的 `kind="jev"`。1 条合成内容完整 8 题、单次 HTTP 尝试；不加载真实画像、不写配置，
+费用提示在按钮旁。请求中禁用重复点击，编辑后旧结果失效；具体合同见 [API](api.md#jev-草稿完整评估探测2026-11-06)。
+
+高级设置新增 `eval_scorer=jev`（纯文本 / 受控分类实验模式），显示独立 provider readiness
+及与封面评估不兼容的说明；保存由后端统一校验。
+未知主题 / IP 不由 LLM 补全。插件高级设置和移动设置提供相同模式入口，CLI 展示同一配置。
+Jev 连接区可配置服务开关、Base URL / 完整 API URL、Token、固定模型、双上下文上限、每批候选数、
+超时及传输重试。与评估模式可一次保存；Token 密码输入、留空保留、明确清除，保存后清空，
+只在后端本机 TOML 保存，不进入浏览器存储/读取响应。共享
+`web/shared/jev-settings.js` 的 `mount(root, evaluator, {probe}).load(provider, evaluation)` / `collect()`
+也供插件与移动 Web 使用。更换 URL 必须重填 Token，换模型不继承旧容量；同样支持原有 env。
+readiness 与配置后台应用状态均不等于联网/质量验收；显式探测只认证本次合成评估，不认证推荐质量。
+地址类型明确区分 SDK Base URL 与完整原生接口。Base 自动补 `/v1/systemone`，已有 `/v1`
+不重复；例如 OpenRouter Base 为 `https://openrouter.ai/api`。保存后从 canonical endpoint
+恢复表示；旧自定义路径仍显示完整地址，不改写为官方服务。三端均由后端发送 Bearer Token。
+
 ## 概述
 
 来源故障沿用「设置 → 日志 → 异常报警」：连续 3 次普通采集失败、立即登录／验证暂停和成功恢复
@@ -8,12 +105,47 @@
 消息铃铛的 `source_settings` 动作直接定位对应来源卡，普通故障不会打开登录接管。
 来源卡也显示前两次短暂失败的安全原因与既有重试时间；登录按钮仅出现在人工处理问题上。
 
+聊天布局修复（2026-10-23）仅调整桌面 Web `/web` 的 `.chat-page`，包括安装版内打开的网页与其窄屏模式；移动 `/m`、插件 popup 和 CLI 没有该容器，不改布局。无新接口、配置、依赖或安装流程。
+
 `src/openbiliclaw/web/desktop/` 是桌面 Web 单页应用（`/web`，入口
 `index.html`，主逻辑 `assets/js/app.js` 单文件 IIFE，样式
 `assets/css/app.css`）。本文档当前聚焦「聊聊口味」tab 的 agent loop
 前端（M8，设计共识见
 [聊一聊 Agent Loop 设计](../plans/2026-09-23-chat-agent-loop-design.md)，
 后端协议见 [agent 模块](agent.md) 与 [api 模块](api.md)）。
+
+## 推荐导演批次协议（桌面 / 移动 Web）
+
+桌面 `/web` 与移动 `/m/` 推荐页复用
+`web/shared/director-client.js`，与插件 side panel 使用同一份生成幂等、
+批次归因和可见曝光策略。现有布局不变；编排策略由后端配置决定，前端不
+把 `jev_recurrent`、`agent_jev`、`agent_only` 实现成三套请求逻辑。
+
+- **读取与生成分开**：`GET /api/recommendations` 在导演启用时只恢复已提交
+  批次。响应 `director.requires_generation=true` 且页面可见、没有现有卡片时，
+  前端显式 `POST /api/recommendations/director/generate`，意图为 `NEXT`。
+  加载更多仍调用 append（`NEXT`）；换一批仍调用 reshuffle（`STAY`）。
+  只有后端明确返回 `409 stay_without_batch`，首次换一批才转成新的 `NEXT`
+  请求；其余 STAY 不会被静默改成推进。
+- **失败不重复消费**：生成请求 ID 按动作和来源保存在 localStorage，网络失败、
+  页面重载后重试沿用同一 ID；请求在途禁用相应按钮。换批失败保留旧卡片，
+  不因空响应或异常提前清空。平台 scope 由后端追加到基础 `stream_ref`，
+  客户端不会把已经带平台的返回 stream 再追加一次。
+- **真实可见才曝光**：卡片保留 `batch_ref`、`stream_ref`、`item_key` 与原始
+  recommendation `id`，并绑定相同含义的 DOM data 属性。共享模块使用
+  `IntersectionObserver`，只在卡片已挂载、与视口相交且 `document.hidden=false`
+  时发送 `/api/recommendations/director/present`。获取数据、预加载、后台标签页
+  和未滚到的卡片不算曝光；缺少观察器时也不伪造曝光。
+- **归因和有限重试**：可见 ACK 使用稳定的 batch/推荐行 ID，失败最多重试
+  两次；点赞、点踩、评论和推荐点击都携带原始推荐行 ID 与 `batch_ref`。
+  恢复历史批次不重新生成推荐行。旧后端、缺少 director 元信息或 mode=off
+  时保留原 API body 与推荐行为。
+
+协议单测为 `tests/js/director-client.test.mjs`，Python 包装入口为
+`tests/test_director_frontend_protocol.py`；
+`tests/test_director_frontend_e2e.py` 使用真实浏览器和本地合成接口覆盖桌面、
+移动首屏生成、屏外/后台不曝光、恢复不生成及反馈批次归因。插件打包通过既有
+shared 资源复制流程分发同一文件。
 
 ## 已实现功能
 
@@ -28,6 +160,10 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 | 验证域授权 | ✅ | 接管页显示当前登录／验证域选项，逐域点击确认；刷新观察可发现延迟出现的验证框，空列表清除旧按钮；普通广告不提示授权 |
 | 动态网站来源管理 | ✅ | 来源设置独立列出每个自定义网站，复用 `shared/custom-sources.js`；可保存名称、候选池占比、发现间隔，启停、归档、查看最近运行与重新登录。每个网站在占比总览中与内置平台平级；推荐/惊喜卡展示 `source_name`，内容平台仍为 `web`。旧版公开 Feed/Sitemap/listing 编辑器继续保留 |
 | 来源刷新响应校验 | ✅ | `GET /api/custom-sources` 必须同时含 `items`、`executors` 数组才替换页面状态；不完整响应保留来源卡、编辑、份额总览和 Ego 状态。写入成功但刷新失败分别提示，不误报来源被清空 |
+
+| 首屏静态脚本合并 | ✅ | 固定顺序的包内脚本经 `DesktopAssets` 变为一次 defer 请求；最多保留两个内容版本和预压缩 gzip，独立资源入口继续可用 |
+| 配置应用状态恢复 | ✅ | 保存进入队列后每 2 秒查询应用状态，实时通知漏收或单次查询失败后继续恢复；终态停止查询，配置状态显示后台等待步骤/错误，保留新草稿 |
+| 聊天工作区自适应 | ✅ | legacy 与带会话侧栏模式均占满主区域可用宽度，不继承内容页 1120px 上限；消息气泡仍限宽，窄屏沿用侧栏浮层和输入框定位 |
 | M8 流式过程展示 | ✅ | `POST /api/chat/agent/stream` 真流式：thinking 过程文本 + 每步一行折叠工具摘要（可展开参数/结果）+ 审批卡内嵌；完成后整体折叠为「过程（N 步）」；`final` 落成答复气泡；历史回放从 `payload.agent_events` 重建同一视图 |
 | M8 会话列表 | ✅ | 侧栏（新建/切换/内联改名/归档/显示已归档），默认会话徽标，`active_turns>0` 活跃圆点，标题与预览轮询刷新（复用 2.5s 共享聊天轮询），当前会话持久化到 localStorage |
 | M8 skill 切换 | ✅ | 会话条 skill chip（图标+名称）弹出角色选择浮层（`GET /api/chat/skills`），按会话记忆选择、下一回合生效；`suggest_skill` 工具调用渲染为切换卡（一键切换/忽略） |
@@ -38,9 +174,11 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 | 会话与流结束隔离 | ✅ | SSE 必须收到 `done` 才确认完成，提前 EOF 走历史恢复；历史快照按来源会话与请求代次校验；live 回复只在来源会话展示，旧回合 `done.skill` 不覆盖用户中途切换的角色 |
 | 未发送草稿按会话隔离 | ✅ | 切换前保存当前输入，切回恢复对应草稿；新会话为空，发送或清空后不复活旧文字。草稿仅保存在本页面内存，不跨刷新或设备同步 |
 | 聊天风格选择 | ✅ | 顶部独立风格入口，六种单选模板、说明和同题预览；保存到当前会话，刷新/跨端同步，从新消息生效。保存期间阻止本会话抢先发送；晚到请求不覆盖新会话或已保存选择 |
-| 蓝鱼实验室设置 | 🧪 | 设置页新增「养蓝色大肥鱼」Tab（`assets/js/fish-settings.js`，按 Tab 懒加载）：总开关 / 只预览 / 独立小号 Cookie 保存与校验 / 可编辑人设、说话规矩与可选受众（只回哪类人） / 配额 / 预览一轮 / 发一轮 / 最近账本。全部走 `/api/fish/*`，不进全局 `PUT /api/config` 保存流程，鱼的 Cookie 与实验室字段也不混进主配置表单 |
+| 蓝鱼实验室设置 | 🧪 | 设置页新增「养蓝色大肥鱼」Tab（`assets/js/fish-settings.js`，数据按 Tab 懒加载）：总开关 / 只预览 / 独立小号 Cookie 保存与校验 / 可编辑人设、说话规矩与可选受众（只回哪类人） / 配额 / 预览一轮 / 发一轮 / 最近账本。全部走 `/api/fish/*`，不进全局 `PUT /api/config` 保存流程，鱼的 Cookie 与实验室字段也不混进主配置表单 |
 | 审批拒绝草稿 | ✅ | 与移动 Web / popup 共用 `agent-chat.js` 的拒绝编辑保留助手，轮询和过程重绘保留原因输入与焦点；终态更新不会复活旧操作按钮 |
 | 聊天提示条避让 | ✅ | 聊天页提示条固定在输入区上方且不接收指针事件，避免遮挡卡片或输入区、悬停导致提示长期不消失；其他页面仍可点击关闭与悬停暂停。`scripts/browser/chat-toast-hit-test.js` 验证真实 CSS 下的点击穿透 |
+
+配置状态接口：`GET /api/config/apply-status` 的 `state/requested_revision/applied_revision/message/error` 为权威快照。仅当前保存待应用时轮询，同一时间最多一个请求；终态和旧修订过滤沿用现有规则。此修复只涉及桌面 Web（含安装版打开的网页），移动 Web、插件 popup 与 CLI 不使用这个保存栏；不改后端应用流程、配置或安装器。
 
 接口：`GET /api/chat/personas` 获取目录，`PATCH /api/chat/sessions/{id}` 保存 persona，
 会话列表/详情中的 `metadata.persona` 是唯一持久来源。目录不可用时仅风格入口降级，
@@ -55,6 +193,8 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 三端补充实测、失败记录与修复见[三端逐项复验](../testing/2026-09-30-chat-three-surfaces-e2e.md)。
 
 ## 模块结构
+
+`api/desktop_assets.py` 负责上述静态资源交付；前端业务源码仍按下列结构维护：
 
 ```
 web/desktop/
@@ -193,3 +333,18 @@ tab 栏改为按内容宽度排布并允许横向滚动。完整契约见 [多�
 2026-11-08 真实页面复测补充：窄于 900px 的会话抽屉内提供「收起」按钮，关闭后焦点回到会话列表开关，避免抽屉遮住外部开关而无法关闭；不清空聊天输入。高度不超过 620px 时允许页面纵向滚动，聊天记录保留至少 160px，说明和示例可滚动查看。
 
 托管 Ego 的 `setup_state=ready`、`installed=true`、`connection_state=offline` 表示已准备且空闲退出。共享来源管理组件显示「Ego Lite 已准备，按需启动」及后台自动启动说明，不再要求安装或手动开启；失败、未验证、外部宿主与不支持的平台仍分别显示实际状态。
+
+首次设置 `/setup/` 的语言菜单在桌面和手机均可见，先选语言再填模型。语言写请求串行，
+保存失败可见且可重试，配置预填不能覆盖用户刚选的语言。共享 i18n 运行时也监听动态提示属性，
+并保证快速切换以最新选择为准；翻译目录下载失败后可重新请求。接口仍为 `PUT /api/config {language}`。
+初始化仅在后端提供免费方案元数据且没有现存Key时推荐免费入口；已保存的兼容服务和未列入向导的渠道继续保留预填或提示，兼容旧配置。
+
+
+### 免费方案完成状态与错误提示（2026-11-05）
+
+| 已实现修复 | 行为 |
+|---|---|
+| 初始化完成页 | 按实际选择显示云端 BGE-M3 或本地 Ollama，避免云端模式声称本地模型已安装。 |
+| 初始化写入阻断 | 保留服务端扁平 `detail` 文本，提示初始化进行中；发送草稿继续保留。 |
+
+共享接口 `OpenBiliClawDialogueConfirmation.contextErrorCode/contextErrorMessage` 同时识别嵌套 `detail.code/message` 与写入守卫的 `error/detail`；没有改变请求或重试策略。完成页继续使用同一份 Sponsored 表单配置。

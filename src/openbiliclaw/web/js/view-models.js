@@ -71,7 +71,7 @@ export function normalizeCoverUrl(value) {
 export function getCoverImageAttrs(value) {
   const src = normalizeCoverUrl(value);
   if (!src) return null;
-  return { src: `/api/image-proxy?url=${encodeURIComponent(src)}` };
+  return { src: `../api/image-proxy?url=${encodeURIComponent(src)}` };
 }
 
 export function getRecommendationCoverPreloadUrls(items, { start = 0, limit = 12 } = {}) {
@@ -459,6 +459,10 @@ export function normalizeRecommendation(item) {
     topic_label: getSourceStrategyLabel(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
+    ...(normalizeText(item?.batch_ref) ? {
+      batch_ref: normalizeText(item.batch_ref),
+      stream_ref: normalizeText(item?.stream_ref),
+    } : {}),
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,
@@ -795,6 +799,7 @@ export function normalizePoolStatus(status) {
 
 export function normalizeRuntimeStatus(status) {
   return {
+    sponsored_status: status?.sponsored_status || {},
     initialized: Boolean(status?.initialized),
     recommendation_count: Number(status?.recommendation_count ?? 0),
     pending_signal_events: Number(status?.pending_signal_events ?? 0),

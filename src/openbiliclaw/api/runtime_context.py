@@ -11,7 +11,7 @@ only the agent loop and configuration, leaving active learning owners intact.
   - ``memory_manager`` — owns file-backed memory layers
   - ``event_hub`` — holds live WebSocket subscriber queues
   - ``extension_native_save_broker`` — owns durable extension save jobs
-  - ``presence`` — tracks shared extension runtime-stream presence
+  - ``presence`` — shares API runtime-stream presence with headless workers
 
 **Swappable components** (rebuilt on hot-reload):
   - ``llm_registry``, ``llm_service``, ``bilibili_client``, ``saved_sync_service``
@@ -827,6 +827,8 @@ class RuntimeContext:
     # route through the same enqueue → evaluate path every other strategy uses.
     candidate_pipeline: Any = None
     recommendation_engine: Any = None
+    director_runtime: Any = None
+    director_replenish_callback: Any = None
     runtime_controller: Any = None
     account_sync_service: Any = None
     auto_update_service: Any = None
@@ -873,6 +875,48 @@ class RuntimeContext:
         """Register a stable post-commit observer once for this context."""
         if callback not in self._pool_inventory_commit_subscribers:
             self._pool_inventory_commit_subscribers.append(callback)
+
+    def configure_director(self, config: Any = None) -> None:
+        """Attach opt-in decision routes to injected or freshly built runtimes."""
+        cfg = config or self.config
+        if self.director_runtime is not None or self.recommendation_engine is None:
+            return
+        mode = getattr(getattr(cfg, "director", None), "mode", "off")
+        filter_mode = getattr(
+            getattr(getattr(cfg, "discovery", None), "semantic_filter", None), "mode", "off"
+        )
+        eval_scorer = getattr(getattr(cfg, "discovery", None), "eval_scorer", "llm")
+        if mode == "off" and filter_mode == "off" and eval_scorer != "jev":
+            return
+        from openbiliclaw.recommendation.director.runtime import build_director_runtime
+
+        self.director_runtime = build_director_runtime(
+            cfg,
+            self.database,
+            self.recommendation_engine,
+            self.llm_service or getattr(self.recommendation_engine, "_llm", None),
+        )
+        if self.discovery_engine is not None and self.director_runtime is not None:
+            self.discovery_engine._semantic_filter = self.director_runtime.semantic_filter
+        controller_discovery = getattr(self.runtime_controller, "discovery_engine", None)
+        if controller_discovery is not None and self.director_runtime is not None:
+            controller_discovery._semantic_filter = self.director_runtime.semantic_filter
+        if eval_scorer == "jev" and self.director_runtime is not None:
+            from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+
+            evaluator = self.director_runtime.jev_evaluator
+            if evaluator is None:
+                raise ValueError("configured Jev full evaluator was not constructed")
+            if self.discovery_engine is None:
+                self.discovery_engine = ContentDiscoveryEngine(
+                    database=self.database, eval_scorer="jev", jev_evaluator=evaluator
+                )
+            for discovery in (self.discovery_engine, controller_discovery):
+                if discovery is not None:
+                    discovery._eval_scorer = "jev"
+                    discovery._jev_evaluator = evaluator
+                    discovery.multimodal_evaluation_enabled = False
+            self.recommendation_engine.bind_content_evaluator(self.discovery_engine)
 
     def _request_config_reload(self, new_config: Any) -> Any:
         """Reload hook for the M7 ``update_config`` tool.
@@ -1117,6 +1161,47 @@ class RuntimeContext:
             payload.get("worker_pid"),
             payload.get("worker_mode"),
         )
+
+    def try_apply_llm_instance_config(self, new_config: Config) -> bool:
+        """Switch the default instance chain without interrupting active learning.
+
+        Instances, module routes and embedding space stay fixed. Existing
+        requests retain their selected adapter; subsequent calls use the new
+        order. Endpoint edits and module-route changes require rebuilding.
+        """
+        from openbiliclaw.config import Config
+        from openbiliclaw.llm.base import LLMRegistry
+
+        current = self.config
+        registry = self.llm_registry
+        if (
+            self.degraded
+            or not isinstance(current, Config)
+            or not isinstance(new_config, Config)
+            or not isinstance(registry, LLMRegistry)
+            or not current.llm.instance_routing
+            or not new_config.llm.instance_routing
+        ):
+            return False
+        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
+        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
+        chain = after.llm.default_chain
+        if not chain or any(not registry.is_chat_capable(i) for i in chain):
+            return False
+        expected_llm = replace(
+            before.llm,
+            default_chain=list(chain),
+            # Loading native routes projects these non-authoritative legacy aliases.
+            default_provider=after.llm.default_provider,
+            fallback_provider=after.llm.fallback_provider,
+        )
+        if before.llm.default_chain == chain or replace(before, llm=expected_llm) != after:
+            return False
+        registry.configure_chain(chain)
+        self.config = new_config
+        if self.agent_tool_context is not None:
+            self.agent_tool_context.config = new_config
+        return True
 
     def try_apply_agent_config(self, new_config: Config) -> bool:
         """Publish only known chat knobs, preserving active owners and loops.
@@ -1585,6 +1670,16 @@ class RuntimeContext:
 
         discovery_cfg = getattr(new_config, "discovery", None)
 
+        from openbiliclaw.recommendation.director.runtime import build_director_runtime
+
+        new_director_runtime = build_director_runtime(
+            new_config,
+            self.database,
+            new_recommendation_engine,
+            new_llm_service,
+            activate=False,
+        )
+
         # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
         # word-lifecycle helper shared by B站 search / explore and external
         # search producers. Holds the keyword-store DAO (the database) +
@@ -1622,7 +1717,11 @@ class RuntimeContext:
             ),
             eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
             eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
+            semantic_filter=new_director_runtime.semantic_filter if new_director_runtime else None,
+            jev_evaluator=new_director_runtime.jev_evaluator if new_director_runtime else None,
         )
+        if getattr(discovery_cfg, "eval_scorer", "llm") == "jev":
+            new_recommendation_engine.bind_content_evaluator(new_discovery_engine)
         search_strategy = SearchStrategy(
             llm_service=new_llm_service,
             bilibili_client=new_bilibili_client,
@@ -2098,6 +2197,7 @@ class RuntimeContext:
         if bool(getattr(discovery_cfg, "inspiration_search_enabled", False)):
             from openbiliclaw.config import derive_inspiration_breadth_params
             from openbiliclaw.discovery.inspiration_provider import (
+                InspirationGroundingKeys,
                 build_inspiration_search_provider,
                 build_platform_source_backends,
             )
@@ -2108,9 +2208,7 @@ class RuntimeContext:
             inspiration_provider = build_inspiration_search_provider(
                 getattr(discovery_cfg, "inspiration_search_backends", None),
                 database=self.database,
-                exa_api_key=str(getattr(discovery_cfg, "exa_api_key", "") or ""),
-                you_api_key=str(getattr(discovery_cfg, "you_api_key", "") or ""),
-                serply_api_key=str(getattr(discovery_cfg, "serply_api_key", "") or ""),
+                grounding_keys=InspirationGroundingKeys.from_discovery_config(discovery_cfg),
                 platform_backends=build_platform_source_backends(
                     new_config,
                     database=self.database,
@@ -2574,6 +2672,17 @@ class RuntimeContext:
         self.discovery_engine = new_discovery_engine
         self.candidate_pipeline = new_candidate_pipeline
         self.recommendation_engine = new_recommendation_engine
+        old_director_runtime = self.director_runtime
+        if new_director_runtime is not None:
+            new_director_runtime.activate()
+        self.director_runtime = new_director_runtime
+        if old_director_runtime is not None:
+            # Fence immediately, before any asynchronous close yields control.
+            old_director_runtime._closed = True
+            old_director_runtime.store.invalidate_all(
+                new_director_runtime.context_digest if new_director_runtime else "director-off"
+            )
+            self.task_registry.track("close_old_director_runtime", old_director_runtime.aclose())
         self.runtime_controller = new_runtime_controller
         self.account_sync_service = new_account_sync
         self.auto_update_service = new_auto_update
@@ -2994,6 +3103,9 @@ def build_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        presence=PresenceTracker(
+            shared_path=config.data_path / "runtime" / "extension_presence.json"
+        ),
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -3072,6 +3184,9 @@ def build_degraded_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        presence=PresenceTracker(
+            shared_path=config.data_path / "runtime" / "extension_presence.json"
+        ),
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,

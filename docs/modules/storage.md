@@ -1,5 +1,30 @@
 # 存储层
 
+## Jev 矛盾证据停放（2026-11-06）
+
+| 已实现能力 / 公共 API | 合同 |
+|---|---|
+| `park_claimed_evaluation_refused_candidates(ids, claim_token=..., reason=...)` | 将预算失败或矛盾时效证据按当前租约 CAS 停放；只接受两种已知原因和 64 位摘要，不修改已有评分或增加重试数 |
+| `count_invalid_evidence_blocked_candidates()` | 单独统计 `invalid_evaluation_evidence:`，不误报为输入超限 |
+| `revive_evaluation_refused_candidates(context_fingerprint=..., limit=500)` | 上下文变更后有界重入队；重复保存/重启不恢复，旧预算专用方法保留兼容 |
+
+仍使用既有 `status/eval_error`，无 schema migration。通用暂态恢复同时排除这两类停放，
+禁止把已收到但不可信的答案再次作为缺失响应付费重评。远端用量与重试计数不是同一指标。
+2026-11-07 起该原因也承载 native INVALID（缺题、未知选项、错模型等），不新增 schema；
+调用方的恢复指纹包含已校验端点，网关修正可以重新入队，凭据轮换不改变指纹。
+
+## Jev 输入预算停放（2026-10-27）
+
+| 能力 / 公共 API | 合同 |
+|---|---|
+| `park_claimed_input_budget_candidates(ids, claim_token=..., reason=...)` | 仅当前 `evaluating` 租约所有者可 CAS 停放为 `failed_eval`；reason 为预算原因与 64 位上下文摘要，清租约但保留已有证据，不增加 attempts |
+| `count_input_budget_blocked_candidates()` | 只读统计带预算原因的停放行，不返回画像或正文 |
+| `revive_input_budget_candidates(context_fingerprint=..., limit=500)` | 只重新入队上下文摘要不同的停放项；有界、清错误/租约/attempts，不消耗 transient 复活次数 |
+
+复用既有 `discovery_candidates.status/eval_error`，无 schema migration。
+通用 `revive_failed_eval_candidates()` 排除预算原因，避免同配置 startup/manual 唤醒反复空跑；
+旧租约迟到回写不能停放新 owner 的行。预算失败不写成功评分、时效证据或 `evaluated_at`。
+
 ## 概述
 
 自定义来源的 `WorkflowStore` 在主 SQLite 内创建 `custom_source_alert_events`。
@@ -24,6 +49,47 @@
 - 跨机器迁移包的一致快照、严格校验、私有暂存和重启期 journaled replace / rollback。
 
 ## 可移植数据迁移
+
+### 可选导演与过滤审计的持久化
+
+| 能力 / API | 合同 |
+|---|---|
+| `DirectorStore.begin/commit/restore` | 按需创建 director_streams / requests / batches / batch_items / plans；短 `BEGIN IMMEDIATE` 原子重验并消费整屏，批次不可变，模型调用不占锁 |
+| `DirectorStore.present/feedback` | director_feedback 与 projected_events 去重，实际可见才呈现；点击／反馈引用原 event ID，版本与游标单调推进 |
+| `DirectorStore.session` | 在同一事务拼接状态、语义反馈、最近三屏真实经历与完整历史偏好水位；从批次冻结内容与 receipt 的 item_keys 精确关联。使用 stream/created、feedback batch/created 与偏好回执版本索引，旧数据按需读取，无事件重写 |
+| `save_plan/load_plan/activate_context` | 未提交计划 TTL / CAS / epoch；同配置重建保留草稿，配置换代废弃未来状态，不改历史屏 |
+| 导演计划与批次 JSON | 保存屏 brief、配对 role / intent、策略版本与 `screen_review`；沿用既有 plan / trace JSON，不新增 SQL 列、不改写旧载荷 |
+| `Database.defer_claimed_semantic_filter_candidates` | token-fenced 本轮延期，不惩罚 attempts；后续一次强制完整 LLM 复审，不形成永久黑名单 |
+| 独立过滤审计 | discovery_semantic_filter_audit 只保存 hashes / 模型 / schema / 校准归因与真实标签，保留 30 天且最多 20,000 行 |
+
+导演表与 canonical recommendations / content_cache 共用数据库、事务与最新准入门；特征指纹防止模型运行期间内容被替换。详见 [导演](director.md) 和 [发现](discovery.md)。数据库仍随既有一致快照迁移，不新增外部依赖。
+
+短期上下文的曝光以 `director_feedback` 的真实 ACK 为准，不把旧 `presented` ledger
+（点击／反馈也可能标记该列）当作 ACK 来源。只有交互没有 ACK 的卡片会携带动作、
+`exposure_confirmed=false` 和空曝光时间，不丢失行为也不虚构曝光确认。存量 v1 反馈在
+读取时从 receipt 与不可变批次补语义，原事件、学习信号和批次不重写；旧计划缺少画像摘要
+时在下次生成自动重排。无需人工数据迁移，源码、Docker、桌面安装共用此路径。
+
+屏幕策略版本为 `director-screen-policy.v1`。旧 `HorizonPlan` JSON 缺失的新字段仍可解析，
+但没有当前 `planning_policy_version` 的未来计划会在生成入口重排；这不是改写历史批次。
+策略版本也参与 runtime context digest，通过既有 epoch / fence 拒绝旧策略在飞写入。
+`ScreenBrief.revise_when` 仅保存可审计的软说明，不在数据库执行模型提供的规则。
+批次 `trace_json` 中的 `screen_review` 只报告规范化标题完全重复，并固定标记
+`semantic_quality=not_certified`，不能当作语义质量验收或用户满意度标签。字段增加不改变
+幂等、CAS、实际曝光投影或安装依赖。
+
+`SessionSnapshot.latest_preference_revision` 在同一读事务内查询所有非 `presented / click`
+回执的最大状态版本，没有此类回执时为 `0`。新增 partial expression index
+`idx_director_feedback_preference_revision` 支持该查询，不增加表／列、不重写旧回执。
+它仅供 Controller 判断纯 Agent 计划是否过期，不进入模型 prompt：密集 ACK／点击不会因
+4+4 窗口截断而平白触发重排，也不能掩盖窗口外的新偏好反馈。离线输入没有权威水位时保持
+严格事件覆盖检查，缺口保守重排；`skip` 被保守纳入水位不表示认定用户不喜欢。
+
+同一水位查询同时返回最新非 `presented / click` 回执，供 `real_feedback` 在现有 4 个动作槽内
+保护这条反馈：若不在最近四条动作中，用它替换最旧动作，保留三条最新动作与该反馈；最新
+4 条曝光 ACK 不变，总数仍不超过 8。合并后按真实时间排序，原 event ref、类型、备注与
+冻结卡片语义保留；不新增查询、不改写事件。模型能读到触发重排的实际原因，而不仅是程序
+知道水位变化；每张历史卡自身的最近 4 条 actions 窗口不因此扩大。
 
 `storage/migration.py` 把运行中的用户状态导出为格式版本 1 的 `openbiliclaw-user-data` 包，文件扩展名为 `.obcbackup`。容器本质是标准 ZIP，**没有密码和加密**；`manifest.json` 明确写入 `contains_secrets=true`、`encrypted=false`，并为每个允许成员记录路径、类型、字节数与 SHA-256。导出 SQLite 时不直接复制可能正在写入的主文件，而是以只读 URI 打开源库、用 SQLite online backup API 生成一致快照并执行 `PRAGMA integrity_check`；其它文件复制前后会核对 stat / digest，持续变化时拒绝生成伪一致快照。目录遍历会在进入前剪枝排除根、采用独立扫描上限，并在复制前、复制流中和 ZIP 写入时逐层执行容量限制；ZIP 完成后立即删除最多 8 GB 的未压缩 snapshot，只在一次受全程互斥保护的下载期间保留最多 2 GB 的 archive。
 
@@ -875,3 +941,10 @@ db.suppress_low_confidence_recommendations()
 ### TikTok 账号任务（2026-10-11）
 
 `tiktok_tasks.payload_json` 冻结 scopes、每 scope 预算和 profile_update；result_json 保存有界 rows、实际 counts、opaque account_key、可选 sec_uid_key、sticky bounds_exceeded 和首份 staged 终态，终态重试不替换 payload。`auth_state` 的 `tiktok_profile_account_key`（handle hash）与可选 `tiktok_profile_sec_uid_key` 在 SQLite 写事务中首次绑定画像账号，secUid 暂缺或补齐不改变 account_key，已知 secUid 冲突或 handle 变化拒绝导入；普通 smoke 不写这些 key。裁剪后的 canonical status 与 staged marker 原子写为 degraded。seen/event 幂等身份带 account_key，scope+内容身份保持独立。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| storage | 新增 `storage.metadata_repair.repair_metadata(database, apply=False, backup=None)` 及 `python -m openbiliclaw.storage.metadata_repair`。默认只读预览；apply 必须提供不存在的备份路径，使用 SQLite backup 获取一致副本，然后条件更新空字段。仅同平台同内容 ID 可互补作者、绝对日期、正文、描述、标签；冲突不择一，历史相对日期不复制，评分/状态/行为不改，也不发网络/模型请求。 |

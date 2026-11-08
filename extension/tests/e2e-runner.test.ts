@@ -590,7 +590,8 @@ test("e2e background runner opens a platform tab, dispatches content execution, 
     });
 
     assert.equal(handled, true);
-    assert.deepEqual(state.createdTabs, [{ active: true, url: "https://x.com/home" }]);
+    assert.deepEqual(state.createdTabs, [{ active: true, url: "about:blank" }]);
+    assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }, { tabId: 42, url: "https://x.com/home" }]);
     assert.deepEqual(state.sentMessages, [
       {
         tabId: 42,
@@ -641,7 +642,8 @@ test("e2e background runner supports reddit platform tabs", async () => {
       timeout_seconds: 5,
     });
 
-    assert.deepEqual(state.createdTabs, [{ active: true, url: "https://www.reddit.com/" }]);
+    assert.deepEqual(state.createdTabs, [{ active: true, url: "about:blank" }]);
+    assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }, { tabId: 42, url: "https://www.reddit.com/" }]);
     assert.deepEqual(state.sentMessages[0].message, {
       action: "OBC_E2E_EXECUTE",
       runId: "e2e-reddit",

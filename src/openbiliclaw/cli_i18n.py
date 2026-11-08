@@ -2,8 +2,8 @@
 
 The CLI is the one surface whose Typer command tree is built at import time,
 before a config file has been read, so command/option help strings stay in the
-source language. Everything printed *after* the config loads goes through this
-module:
+source language. Localized runtime output uses this module; legacy commands
+still contain source-language copy:
 
 * ``OPENBILICLAW_LANG`` (or ``OPENBILICLAW_LANGUAGE``) wins — handy for scripts,
   tests, and trying a language without touching config.toml.
@@ -14,7 +14,7 @@ module:
 """
 
 # [INPUT]: OPENBILICLAW_LANG 环境变量 / Config.language
-# [OUTPUT]: 进程内缓存的 Translator 与 locale 展示名
+# [OUTPUT]: 进程内缓存的 Translator、locale 展示名与持久化语言变更后的缓存失效
 # [POS]: CLI 输出语言的唯一解析入口（Typer 静态 help 除外）
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -33,6 +33,12 @@ from openbiliclaw.i18n import (
 LANGUAGE_ENV_VARS = ("OPENBILICLAW_LANG", "OPENBILICLAW_LANGUAGE")
 
 _cached_locale: str | None = None
+
+
+def reset_cli_locale_cache() -> None:
+    """Refresh subsequent CLI translations after a persisted language change."""
+    global _cached_locale
+    _cached_locale = None
 
 
 def resolve_cli_locale(config: object | None = None) -> str:

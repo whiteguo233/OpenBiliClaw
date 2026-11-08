@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,11 @@ from openbiliclaw.soul.profile import (
 @pytest.fixture(autouse=True)
 def _restore_cli_process_state() -> Iterator[None]:
     """Keep CLI-owned process globals from leaking into later tests."""
+    # Load the lazy public LLM exports before CLI tests replace LLMService.
+    # Otherwise a first import can retain the test double in SoulEngine.
+    from importlib import import_module
+
+    import_module("openbiliclaw.soul.engine")
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
     original_level = root_logger.level
@@ -43,6 +49,7 @@ def _restore_cli_process_state() -> Iterator[None]:
     original_noisy_levels = {name: logging.getLogger(name).level for name in noisy_loggers}
     runtime_components = cli_module._RUNTIME_COMPONENTS
     original_runtime_components = dict(runtime_components)
+    image_service_url = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_URL")
     runtime_components.clear()
     try:
         yield
@@ -58,6 +65,10 @@ def _restore_cli_process_state() -> Iterator[None]:
             logging.getLogger(name).setLevel(level)
         cli_module._RUNTIME_COMPONENTS.clear()
         cli_module._RUNTIME_COMPONENTS.update(original_runtime_components)
+        if image_service_url is None:
+            os.environ.pop("OPENBILICLAW_IMAGE_SERVICE_URL", None)
+        else:
+            os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = image_service_url
 
 
 def test_build_discovery_candidate_pipeline_drains_one_shot_runs_immediately() -> None:
@@ -4146,7 +4157,9 @@ def test_init_guides_missing_runtime_config_interactively(
         raising=False,
     )
 
-    # Wizard + source-prompt inputs:
+    monkeypatch.setattr(config_module, "_project_root", lambda: tmp_path)
+
+    # Wizard + source-prompt inputs (accept the language first):
     #   1. menu choice: "gemini"
     #   2. API key
     #   3. model (accept default)
@@ -4185,7 +4198,7 @@ def test_init_guides_missing_runtime_config_interactively(
         )
         + "\n"
     )
-    result = runner.invoke(app, ["init"], input=wizard_input + "n\n")
+    result = runner.invoke(app, ["init"], input="\n" + wizard_input + "n\n")
 
     assert result.exit_code == 1
     assert captured["provider"] == "gemini"
@@ -4198,6 +4211,8 @@ def test_init_guides_missing_runtime_config_interactively(
 def test_init_guides_missing_auth_interactively(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(config_module, "_project_root", lambda: tmp_path)
+
     class FakeAuthManager:
         def __init__(self) -> None:
             self.saved_cookie = ""
@@ -4267,7 +4282,7 @@ def test_init_guides_missing_auth_interactively(
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
+        input="\n2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
     )
 
     assert result.exit_code == 1
@@ -6328,12 +6343,14 @@ def test_save_runtime_provider_config_persists_triplet(
         load_config_with_diagnostics,
         save_config,
     )
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
 
     config_path = tmp_path / "config.toml"
     save_config(
         Config(
             llm=LLMConfig(
                 default_provider="claude",
+                sponsored=SponsoredRuntimeSettings(enabled=True, model="Qwen/Qwen3.5-4B"),
                 openai=LLMProviderConfig(
                     api_key="sk-old",
                     base_url="https://old.example.com/v1",
@@ -6354,6 +6371,8 @@ def test_save_runtime_provider_config_persists_triplet(
         model="gpt-4o-mini",
     )
     reloaded, _ = load_config_with_diagnostics()
+    assert not reloaded.llm.sponsored.enabled
+    assert reloaded.llm.sponsored.model == "Qwen/Qwen3.5-4B"
     assert reloaded.llm.default_provider == "openai"
     assert reloaded.llm.openai.api_key == "sk-new"
     assert reloaded.llm.openai.base_url == "https://new.example.com/v1"
@@ -10218,6 +10237,57 @@ class TestInitSignalsAreDeduplicable:
 
         assert event["metadata"]["content_id"] == "BV2"
         assert "watch_seconds" not in event["metadata"]
+
+    def test_history_event_carries_real_view_time_not_import_time(self) -> None:
+        """导入时刻不是观看时刻——view_at 必须落到 canonical timestamp。"""
+        from openbiliclaw.cli import _history_item_to_event
+
+        event = _history_item_to_event(self._history_item())
+
+        assert event["metadata"]["timestamp"] == 1_785_000_000
+        assert event["metadata"]["snapshot"] is True
+
+    def test_init_follow_events_carry_mtime(self) -> None:
+        from openbiliclaw.cli import _build_bilibili_init_events
+
+        events = _build_bilibili_init_events(
+            history=[],
+            favorites_data=[],
+            following_data=[{"name": "某UP", "sign": "", "mtime": 1_584_271_945}],
+        )
+
+        follow = events[0]
+        assert follow["event_type"] == "follow"
+        assert follow["metadata"]["timestamp"] == 1_584_271_945
+        assert follow["metadata"]["mtime"] == 1_584_271_945
+        assert follow["metadata"]["snapshot"] is True
+
+    def test_init_follow_without_mtime_has_no_timestamp(self) -> None:
+        from openbiliclaw.cli import _build_bilibili_init_events
+
+        events = _build_bilibili_init_events(
+            history=[],
+            favorites_data=[],
+            following_data=[{"name": "某UP", "sign": ""}],
+        )
+
+        assert "timestamp" not in events[0]["metadata"]
+
+    def test_follow_time_window_renders_the_real_span(self) -> None:
+        from openbiliclaw.cli import _follow_time_window
+
+        # 2020-03-15 and 2026-07-09 (UTC)
+        assert (
+            _follow_time_window([{"mtime": 1_584_271_945}, {"mtime": 1_785_000_000}])
+            == "（关注时间 2020-03 ~ 2026-07）"
+        )
+
+    def test_follow_time_window_is_empty_without_mtime(self) -> None:
+        """No upstream timestamp ⇒ say nothing, never invent a window."""
+        from openbiliclaw.cli import _follow_time_window
+
+        assert _follow_time_window([{"name": "某UP"}]) == ""
+        assert _follow_time_window([{"name": "某UP", "mtime": 0}]) == ""
 
     def test_favorite_events_carry_identity(self) -> None:
         """收藏没有身份就进不了 seen_items——收藏过的视频会被再推一遍。"""

@@ -33,8 +33,11 @@ import os
 import re
 import tempfile
 import time
+from collections import OrderedDict
 from contextlib import suppress
 from dataclasses import dataclass
+from io import BytesIO
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
@@ -56,6 +59,52 @@ if TYPE_CHECKING:
 # "data/image-cache", which resolved against the process CWD (the read-only
 # install dir on packaged Windows) instead of the user's data dir.
 _CACHE_DIR: Path | None = None
+
+# Retain only rendered bytes, never the potentially 10 MB source buffers.
+# Both API modes use the same bounded cache; content hashes invalidate a render
+# when a CDN changes bytes at the same URL. Rendering remains off the event loop.
+_RENDER_CACHE_MAX_BYTES = 16 * 1024 * 1024
+_RENDER_CACHE_MAX_ENTRIES = 128
+_render_cache: OrderedDict[tuple[bytes, str], tuple[bytes, str]] = OrderedDict()
+_render_cache_lock = Lock()
+
+
+def render_cover_for_display(data: bytes, content_type: str) -> tuple[bytes, str]:
+    """Return a cached 640px cover rendition, bounded by both bytes and entries."""
+    if not data or "image" not in content_type:
+        return data, content_type
+    key = (hashlib.sha256(data).digest(), content_type)
+    with _render_cache_lock:
+        cached = _render_cache.get(key)
+        if cached is not None:
+            _render_cache.move_to_end(key)
+            return cached
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(data)) as source:
+            image: Image.Image = source
+            if image.width <= 640:
+                return data, content_type
+            image.thumbnail((640, 640), Image.Resampling.LANCZOS)
+            if image.mode in {"RGBA", "P", "LA"}:
+                image = image.convert("RGB")
+            out = BytesIO()
+            image.save(out, format="JPEG", quality=80, optimize=True)
+            rendered = (out.getvalue(), "image/jpeg")
+    except Exception:
+        # Invalid/unsupported originals keep their existing fallback behaviour.
+        return data, content_type
+    if len(rendered[0]) <= _RENDER_CACHE_MAX_BYTES:
+        with _render_cache_lock:
+            _render_cache[key] = rendered
+            _render_cache.move_to_end(key)
+            while (
+                len(_render_cache) > _RENDER_CACHE_MAX_ENTRIES
+                or sum(len(value[0]) for value in _render_cache.values()) > _RENDER_CACHE_MAX_BYTES
+            ):
+                _render_cache.popitem(last=False)
+    return rendered
 
 
 def _resolve_cache_dir() -> Path:

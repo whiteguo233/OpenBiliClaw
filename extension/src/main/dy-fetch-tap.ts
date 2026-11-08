@@ -3,8 +3,8 @@
  *
  * Pattern: install a wrapper around `window.fetch` (and
  * `XMLHttpRequest.prototype.send`) that **observes** the response
- * bodies of `/aweme/v1/web/aweme/{post,favorite,like}/` and
- * `/aweme/v1/web/user/follow/list/` calls and posts captured items
+ * bodies of `/aweme/v1/web/aweme/{post,favorite,listcollection}/` and
+ * `/aweme/v1/web/user/following/list/` calls and posts captured items
  * back to the content script via `window.postMessage`. Douyin's own
  * `webmssdk.js` has already signed the outgoing call before our
  * wrapper sees it, so we never compute X-Bogus / msToken / `_signature`
@@ -74,7 +74,8 @@ export function classifyDouyinResponseUrl(url: string): DouyinScope | null {
   // disturb the path-based decision.
   const path = url.split("?", 1)[0] ?? "";
   if (path.includes("/aweme/v1/web/aweme/post/")) return "dy_post";
-  if (path.includes("/aweme/v1/web/aweme/favorite/")) return "dy_collect";
+  if (path.includes("/aweme/v1/web/aweme/favorite/")) return "dy_like";
+  if (path.includes("/aweme/v1/web/aweme/listcollection/")) return "dy_collect";
   if (path.includes("/aweme/v1/web/aweme/collection/")) return "dy_collect";
   if (path.includes("/aweme/v1/web/aweme/like/")) return "dy_like";
   if (path.includes("/aweme/v1/web/user/follow/list/")) return "dy_follow";
@@ -151,7 +152,7 @@ function pickAuthor(awemeAuthor: unknown): { nickname: string; sec_uid: string }
 }
 
 /**
- * Parse a `/aweme/v1/web/aweme/{post,favorite,like}/` response into
+ * Parse a `/aweme/v1/web/aweme/{post,favorite,listcollection}/` response into
  * normalized items. Tolerates missing `aweme_list`, wrong types,
  * and individual-row malformations (drops the bad row, keeps the rest).
  *
@@ -205,7 +206,7 @@ export function parseAwemeListResponse(
 }
 
 /**
- * Parse a `/aweme/v1/web/user/follow/list/` response into normalized
+ * Parse a `/aweme/v1/web/user/following/list/` response into normalized
  * items. Accepts both `followings` and `follow_list` as the array key
  * since f2 references show the variant has shifted historically.
  */
@@ -542,6 +543,73 @@ async function readJsonResponse(resp: Response): Promise<unknown> {
   }
 }
 
+/** Observe complete JSON frames without waiting for a search stream to end. */
+async function observeSearchStream(
+  response: Response, onFrame: (frame: unknown) => void,
+): Promise<void> {
+  const body = response.clone().body;
+  if (!body) return;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let scan = 0;
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let bytes = 0;
+  // Observation alone is bounded. Cancel only this clone's reader; the
+  // website retains its original Response and controls its own request.
+  const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 60_000);
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 4 * 1024 * 1024) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (; scan < buffer.length; scan += 1) {
+        const char = buffer[scan];
+        if (start < 0) {
+          if (char === "{" || char === "[") {
+            start = scan;
+            depth = 1;
+            inString = false;
+            escaped = false;
+          }
+          continue;
+        }
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === '"') inString = false;
+          continue;
+        }
+        if (char === '"') inString = true;
+        else if (char === "{" || char === "[") depth += 1;
+        else if (char === "}" || char === "]") depth -= 1;
+        if (depth !== 0) continue;
+        try { onFrame(JSON.parse(buffer.slice(start, scan + 1))); } catch {
+          // Ignore malformed frames without affecting the page's consumer.
+        }
+        start = -1;
+      }
+      if (start < 0) {
+        buffer = "";
+        scan = 0;
+      } else if (start > 0) {
+        buffer = buffer.slice(start);
+        scan -= start;
+        start = 0;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 /**
  * Install the fetch-tap onto `target.fetch`. Wraps whatever
  * `target.fetch` is at install time, which in production is the
@@ -595,6 +663,16 @@ export function installFetchTap(
         // the page's React app would observe the rejection.
       }
     } else if (resp.ok && isPassiveDiscoveryResponseUrl(url) && postSearchBack) {
+      if (url.split("?", 1)[0]?.includes("/general/search/stream/")) {
+        // Never hold the native fetch promise until EOF. The page must be
+        // able to render its own chunks while the tap observes its clone.
+        void observeSearchStream(resp, json => {
+          if (isValidPassiveDiscoveryEnvelope("dy_search", json)) {
+            postSearchBack(parseSearchAwemeResponse(json), "dy_search");
+          }
+        }).catch(() => {});
+        return resp;
+      }
       try {
         const json: unknown = await readJsonResponse(resp);
         const discoveryScope = classifyPassiveDiscoveryScope(url);
@@ -756,11 +834,11 @@ function replayInstallStatusPing(
 // already wrapped by webmssdk.js (waitForDouyinSdk above), so calls
 // to window.fetch get X-Bogus / a_bogus / msToken auto-signed.
 //
-// Endpoints + cursor key per F2 (Apache-2.0 reference):
+// Account endpoints confirmed by the 2026-11-04 field report:
 //   dy_post:    /aweme/v1/web/aweme/post/      max_cursor / has_more
-//   dy_collect: /aweme/v1/web/aweme/favorite/  max_cursor / has_more
-//   dy_like:    /aweme/v1/web/aweme/like/      max_cursor / has_more
-//   dy_follow:  /aweme/v1/web/user/follow/list/  max_time / has_more
+//   dy_collect: /aweme/v1/web/aweme/listcollection/  POST cursor / has_more
+//   dy_like:    /aweme/v1/web/aweme/favorite/  max_cursor / has_more
+//   dy_follow:  /aweme/v1/web/user/following/list/  max_time / has_more
 //
 // Isolated-world content script invokes this via postMessage:
 //   request:  { type: "OPENBILICLAW_DOUYIN_API_REQUEST",
@@ -781,9 +859,9 @@ const FEED_API_RESPONSE_TYPE = "OPENBILICLAW_DOUYIN_FEED_API_RESPONSE";
 
 const SCOPE_ENDPOINT: Record<DouyinScope, string> = {
   dy_post: "/aweme/v1/web/aweme/post/",
-  dy_collect: "/aweme/v1/web/aweme/favorite/",
-  dy_like: "/aweme/v1/web/aweme/like/",
-  dy_follow: "/aweme/v1/web/user/follow/list/",
+  dy_collect: "/aweme/v1/web/aweme/listcollection/",
+  dy_like: "/aweme/v1/web/aweme/favorite/",
+  dy_follow: "/aweme/v1/web/user/following/list/",
 };
 
 function buildScopeApiUrl(
@@ -809,6 +887,9 @@ function buildScopeApiUrl(
     params.set("min_time", "0");
     params.set("with_fstatus", "1");
     params.set("source_type", "1");
+    params.set("offset", "0");
+  } else if (scope === "dy_collect") {
+    params.set("cursor", cursor);
   } else {
     params.set("max_cursor", String(cursor));
     params.set("min_cursor", "0");
@@ -827,6 +908,7 @@ interface ScopeApiResult {
 interface SearchApiResult {
   items: DouyinSearchItem[];
   pages_fetched: number;
+  error?: string;
 }
 
 const SCOPE_API_MAX_PAGES = 50;
@@ -875,9 +957,8 @@ function scopeCursorFields(scope: DouyinScope): readonly string[] {
   // source_type=1 follow responses traditionally advance via min_time.
   // Some page builds instead expose the same continuation as max_time or
   // cursor, so accept those aliases without weakening validation.
-  return scope === "dy_follow"
-    ? ["min_time", "max_time", "cursor"]
-    : ["max_cursor", "cursor"];
+  if (scope === "dy_follow") return ["min_time", "max_time", "cursor"];
+  return scope === "dy_collect" ? ["cursor", "max_cursor"] : ["max_cursor", "cursor"];
 }
 
 function pickNextScopeCursor(
@@ -895,7 +976,11 @@ function pickNextScopeCursor(
     if (!Object.prototype.hasOwnProperty.call(root, field)) continue;
     present = true;
     const candidate = normalizeScopeCursor(root[field]);
-    if (candidate === null) continue;
+    // Collection cursors must also survive the API's numeric JSON body.
+    if (
+      candidate === null
+      || (scope === "dy_collect" && !Number.isSafeInteger(Number(candidate)))
+    ) continue;
     valid = true;
     if (candidate === currentCursor) {
       repeatedCurrent = true;
@@ -934,7 +1019,13 @@ export async function harvestScopeViaApi(
     const url = buildScopeApiUrl(scope, secUid, cursor);
     let json: unknown;
     try {
-      const resp = await w.fetch(url, { credentials: "include" });
+      const init: RequestInit = { credentials: "include" };
+      if (scope === "dy_collect") {
+        init.method = "POST";
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify({ cursor: Number(cursor), count: 18 });
+      }
+      const resp = await w.fetch(url, init);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       json = (await resp.json()) as unknown;
     } catch (err) {
@@ -951,6 +1042,13 @@ export async function harvestScopeViaApi(
     const statusError = scopeApiStatusError(root);
     if (statusError) {
       error = statusError;
+      break;
+    }
+    const validList = scope === "dy_follow"
+      ? Array.isArray(root.followings) || Array.isArray(root.follow_list)
+      : Array.isArray(root.aweme_list);
+    if (!validList) {
+      error = "api_items_invalid";
       break;
     }
     const batch =
@@ -1023,7 +1121,13 @@ export function extractDouyinSelfSecUid(payload: unknown): string {
  */
 export async function fetchDouyinSelfSecUid(target: Window): Promise<string> {
   const w = target as unknown as { fetch: FetchLike };
-  const url = `${target.location.origin}/aweme/v1/web/user/profile/self/`;
+  const query = new URLSearchParams({
+    device_platform: "webapp",
+    aid: "6383",
+    channel: "channel_pc_web",
+    cookie_enabled: "true",
+  });
+  const url = `${target.location.origin}/aweme/v1/web/user/profile/self/?${query}`;
   const resp = await w.fetch(url, { credentials: "include" });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return extractDouyinSelfSecUid((await resp.json()) as unknown);
@@ -1168,7 +1272,6 @@ async function harvestSearchViaApi(
   const pageSize = Math.min(20, Math.max(1, cap || 1));
   const paths = [
     "/aweme/v1/web/general/search/single/",
-    "/aweme/v1/web/search/item/",
   ];
   let pages = 0;
 
@@ -1198,10 +1301,18 @@ async function harvestSearchViaApi(
           clearTimeout(timer);
         }
       } catch (err) {
-        if (page === 0 && path === paths[0]) throw err;
-        break;
+        return { items, pages_fetched: pages,
+          error: String(err instanceof Error ? err.message : err) };
       }
       pages += 1;
+      const root = json as Record<string, unknown>;
+      const statusError = scopeApiStatusError(root);
+      if (statusError) return { items, pages_fetched: pages, error: statusError };
+      const nilInfo = root.search_nil_info;
+      if (nilInfo && typeof nilInfo === "object"
+        && (nilInfo as Record<string, unknown>).search_nil_item === "hit_shark") {
+        return { items, pages_fetched: pages, error: "hit_shark" };
+      }
       for (const item of parseSearchAwemeResponse(json)) {
         const key = item.aweme_id || `${item.title}:${item.author}`;
         if (!key || seen.has(key)) continue;
@@ -1209,7 +1320,6 @@ async function harvestSearchViaApi(
         items.push(item);
         if (items.length >= cap) break;
       }
-      const root = json as Record<string, unknown>;
       const hasMore = Boolean(root.has_more);
       const nextOffset = Number(root.cursor ?? offset + pageSize);
       if (!hasMore || !Number.isFinite(nextOffset) || nextOffset === offset) break;
@@ -1436,6 +1546,7 @@ export function installApiHarvester(
             requestId,
             items: result.items,
             pages_fetched: result.pages_fetched,
+            ...(result.error ? { error: result.error } : {}),
           });
         } catch (err) {
           post({

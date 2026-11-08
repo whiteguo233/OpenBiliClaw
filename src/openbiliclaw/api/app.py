@@ -1,7 +1,7 @@
 """FastAPI app for the browser-extension backend."""
 
 # [INPUT]: 配置、MemoryManager、Database 与来源事件规范化器
-# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用的 FastAPI 路由；惊喜队列读在线程池执行
+# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用路由；向 worker 发布 runtime-stream 在线心跳
 # [POS]: API 组合根，负责请求边界与事件入口，不在此复制来源解析规则
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -30,7 +30,7 @@ import unicodedata
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -130,6 +130,8 @@ from openbiliclaw.api.models import (
     InstagramLoginStateIn,
     InstagramLoginStateResponse,
     InstagramSourceConfigOut,
+    JevEvaluationConfigOut,
+    JevProviderReadinessOut,
     LinuxdoLoginStateIn,
     LinuxdoLoginStateResponse,
     LinuxdoSourceConfigOut,
@@ -242,6 +244,7 @@ from openbiliclaw.runtime.image_cache import (
     CoverFetchError,
     cleanup_image_cache,
     image_log_identity,
+    render_cover_for_display,
     save_extension_cover,
 )
 from openbiliclaw.runtime.image_fetch import ImageFetchCoordinator
@@ -250,6 +253,7 @@ from openbiliclaw.runtime.keyword_fetch import (
     requeue_keyword_from_xhs_rate_limit,
     source_keyword_id_from_xhs_task,
 )
+from openbiliclaw.runtime.presence import PRESENCE_HEARTBEAT_INTERVAL_SECONDS
 from openbiliclaw.saved_sync.extension_broker import (
     ExtensionNativeSaveResultIn as BrokerExtensionNativeSaveResultIn,
 )
@@ -506,7 +510,7 @@ _CONFIRMATION_GLOBAL_COOLDOWN_HOURS = 12
 # object-level ask budget and makes "以后再说" durable without becoming a
 # permanent dismissal. Recalibrate after the first production month.
 _CONFIRMATION_OBJECT_COOLDOWN_HOURS = 72
-_RUNTIME_STREAM_HEARTBEAT_SECONDS = 20.0
+_RUNTIME_STREAM_HEARTBEAT_SECONDS = PRESENCE_HEARTBEAT_INTERVAL_SECONDS
 _DIALOGUE_EXECUTION_DRAIN_TIMEOUT_SECONDS = 1500.0
 # Interactive agent-stream admission budget: a hot reload can hold the
 # dialogue lane paused for the full drain window above, which left SSE
@@ -571,6 +575,7 @@ class _QueuedConfigApply:
     restart_required: bool = False
     completion: asyncio.Future[str] | None = None
     allow_agent_live_apply: bool = False
+    allow_llm_instance_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -606,6 +611,10 @@ async def _run_init_heartbeat(
 _EMBEDDING_READY_TTL_SECONDS = 30.0
 _EMBEDDING_FAIL_TTL_SECONDS = 8.0
 _EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
+# The Nov 5 simultaneous-workload acceptance returned a valid local vector at
+# 20.493s; local model cold loading also takes 10–30s. User-triggered probes get
+# a bounded 45s budget, independently of the short background health poll.
+_LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS = 45.0
 _EmbeddingProbeOutcome = Literal["ready", "failed", "timed_out"]
 _LAN_IP_TTL_SECONDS = 30.0
 _AUTO_REPLENISH_DEBOUNCE_SECONDS = 30.0
@@ -752,6 +761,10 @@ _RFC1918_NETWORKS = tuple(
     ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 _BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+_TAILSCALE_NETWORKS = (
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fd7a:115c:a1e0::/48"),
+)
 # Cover-image fetch/whitelist constants live in openbiliclaw.runtime.image_cache
 # (shared by the proxy route and the prefetch sweep). Only the disk-cache age cap
 # is referenced directly from here, by the startup cleanup call.
@@ -1076,6 +1089,21 @@ def _is_rfc1918_ipv4(addr: ipaddress.IPv4Address) -> bool:
     return any(addr in network for network in _RFC1918_NETWORKS)
 
 
+def _is_tailscale_ip(ip: str) -> bool:
+    """Recognize Tailscale's documented IPv4 and IPv6 address ranges."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr.version == net.version and addr in net for net in _TAILSCALE_NETWORKS)
+
+
+def _detect_system_tailscale_ips() -> list[str]:
+    """Find system VPN addresses without enrolling or changing Tailscale."""
+    candidates = _interface_ipv4_candidates() + _interface_ipv6_candidates()
+    return list(dict.fromkeys(ip for ip in candidates if _is_tailscale_ip(ip)))
+
+
 def _usable_lan_candidate(ip: str) -> tuple[bool, bool]:
     try:
         addr = ipaddress.ip_address(ip)
@@ -1089,6 +1117,7 @@ def _usable_lan_candidate(ip: str) -> tuple[bool, bool]:
         or addr.is_multicast
         or addr.is_unspecified
         or addr in _BENCHMARK_NETWORK
+        or _is_tailscale_ip(ip)
     ):
         return (False, False)
     return (True, _is_rfc1918_ipv4(addr))
@@ -1106,6 +1135,7 @@ def _usable_ipv6_lan_candidate(ip: str) -> tuple[bool, bool]:
         or addr.is_multicast
         or addr.is_unspecified
         or addr.ipv4_mapped is not None
+        or _is_tailscale_ip(ip)
         or not (addr.is_private or addr.is_global)
     ):
         return (False, False)
@@ -2448,6 +2478,11 @@ def create_app(
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
 
+    ctx.configure_director(config)
+    from openbiliclaw.api.director import register_director_routes
+
+    register_director_routes(app, ctx)
+
     # Fan freshly recorded LLM/embedding anomaly alerts out to the live
     # runtime stream so the 异常报警 feed updates without a poll round-trip.
     with suppress(Exception):
@@ -2612,6 +2647,7 @@ def create_app(
     app.state.migration_import_phase = ""
     image_fetch_coordinator = ImageFetchCoordinator()
     app.state.image_fetch_coordinator = image_fetch_coordinator
+    app.state.image_service_client = None
     chat_reply_scheduler: DurableChatReplyScheduler
 
     def _complete_degraded_runtime_recovery() -> None:
@@ -2642,14 +2678,12 @@ def create_app(
     register_auth_routes(app, _get_auth_gate)
 
     def _local_or_authenticated_gate(request: Request, *, detail: str) -> JSONResponse | None:
-        """Self-gate privileged routes for when the password gate is off.
+        """Retain the privileged-route guard behind the default local-only gate.
 
-        The auth middleware short-circuits when ``[api.auth]`` is disabled (the
-        default), so privileged routes must self-gate like ``/api/auth/admin``:
-        trusted-local callers always pass; remote callers must enable the
-        password gate first (the middleware then requires an authenticated
-        session). Returns ``None`` when the request may proceed. See issues
-        #299 (credential export) and #300 (config tampering).
+        The middleware now rejects remote private requests when auth is off.
+        This handler guard also protects direct handler reuse: trusted-local
+        callers pass, and remote access requires the enabled middleware gate.
+        See issues #299 (credential export) and #300 (config tampering).
         """
         gate = _get_auth_gate()
         if gate.auth.enabled or gate.is_trusted_local(request):
@@ -3262,15 +3296,24 @@ def create_app(
                     value = f"http://{same_origin_host}"
                 headers[key] = value
             body = await request.body()
+            director_config = getattr(getattr(ctx, "config", None) or config, "director", None)
+            proxy_timeout = 30.0
+            if director_config is not None and getattr(director_config, "mode", "off") != "off":
+                proxy_timeout = max(
+                    proxy_timeout,
+                    float(director_config.planning_budget_seconds)
+                    + float(director_config.decision_budget_seconds)
+                    + 30.0,
+                )
             recommendation_port = os.environ.get(RECOMMENDATION_PORT_ENV, "").strip()
             if recommendation_port:
                 target_url = f"http://127.0.0.1:{recommendation_port}{request.url.path}"
-                client_kwargs: dict[str, Any] = {"timeout": 30.0, "trust_env": False}
+                client_kwargs: dict[str, Any] = {"timeout": proxy_timeout, "trust_env": False}
             else:
                 target_url = f"http://localhost{request.url.path}"
                 client_kwargs = {
                     "transport": _httpx.AsyncHTTPTransport(uds=os.environ[RECOMMENDATION_SOCK_ENV]),
-                    "timeout": 30.0,
+                    "timeout": proxy_timeout,
                     "trust_env": False,
                 }
             if request.url.query:
@@ -3644,6 +3687,15 @@ def create_app(
         from openbiliclaw.i18n import get_translator
 
         tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
+        if item.allow_llm_instance_live_apply and not item.restart_required:
+            async with config_runtime_reload_lock:
+                if ctx.try_apply_llm_instance_config(item.config):
+                    if ctx.full_worker_expected():
+                        # Separate workers own startup config snapshots. Let
+                        # the existing supervisor reload them after the apply
+                        # queue settles; durable jobs recover on restart.
+                        app.state.backend_config_generation += 1
+                    return tr("api.config.saved_applied", path=item.saved_path)
         # Chat knobs have no dependency on profile/feedback owners. Keep the
         # same queue, lock and last-good transaction, but don't drain unrelated
         # work when the complete candidate differs only in known chat fields.
@@ -3759,6 +3811,10 @@ def create_app(
                                 config_apply_pending.allow_agent_live_apply
                                 and item.allow_agent_live_apply
                             )
+                            config_apply_pending.allow_llm_instance_live_apply = (
+                                config_apply_pending.allow_llm_instance_live_apply
+                                and item.allow_llm_instance_live_apply
+                            )
                             _set_config_apply_status(
                                 "queued",
                                 (
@@ -3859,6 +3915,10 @@ def create_app(
             # requirement even when the newest revision is a small agent edit.
             item.allow_agent_live_apply = (
                 item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
+            )
+            item.allow_llm_instance_live_apply = (
+                item.allow_llm_instance_live_apply
+                and config_apply_pending.allow_llm_instance_live_apply
             )
             _settle_config_completion(
                 config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
@@ -5363,6 +5423,41 @@ def create_app(
         stored_payload["agent_events"] = merged_events
         return True
 
+    def _agent_turn_started(turn_id: str) -> bool:
+        row = _get_chat_turn_row(turn_id)
+        events = (row or {}).get("payload", {}).get("agent_events", [])
+        return any(
+            isinstance(event, dict) and event.get("type") != "sponsored_retry" for event in events
+        )
+
+    def _retry_silent_sponsored_turn(turn_id: str, exc: Exception) -> bool:
+        """Persist a bounded recovery count; never replay output or tool work."""
+        from openbiliclaw.llm.sponsored_errors import find_sponsored_error
+
+        sponsored_error = find_sponsored_error(exc)
+        if sponsored_error is None or _agent_turn_started(turn_id):
+            return False
+        if sponsored_error.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
+            return False
+        row = _get_chat_turn_row(turn_id)
+        events = (row or {}).get("payload", {}).get("agent_events", [])
+        # At most two durable retries after the original attempt. Each SDK
+        # attempt already includes bounded free-model fallback; do not keep a
+        # permanently unavailable service at the head of the dialogue lane.
+        if sum(event.get("type") == "sponsored_retry" for event in events) >= 2:
+            return False
+        return _append_chat_turn_agent_event(
+            turn_id, {"type": "sponsored_retry", "code": sponsored_error.code}
+        )
+
+    def _checkpoint_agent_event(turn_id: str, event: Any) -> None:
+        # Persist the first delta boundary without storing token fragments.
+        # A restart can then distinguish untouched work from partial output.
+        if event.type != "delta":
+            _append_chat_turn_agent_event(turn_id, event.to_dict())
+        elif not _agent_turn_started(turn_id):
+            _append_chat_turn_agent_event(turn_id, {"type": "execution_started"})
+
     # --- Multi-session chat helpers (「聊一聊」 M5) ---
 
     def _chat_session_db_method(name: str) -> Any:
@@ -5518,14 +5613,21 @@ def create_app(
 
     _lan_ip_value: str | None = None
     _lan_ip_checked_at = float("-inf")
+    _lan_ip_lock = asyncio.Lock()
 
-    def _health_lan_ip() -> str | None:
+    async def _health_lan_ip() -> str | None:
         nonlocal _lan_ip_value, _lan_ip_checked_at
         if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
             return _lan_ip_value
-        _lan_ip_value = _detect_lan_ip()
-        _lan_ip_checked_at = time.monotonic()
-        return _lan_ip_value
+        async with _lan_ip_lock:
+            # Several startup health reads share one cold probe. Interface
+            # enumeration shells out (up to seconds on Windows/VPN hosts), so
+            # it must not hold the HTTP loop needed by recommendations/images.
+            if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
+                return _lan_ip_value
+            _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
+            _lan_ip_checked_at = time.monotonic()
+            return _lan_ip_value
 
     async def _fresh_lan_ip() -> str | None:
         """Detect the LAN IP now, bypassing the ``/api/health`` TTL cache.
@@ -5538,9 +5640,12 @@ def create_app(
         shared cache that ``/api/health`` reads.
         """
         nonlocal _lan_ip_value, _lan_ip_checked_at
-        _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
-        _lan_ip_checked_at = time.monotonic()
-        return _lan_ip_value
+        # Keep explicit fresh reads ordered after an in-flight health probe;
+        # an older health result must not overwrite the newly detected address.
+        async with _lan_ip_lock:
+            _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
+            _lan_ip_checked_at = time.monotonic()
+            return _lan_ip_value
 
     # Embedding readiness is probed live (see _health_embedding_ready) and the
     # result cached here so frequent /api/health polls share one provider call.
@@ -5761,7 +5866,9 @@ def create_app(
         cfg = getattr(ctx, "config", None)
         emb = getattr(getattr(cfg, "llm", None), "embedding", None)
         provider = str(getattr(emb, "provider", "") or "").strip()
-        return bool(provider)
+        return bool(provider) or bool(
+            getattr(getattr(getattr(cfg, "llm", None), "sponsored", None), "enabled", False)
+        )
 
     @app.get("/api/ping")
     async def ping() -> JSONResponse:
@@ -5790,7 +5897,7 @@ def create_app(
 
     @app.get("/api/qr-info")
     async def qr_info() -> JSONResponse:
-        """Lightweight endpoint for mobile QR code: LAN IP only.
+        """Fresh phone connection addresses, without any provider probe.
 
         Unlike ``/api/health``, this skips the embedding readiness probe
         so the QR drawer never blocks on a cold Ollama model load, and it
@@ -5798,7 +5905,40 @@ def create_app(
         (see ``_fresh_lan_ip``) so a scanned code is never a network change
         behind.
         """
-        return JSONResponse({"lan_ip": await _fresh_lan_ip()})
+        from openbiliclaw.runtime.tailnet_supervisor import read_tailnet_status
+
+        lan_ip, system_ips = await asyncio.gather(
+            _fresh_lan_ip(), asyncio.to_thread(_detect_system_tailscale_ips)
+        )
+        cfg = ctx.config if ctx.config is not None else config
+        api_host = str(getattr(app.state, "api_listen_host", cfg.api.host))
+        api_port = int(getattr(app.state, "api_listen_port", cfg.api.port))
+        addresses = [{"host": ip, "port": api_port, "source": "system"} for ip in system_ips]
+        if cfg.tailnet.enabled:
+            status = await asyncio.to_thread(read_tailnet_status, cfg) or {}
+            port = status.get("port")
+            ips = status.get("ips")
+            if (
+                status.get("event") == "ready"
+                and isinstance(port, int)
+                and not isinstance(port, bool)
+                and 1 <= port <= 65535
+                and isinstance(ips, list)
+            ):
+                addresses.extend(
+                    {"host": ip, "port": port, "source": "embedded"}
+                    for ip in ips
+                    if isinstance(ip, str) and _is_tailscale_ip(ip)
+                )
+        return JSONResponse(
+            {
+                "lan_ip": lan_ip,
+                "api_host": api_host,
+                "api_port": api_port,
+                "tailscale_addresses": addresses,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get(
         "/api/project-stats",
@@ -5869,7 +6009,7 @@ def create_app(
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
-        lan_ip = _health_lan_ip()
+        lan_ip = await _health_lan_ip()
         embedding_ready = await _health_embedding_ready()
         llm_registered = _health_llm_registered()
         llm_callable = _health_llm_callable() if llm_registered else False
@@ -6325,9 +6465,9 @@ def create_app(
                     target_pool_count,
                     fully_parallel=True,
                     progress_callback=progress_callback,
-                    # Instagram's explicit init uses the formal task-backed
-                    # producer. Other sources retain their legacy backfill.
-                    sources=effective if "instagram" in effective else None,
+                    # These sources own a complete producer/evaluate/copy
+                    # init wave; never substitute an unselected Bilibili run.
+                    sources=effective if effective & {"instagram", "github"} else None,
                     register_instagram_task=lambda task_id: coord.register_enqueued_task(
                         run_id, task_id
                     ),
@@ -7683,35 +7823,6 @@ def create_app(
             return JSONResponse({"error": "not_running"}, status_code=409)
         return JSONResponse({"cancelling": True, "run_id": run["run_id"]}, status_code=202)
 
-    def _resize_cover_for_mobile(
-        data: bytes,
-        content_type: str,
-    ) -> tuple[bytes, str]:
-        """Downscale/compress proxied cover images for mobile bandwidth.
-
-        Original CDN covers are often 300KB-500KB; mobile only renders them at
-        card/list size. A 640px JPEG keeps quality while cutting transfer size
-        dramatically. Failures fall back to the original bytes.
-        """
-        if not data or "image" not in content_type:
-            return data, content_type
-        try:
-            from io import BytesIO
-
-            from PIL import Image
-
-            image: Image.Image = Image.open(BytesIO(data))
-            if image.width <= 640:
-                return data, content_type
-            image.thumbnail((640, 640), Image.Resampling.LANCZOS)
-            if image.mode in {"RGBA", "P", "LA"}:
-                image = image.convert("RGB")
-            out = BytesIO()
-            image.save(out, format="JPEG", quality=80, optimize=True)
-            return out.getvalue(), "image/jpeg"
-        except Exception:
-            return data, content_type
-
     @app.get("/api/image-proxy", response_model=None)
     async def image_proxy(
         url: str = Query(..., description="URL-encoded image URL to proxy"),
@@ -7736,11 +7847,20 @@ def create_app(
             try:
                 import httpx
 
-                async with httpx.AsyncClient(timeout=30) as client:
-                    upstream = await client.get(
-                        f"{service_base}/api/image-proxy",
-                        params={"url": url},
+                client = app.state.image_service_client
+                if client is None:
+                    # App-owned pool: per-image clients repeatedly load TLS
+                    # roots and discard keep-alive sockets, even on localhost.
+                    # The internal child service must not inherit system proxies.
+                    client = httpx.AsyncClient(
+                        timeout=httpx.Timeout(30, connect=1, pool=5),
+                        trust_env=False,
                     )
+                    app.state.image_service_client = client
+                upstream = await client.get(
+                    f"{service_base}/api/image-proxy",
+                    params={"url": url},
+                )
                 if upstream.status_code == 200:
                     return Response(
                         content=upstream.content,
@@ -7794,7 +7914,7 @@ def create_app(
                 cache_id,
             )
         proxy_data, proxy_content_type = await asyncio.to_thread(
-            _resize_cover_for_mobile,
+            render_cover_for_display,
             result.data,
             result.content_type,
         )
@@ -8008,7 +8128,9 @@ def create_app(
         status = str(data.get("status", "pending"))
         user = None
         if status == "confirmed":
-            cookie_header = _qr_cookie_header(str(data.get("url", "") or ""))
+            cookie_header = str(data.get("cookie") or "") or _qr_cookie_header(
+                str(data.get("url", "") or "")
+            )
             if cookie_header:
                 result = await _write_source_credential(
                     "bilibili",
@@ -8930,7 +9052,7 @@ def create_app(
         if status != "confirmed":
             return {"ok": True, "status": status, "message": str(data.get("message") or "")}
 
-        cookie = _qr_cookie_header(str(data.get("url") or ""))
+        cookie = str(data.get("cookie") or "") or _qr_cookie_header(str(data.get("url") or ""))
         if not cookie:
             return {
                 "ok": False,
@@ -9271,6 +9393,22 @@ def create_app(
             await websocket.close(code=4401)
             return
         await websocket.accept()
+
+        async def _receive_until_disconnect() -> None:
+            # Renew even for idle/degraded sockets and independently of event
+            # delivery. Workers never have a local WebSocket to renew for them.
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), timeout=_RUNTIME_STREAM_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    ctx.presence.heartbeat()
+                    continue
+                if message.get("type") == "websocket.disconnect":
+                    raise WebSocketDisconnect
+                ctx.presence.heartbeat()
+
         if bool(getattr(ctx, "degraded", False)):
             connected = False
             try:
@@ -9283,10 +9421,7 @@ def create_app(
                         "issues": _degraded_issues_payload(),
                     }
                 )
-                while True:
-                    message = await websocket.receive()
-                    if message.get("type") == "websocket.disconnect":
-                        raise WebSocketDisconnect
+                await _receive_until_disconnect()
             except WebSocketDisconnect:
                 pass
             finally:
@@ -9348,12 +9483,6 @@ def create_app(
                     with suppress(Exception):
                         await websocket.close(code=4401)
                     return
-
-        async def _receive_until_disconnect() -> None:
-            while True:
-                message = await websocket.receive()
-                if message.get("type") == "websocket.disconnect":
-                    raise WebSocketDisconnect
 
         try:
             ctx.presence.on_connect()
@@ -9561,6 +9690,8 @@ def create_app(
             task.cancel()
         if stream_tasks:
             await asyncio.gather(*stream_tasks, return_exceptions=True)
+        if ctx.director_runtime is not None:
+            await ctx.director_runtime.aclose()
         inventory_watch = getattr(app.state, "pool_inventory_watch_task", None)
         if inventory_watch is not None:
             inventory_watch.cancel()
@@ -9600,6 +9731,11 @@ def create_app(
         # shutdown; close then cancels both active and already-queued fetches.
         with suppress(Exception):
             await image_fetch_coordinator.close()
+        image_service_client = app.state.image_service_client
+        app.state.image_service_client = None
+        if image_service_client is not None:
+            with suppress(Exception):
+                await image_service_client.aclose()
         # Drain the self-owned dialogue settlement queue; it is not covered by
         # the background-task cancellation above.
         settlement_queue = getattr(ctx, "dialogue_settlement_queue", None)
@@ -10278,7 +10414,9 @@ def create_app(
         ), snapshot_expires_at
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
-    async def recommendations() -> RecommendationListResponse:
+    async def recommendations(
+        stream_ref: str = Query("default", min_length=1, max_length=128),
+    ) -> RecommendationListResponse:
         """Return one coalesced recommendation snapshot.
 
         Restored browser sessions can contain dozens of stale dashboard tabs.
@@ -10290,6 +10428,11 @@ def create_app(
         nonlocal recommendation_snapshot_cache, recommendation_snapshot_cached_at
         nonlocal recommendation_snapshot_expires_at
         nonlocal recommendation_snapshot_dislike_digest
+
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import restore_screen
+
+            return await restore_screen(ctx, stream_ref)
 
         now = time.monotonic()
         disliked_topics, dislike_digest = _effective_recommendation_dislikes()
@@ -11257,6 +11400,8 @@ def create_app(
         _fire_and_forget_tasks.add(task)
         task.add_done_callback(_fire_and_forget_tasks.discard)
 
+    ctx.director_replenish_callback = _trigger_replenishment_if_needed
+
     def _platform_scope_kwargs(source_platform: str) -> dict[str, str]:
         """Forward the platform scope only when the client actually sent one.
 
@@ -11322,6 +11467,14 @@ def create_app(
     async def reshuffle_recommendations(
         payload: Annotated[RecommendationReshuffleIn | None, Body()] = None,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            source = payload or RecommendationReshuffleIn()
+            values = source.model_dump()
+            values["request_id"] = source.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="STAY"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -11431,6 +11584,13 @@ def create_app(
     async def append_recommendations(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            values = payload.model_dump()
+            values["request_id"] = payload.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="NEXT"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -11591,6 +11751,9 @@ def create_app(
         payload["bilibili_cookie_staged"] = (
             peek_staged_bilibili_cookie(active_runtime_data_path) is not None
         )
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        payload["sponsored_status"] = await asyncio.to_thread(sponsored_status, ctx.config)
         response = RuntimeStatusResponse(**payload)
         runtime_status_cache = response
         runtime_status_cached_at = time.monotonic()
@@ -12581,6 +12744,8 @@ def create_app(
                 return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
             final_reply = ""
+            retry_sponsored = False
+            failure_handled = False
             try:
                 async with _dialogue_execution_lease(
                     timeout=_AGENT_STREAM_LEASE_TIMEOUT_SECONDS
@@ -12614,6 +12779,11 @@ def create_app(
                                 )
                             return
                     try:
+                        if turn_id and _agent_turn_started(turn_id):
+                            raise TerminalChatReplyError(
+                                "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                                code="interrupted_agent_turn",
+                            )
                         agent_loop = getattr(ctx, "agent_loop", None)
                         stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
                         if agent_loop is None or not callable(stream_fn):
@@ -12646,8 +12816,8 @@ def create_app(
                             data = event.to_dict()
                             # Persist semantic events incrementally for recovery;
                             # token deltas are live-only, replay uses final/thinking.
-                            if turn_id and event.type != "delta":
-                                _append_chat_turn_agent_event(turn_id, data)
+                            if turn_id:
+                                _checkpoint_agent_event(turn_id, event)
                             if event.type == "final":
                                 final_reply = event.text
                             yield sse(event.type, data)
@@ -12669,8 +12839,17 @@ def create_app(
                     except Exception as exc:
                         # Settle execution failure before releasing the lease,
                         # so a queued worker cannot repeat a partially run turn.
-                        if turn_id:
-                            _fail_chat_turn_row(turn_id, error=safe_llm_failure_message(exc))
+                        retry_sponsored = bool(
+                            turn_id and _retry_silent_sponsored_turn(turn_id, exc)
+                        )
+                        if turn_id and not retry_sponsored:
+                            error_message = (
+                                exc.safe_message
+                                if isinstance(exc, TerminalChatReplyError)
+                                else safe_llm_failure_message(exc)
+                            )
+                            _fail_chat_turn_row(turn_id, error=error_message)
+                        failure_handled = True
                         raise
             except DialogueLeaseTimeoutError as exc:
                 # Hot reload or another reply held the lane past the admission
@@ -12688,7 +12867,25 @@ def create_app(
                 return
             except Exception as exc:
                 logger.exception("Agent chat stream failed")
-                error_message = safe_llm_failure_message(exc)
+                error_message = (
+                    exc.safe_message
+                    if isinstance(exc, TerminalChatReplyError)
+                    else safe_llm_failure_message(exc)
+                )
+                if turn_id and not failure_handled:
+                    retry_sponsored = _retry_silent_sponsored_turn(turn_id, exc)
+                if retry_sponsored:
+                    chat_reply_scheduler.schedule(turn_id)
+                    yield sse(
+                        "error",
+                        {
+                            "error": error_message + " 正在后台重试，可稍后查看本条回复。",
+                            "retrying": True,
+                        },
+                    )
+                    return
+                if turn_id and not failure_handled:
+                    _fail_chat_turn_row(turn_id, error=error_message)
                 yield sse("error", {"error": error_message})
                 return
 
@@ -13379,6 +13576,11 @@ def create_app(
         stream_fn = getattr(dialogue_owner, "stream_agent_reply", None)
         if agent_loop is None or not callable(stream_fn):
             return None
+        if _agent_turn_started(turn.turn_id):
+            raise TerminalChatReplyError(
+                "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                code="interrupted_agent_turn",
+            )
         skill_catalog = _resolve_skill_catalog()
         skill_name = str(turn.payload.get("agent_skill") or "").strip()
         skill_definition = skill_catalog.get(skill_name) if skill_name else None
@@ -13411,7 +13613,7 @@ def create_app(
             # live-render only and never persisted into agent_events.
             if event.type != "delta":
                 events.append(event.to_dict())
-                _append_chat_turn_agent_event(turn.turn_id, event.to_dict())
+            _checkpoint_agent_event(turn.turn_id, event)
             if event.type == "final":
                 reply = event.text
         if not reply.strip():
@@ -14268,7 +14470,15 @@ def create_app(
                 raise
             except Exception as exc:
                 from openbiliclaw.llm.service import LLMResponseContentError
+                from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
+                if isinstance(exc, TerminalChatReplyError):
+                    raise
+                sponsored_error = find_sponsored_error(exc)
+                if sponsored_error is not None and not _retry_silent_sponsored_turn(turn_id, exc):
+                    raise TerminalChatReplyError(
+                        safe_llm_failure_message(exc), code=sponsored_error.code
+                    ) from exc
                 if isinstance(exc, LLMResponseContentError):
                     raise TerminalChatReplyError(
                         safe_llm_failure_message(exc),
@@ -15701,7 +15911,11 @@ def create_app(
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
 
         recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
-        if recommendation is None and (payload.bvid.strip() or payload.item_key.strip()):
+        if (
+            recommendation is None
+            and not payload.batch_ref
+            and (payload.bvid.strip() or payload.item_key.strip())
+        ):
             # Mobile can hold a stale history row id after backend restarts /
             # migrations; fall back to the stable content identity so feedback
             # on a currently listed card still lands on the newest row.
@@ -15718,6 +15932,20 @@ def create_app(
             )
             raise HTTPException(status_code=404, detail="Recommendation not found.")
         resolved_recommendation_id = int(recommendation.get("id") or 0)
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    validate_feedback_binding,
+                    ctx.database,
+                    resolved_recommendation_id,
+                    payload.batch_ref,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         from openbiliclaw.sources.event_format import (
             SOURCE_BILIBILI,
@@ -15786,6 +16014,22 @@ def create_app(
             feedback_type=stored_feedback_type,
             feedback_note=stored_note,
         )
+        from openbiliclaw.api.director import project_feedback
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
+        try:
+            await asyncio.to_thread(
+                project_feedback,
+                ctx.database,
+                stored_recommendation_id,
+                payload.request_id,
+                stored_feedback_type,
+                stored_note,
+                batch_ref=payload.batch_ref,
+                existing_event_id=item_receipt.event_id,
+            )
+        except StoreConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.reason_code) from None
         _invalidate_recommendation_snapshot()
         buffer_domain, buffer_specifics = _recommendation_buffer_domain(recommendation)
         if item_receipt.inserted and feedback_type == "like":
@@ -15843,6 +16087,17 @@ def create_app(
             recommendation = ctx.database.get_recommendation_by_id(
                 payload.recommendation_id,
             )
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                validate_feedback_binding(
+                    ctx.database, payload.recommendation_id or 0, payload.batch_ref
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         bvid = (payload.bvid or "").strip()
         content_id = (payload.content_id or "").strip()
@@ -15974,6 +16229,22 @@ def create_app(
                 detail="request_id was already used for a different recommendation click",
             )
         stored_bvid = str(stored_metadata.get("bvid") or stored_content_id).strip()
+        if stored_recommendation_id is not None:
+            from openbiliclaw.api.director import project_feedback
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    project_feedback,
+                    ctx.database,
+                    stored_recommendation_id,
+                    payload.request_id,
+                    "click",
+                    batch_ref=payload.batch_ref,
+                    existing_event_id=item_receipt.event_id,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
         if item_receipt.inserted:
             buffer_domain, buffer_specifics = _recommendation_buffer_domain(
                 {
@@ -16768,6 +17039,20 @@ def create_app(
                 note.get("published_at") or note.get("pubdate"),
                 label=note.get("published_label"),
             )
+            raw_description = note.get("description") or note.get("desc") or note.get("text")
+            description = raw_description[:8000] if isinstance(raw_description, str) else ""
+            raw_tags = note.get("tags")
+            tags = (
+                list(
+                    dict.fromkeys(
+                        tag.strip()[:128]
+                        for tag in raw_tags[:32]
+                        if isinstance(tag, str) and tag.strip()
+                    )
+                )
+                if isinstance(raw_tags, list)
+                else []
+            )
 
             item = DiscoveredContent(
                 bvid=note_id,
@@ -16784,9 +17069,9 @@ def create_app(
                 ),
                 comment_count=_intish(note.get("comment_count") or note.get("comments")),
                 share_count=_intish(note.get("share_count") or note.get("shares")),
-                description=str(
-                    note.get("description") or note.get("desc") or note.get("text") or ""
-                ),
+                description=description,
+                body_text=description,
+                tags=tags,
                 source_strategy=f"xhs-extension-{page_type}",
                 content_id=note_id,
                 content_url=best_url,
@@ -19057,7 +19342,7 @@ def create_app(
 
         ``ok`` and ``degraded`` are terminal, while ``partial`` keeps the
         task pending and ``failed`` marks it failed. ``degraded`` means the
-        extension preserved valid DOM/API items but could not prove the
+        extension preserved valid API items but could not prove the
         bootstrap was complete. The result schema uses ``videos`` instead of
         ``notes`` and propagation goes through ``dy_bootstrap_videos_to_events``.
         No self-author filtering yet
@@ -19099,6 +19384,17 @@ def create_app(
 
         canonical_result = parse_task_result(task.get("result_json"))
         staged_status = staged_terminal_status(canonical_result)
+
+        # Older installed extensions may report recommendation DOM as private
+        # account likes/collections when identity or API requests fail. Reject
+        # that explicit negative provenance before staging or event ingress.
+        # Recovery must still honor a previously frozen final payload.
+        if task_type == "bootstrap_profile" and not staged_status and debug:
+            dom_count = debug.get("dom_items_harvested")
+            api_count = debug.get("api_items_harvested")
+            if dom_count not in (None, 0, "0") or (videos and api_count in (0, "0")):
+                legacy_queue.fail(task_id, error="untrusted_bootstrap_source", debug=debug)
+                return {"ok": True, "rejected": "untrusted_bootstrap_source"}
 
         if (
             staged_status
@@ -21370,6 +21666,7 @@ def create_app(
                 name=str(getattr(instance, "name", "") or ""),
                 provider_type=str(getattr(instance, "provider_type", "") or ""),
                 enabled=bool(getattr(instance, "enabled", True)),
+                read_only=getattr(instance, "provider_type", "") == "siliconflow_free",
             )
 
         def _legacy_provider_projection(provider_type: str) -> Any:
@@ -21463,6 +21760,42 @@ def create_app(
         else:
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
+        from openbiliclaw.config import ConfigError
+        from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+        from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+        jev_settings = cfg.decision.providers.jev
+        jev_ready = False
+        jev_reason = "请在 Jev 连接配置区启用服务并填写 Token。"
+        if jev_settings.enabled:
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                jev_reason = "请填写有效 Token，或在后端设置 api_key_env 指向的环境变量。"
+            else:
+                jev_ready = True
+                jev_reason = (
+                    "本机配置就绪（未联网验证）；纯文本、受控分类，评分尚未按当前模型校准。"
+                )
+        if cfg.discovery.semantic_filter.mode != "off":
+            jev_ready = False
+            jev_reason = (
+                "请先在 TOML 将 discovery.semantic_filter.mode 设为 off 并重启，避免重复评估。"
+            )
+        if jev_settings.model in {"jev-latest", "jev-preview"}:
+            jev_ready = False
+            jev_reason = "完整评估需要固定模型版本，请填写精确模型 ID。"
+        jev_context_budget: dict[str, str | int] | None = None
+        try:
+            jev_context = resolve_jev_context(jev_settings.model, jev_settings.context_limits)
+        except JevContextError:
+            jev_ready = False
+            jev_reason = (
+                "所选模型上下文容量未知；请按精确模型 ID 在 Jev 配置区填写已确认的双 token 上限。"
+            )
+        else:
+            jev_context_budget = {**asdict(jev_context), "fingerprint": jev_context.fingerprint}
+
         return ConfigResponse(
             # Canonical locale id: clients switch i18n on this value, while
             # config.toml may still hold a legacy alias such as ``zh``.
@@ -21471,6 +21804,7 @@ def create_app(
             degraded=degraded,
             degraded_reason=degraded_reason,
             llm=LLMConfigOut(
+                sponsored=_sponsored_config_out(cfg),
                 routing_version=2,
                 instances={
                     instance_id: _instance_out(instance)
@@ -21807,6 +22141,30 @@ def create_app(
                 admission_min_score=cfg.discovery.admission_min_score,
                 eval_prefilter_mode=cfg.discovery.eval_prefilter_mode,
                 eval_scorer=cfg.discovery.eval_scorer,
+                jev_evaluation=JevEvaluationConfigOut(**asdict(cfg.discovery.jev_evaluation)),
+                jev_provider=JevProviderReadinessOut(
+                    enabled=jev_settings.enabled,
+                    model=jev_settings.model,
+                    api_key_env=jev_settings.api_key_env,
+                    endpoint_url=jev_settings.endpoint_url,
+                    api_key_configured=bool(jev_settings.api_key),
+                    credential_source=(
+                        "config"
+                        if jev_settings.api_key
+                        else "environment"
+                        if os.environ.get(jev_settings.api_key_env, "").strip()
+                        else "missing"
+                    ),
+                    timeout_seconds=jev_settings.timeout_seconds,
+                    max_attempts=jev_settings.max_attempts,
+                    ready=jev_ready,
+                    reason=jev_reason,
+                    context_limits={
+                        model: asdict(limits)
+                        for model, limits in jev_settings.context_limits.items()
+                    },
+                    context_budget=jev_context_budget,
+                ),
                 candidate_eval_concurrency=cfg.discovery.candidate_eval_concurrency,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
                 visual_profile_enabled=cfg.discovery.visual_profile_enabled,
@@ -22316,10 +22674,84 @@ def create_app(
             return []
         return [str(item).strip() for item in value if str(item).strip()]
 
+    def _sponsored_config_out(cfg: Any) -> Any:
+        from openbiliclaw.api.models import SponsoredConfigOut, SponsoredModelOut
+        from openbiliclaw.llm.sponsored_profiles import (
+            CHAT_MODELS,
+            CONTEXT_WINDOWS,
+            DEFAULT_CHAT_MODEL,
+        )
+        from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+
+        settings = cfg.llm.sponsored
+        model = settings.model if settings.model in CHAT_MODELS else DEFAULT_CHAT_MODEL
+        from openbiliclaw.sponsored_status import sponsored_status
+
+        return SponsoredConfigOut(
+            models=[
+                SponsoredModelOut(id=item, context_window=CONTEXT_WINDOWS[item])
+                for item in CHAT_MODELS
+            ],
+            enabled=settings.enabled,
+            embedding_mode="local" if settings.embedding_mode == "local" else "cloud",
+            embedding_model=(
+                cfg.llm.embedding.model if settings.embedding_mode == "local" else "BAAI/bge-m3"
+            ),
+            service_status=sponsored_status(cfg),
+            model=cast("Literal['Qwen/Qwen3-8B', 'Qwen/Qwen3.5-4B']", model),
+            fallback_to_other_free_model=settings.fallback_to_other_free_model,
+            fallback_to_user_provider=settings.fallback_to_user_provider,
+            notify_on_fallback=settings.notify_on_fallback,
+            request_timeout_seconds=settings.request_timeout_seconds,
+            runtime_available=bool(
+                settings.relay_url or settings.runtime_path or installed_runtime_command()
+            ),
+            context_window=CONTEXT_WINDOWS[model],
+        )
+
     def _apply_llm_update(cfg: Any, llm_data: object) -> None:
         """Apply the LLM subset of a config update to an in-memory config."""
         if not isinstance(llm_data, dict):
             return
+        if "sponsored" in llm_data:
+            from dataclasses import replace
+
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            raw = llm_data["sponsored"]
+            boolean_fields = {
+                "enabled",
+                "fallback_to_other_free_model",
+                "fallback_to_user_provider",
+                "notify_on_fallback",
+            }
+            if not isinstance(raw, dict) or set(raw) - boolean_fields - {
+                "model",
+                "embedding_mode",
+                "request_timeout_seconds",
+            }:
+                raise HTTPException(status_code=400, detail="invalid llm.sponsored fields")
+            if any(not isinstance(raw[k], bool) for k in boolean_fields & raw.keys()):
+                raise HTTPException(status_code=400, detail="free-model switches must be boolean")
+            if "model" in raw and raw["model"] not in CHAT_MODELS:
+                raise HTTPException(status_code=400, detail="请选择 Qwen3-8B 或 Qwen3.5-4B")
+            if "embedding_mode" in raw and (
+                not isinstance(raw["embedding_mode"], str)
+                or raw["embedding_mode"] not in {"cloud", "local"}
+            ):
+                raise HTTPException(status_code=400, detail="请选择 cloud 或 local 向量模式")
+            if "request_timeout_seconds" in raw:
+                timeout = raw["request_timeout_seconds"]
+                if (
+                    isinstance(timeout, bool)
+                    or not isinstance(timeout, (int, float))
+                    or not 10 <= timeout <= 1200
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="free-model timeout must be between 10 and 1200 seconds",
+                    )
+            cfg.llm.sponsored = replace(cfg.llm.sponsored, **raw)
         from openbiliclaw.config import (
             _LLM_PROVIDER_DISPLAY_NAMES,
             LLMInstanceConfig,
@@ -22337,6 +22769,8 @@ def create_app(
             current_routes = effective_llm_routes(cfg.llm)
             was_native = bool(getattr(cfg.llm, "instance_routing", False))
             cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 2
+            cfg.llm.instances = current_instances
             if not was_native:
                 for module_name, route in current_routes.items():
                     setattr(cfg.llm, module_name, route)
@@ -22426,7 +22860,25 @@ def create_app(
                         # supported. New clients send this field; old clients
                         # must retain the historical omit-on-wire behavior.
                         target.reasoning_effort = ""
+                    if existing is not None and existing.provider_type == "siliconflow_free":
+                        if target != existing:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="内置免费实例不可修改，请在调用链中选择需要的模型实例。",
+                            )
+                    elif target.provider_type == "siliconflow_free":
+                        raise HTTPException(
+                            status_code=400,
+                            detail="请使用已有的两个内置免费实例，无需新建或复制。",
+                        )
                     replacement[instance_id] = target
+                # A whole-library replacement from an older client cannot delete
+                # built-ins. Removing them from chains is the supported opt-out.
+                replacement.update(
+                    (key, instance)
+                    for key, instance in current_instances.items()
+                    if instance.provider_type == "siliconflow_free"
+                )
                 cfg.llm.instances = replacement
             if "default_chain" in llm_data:
                 raw_chain = llm_data["default_chain"]
@@ -22632,6 +23084,14 @@ def create_app(
         if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
             emb = llm_data["embedding"]
             if "provider" in emb:
+                if str(emb["provider"]) != cfg.llm.embedding.provider:
+                    # Credentials never follow a provider switch to a new endpoint.
+                    cfg.llm.embedding.api_key = ""
+                    cfg.llm.embedding.base_url = ""
+                    if emb["provider"] == "siliconflow_free":
+                        cfg.llm.embedding.model = "BAAI/bge-m3"
+                        cfg.llm.embedding.output_dimensionality = 1024
+                        cfg.llm.embedding.multimodal_enabled = False
                 cfg.llm.embedding.provider = str(emb["provider"])
             if "model" in emb:
                 new_model = str(emb["model"])
@@ -22666,6 +23126,32 @@ def create_app(
                 cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             if "multimodal_enabled" in emb:
                 cfg.llm.embedding.multimodal_enabled = _as_bool(emb["multimodal_enabled"])
+        if cfg.llm.embedding.provider == "siliconflow_free":
+            emb_cfg = cfg.llm.embedding
+            if (
+                emb_cfg.model != "BAAI/bge-m3"
+                or emb_cfg.api_key
+                or emb_cfg.base_url
+                or emb_cfg.output_dimensionality != 1024
+                or emb_cfg.multimodal_enabled
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "免费 Embedding 仅支持 BAAI/bge-m3、1024 维文本向量，无需填写 Key 或地址。"
+                    ),
+                )
+        # The shared form submits this explicit choice on all four surfaces.
+        # Preserve an existing Ollama model/private port; never reuse cloud credentials.
+        sponsored_update = llm_data.get("sponsored", {})
+        if (
+            cfg.llm.sponsored.enabled
+            and isinstance(sponsored_update, dict)
+            and sponsored_update.get("embedding_mode") == "local"
+        ):
+            from openbiliclaw.llm.sponsored_embedding import select_local_embedding
+
+            select_local_embedding(cfg)
         for module_name in ("soul", "discovery", "recommendation", "evaluation"):
             if module_name in llm_data and isinstance(llm_data[module_name], dict):
                 mod_cfg = getattr(cfg.llm, module_name)
@@ -22691,6 +23177,20 @@ def create_app(
                     )
                     if instance is None:
                         continue
+                    if provider_type == "siliconflow_free" and model:
+                        selected = next(
+                            (
+                                (key, item)
+                                for key, item in cfg.llm.instances.items()
+                                if item.provider_type == "siliconflow_free" and item.model == model
+                            ),
+                            None,
+                        )
+                        if selected is None:
+                            raise HTTPException(
+                                status_code=400, detail="请选择已有的内置模型实例。"
+                            )
+                        instance_id, instance = selected
                     if model and str(getattr(instance, "model", "") or "").strip() != model:
                         derived_id = f"legacy-{module_name}"
                         instance = LLMInstanceConfig(
@@ -22788,6 +23288,17 @@ def create_app(
         effort_source: Literal["local_advisory", "not_available"] = (
             "local_advisory" if efforts else "not_available"
         )
+        if provider == "siliconflow_free":
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            return ConfigModelDiscoveryResponse(
+                ok=True,
+                instance_id=target_instance_id,
+                provider=provider,
+                models=list(CHAT_MODELS),
+                message="内置免费模型目录，按实例选择。",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
         if provider not in {
             "openai",
             "deepseek",
@@ -22925,7 +23436,11 @@ def create_app(
         provider = ""
         model = ""
         try:
-            registry = build_llm_registry(cfg)
+            registry = (
+                build_llm_registry(cfg, fallback_order=[target_instance])
+                if is_instance and target_instance
+                else build_llm_registry(cfg)
+            )
             if not is_chain and not is_instance and not is_fallback and not target_instance:
                 target_instance = str(getattr(registry, "default_provider", "") or "")
             if is_instance and not target_instance:
@@ -23046,6 +23561,11 @@ def create_app(
         emb_cfg = getattr(getattr(cfg, "llm", None), "embedding", None)
         provider = str(getattr(emb_cfg, "provider", "") or "").strip().lower()
         model = str(getattr(emb_cfg, "model", "") or "").strip()
+        timeout_s = (
+            _LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS
+            if provider == "ollama"
+            else _EMBEDDING_PROBE_TIMEOUT_SECONDS
+        )
         if not provider:
             return ConfigServiceProbeResponse(
                 ok=False,
@@ -23071,7 +23591,7 @@ def create_app(
                 # building it successfully is the best signal we have.
                 ok = True
             else:
-                ok = bool(await asyncio.wait_for(probe(), timeout=15.0))
+                ok = bool(await asyncio.wait_for(probe(), timeout=timeout_s))
             return ConfigServiceProbeResponse(
                 ok=ok,
                 kind="embedding",
@@ -23079,6 +23599,22 @@ def create_app(
                 model=model,
                 message="Embedding provider is available." if ok else "",
                 error="" if ok else "Embedding provider returned no vector.",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+        except TimeoutError:
+            return ConfigServiceProbeResponse(
+                ok=False,
+                kind="embedding",
+                provider=provider,
+                model=model,
+                error=(
+                    f"本地向量服务在 {timeout_s:g} 秒内未完成，可能正在加载模型或处理其他任务。"
+                    "请稍后重试，或切换硅基流动 BGE-M3。"
+                    if provider == "ollama"
+                    else f"向量服务连接测试超过 {timeout_s:g} 秒，请稍后重试。"
+                ),
+                error_code="EMBEDDING_BUSY",
+                retryable=True,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
         except Exception as exc:
@@ -23153,7 +23689,7 @@ def create_app(
     async def probe_config_service(
         request: Request, payload: ConfigServiceProbeIn
     ) -> ConfigServiceProbeResponse | JSONResponse:
-        """Probe submitted LLM / embedding / proxy settings without saving config.toml."""
+        """Probe submitted service settings without saving config.toml."""
         denied = _config_write_gate(request)
         if denied is not None:
             return denied
@@ -23192,16 +23728,149 @@ def create_app(
             return await _probe_network_proxy(mode, proxy)
 
         cfg = deepcopy(load_config())
+        if payload.kind == "jev":
+            from openbiliclaw.api.jev_probe import probe_jev_config
+
+            return await probe_jev_config(cfg, update)
         llm_data = update.get("llm")
         if isinstance(llm_data, dict):
             _apply_llm_update(cfg, llm_data)
-        if payload.kind == "embedding":
-            return await _probe_embedding_config(cfg)
-        return await _probe_llm_config(
-            cfg,
-            kind=payload.kind,
-            instance_id=payload.instance_id,
-        )
+        from openbiliclaw.llm.sponsored_router import bypass_sponsored
+
+        if payload.kind == "sponsored":
+            import shlex
+
+            from openbiliclaw.llm.sponsored_profiles import approved_registry
+            from openbiliclaw.llm.sponsored_provider import SponsoredProvider
+            from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
+            from openbiliclaw.sponsored_status import sponsored_status
+
+            settings = cfg.llm.sponsored
+            command = settings.runtime_path or installed_runtime_command()
+            started = time.monotonic()
+            if not command and not settings.relay_url:
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="sponsored",
+                    error="请先准备免费模型组件；组件到期时请更新安装包/版本",
+                    service_status=sponsored_status(cfg),
+                )
+            provider: SponsoredProvider
+            if settings.relay_url:
+                from openbiliclaw.llm.sponsored_relay_client import SponsoredRelayProvider
+
+                provider = SponsoredRelayProvider(
+                    settings.relay_url,
+                    cfg.data_path / "runtime" / "relay-device.key",
+                    registry=approved_registry(),
+                    model=settings.model,
+                    fallback_to_other_free_model=False,
+                    request_timeout=settings.request_timeout_seconds,
+                )
+            else:
+                provider = SponsoredProvider(
+                    shlex.split(command),
+                    registry=approved_registry(),
+                    model=settings.model,
+                    fallback_to_other_free_model=False,
+                    request_timeout=settings.request_timeout_seconds,
+                )
+            try:
+                assert ctx.llm_concurrency_gate is not None
+                async with ctx.llm_concurrency_gate.slot(caller="api.config_probe"):
+                    response = None
+                    async for chunk in provider.stream_complete(
+                        [{"role": "user", "content": "请只回复：连接成功"}],
+                        max_tokens=128,
+                        reasoning_effort="",
+                    ):
+                        if chunk.response is not None:
+                            response = chunk.response
+                    embedding_message = ""
+                    if payload.check_embedding:
+                        if settings.embedding_mode == "local":
+                            with bypass_sponsored():
+                                local_probe = await _probe_embedding_config(cfg)
+                            if not local_probe.ok:
+                                return ConfigServiceProbeResponse(
+                                    ok=False,
+                                    kind="sponsored",
+                                    provider="sponsored",
+                                    model=settings.model,
+                                    error="免费对话可用；" + local_probe.error,
+                                    error_code=local_probe.error_code,
+                                    retryable=local_probe.retryable,
+                                    latency_ms=int((time.monotonic() - started) * 1000),
+                                    service_status=sponsored_status(cfg),
+                                )
+                            embedding_message = f"和本地 {local_probe.model} 文本向量均可用"
+                        else:
+                            vector = await provider.embedding("OpenBiliClaw 文本向量连接测试")
+                            if len(vector) != 1024:
+                                raise ValueError("incomplete free embedding probe")
+                            embedding_message = "和 BGE-M3 文本向量均可用"
+                if response is None or not response.content.strip():
+                    raise ValueError("incomplete free-model probe")
+                return ConfigServiceProbeResponse(
+                    ok=True,
+                    kind="sponsored",
+                    provider="sponsored",
+                    model=response.model,
+                    service_status=sponsored_status(cfg),
+                    message="流式对话"
+                    + (embedding_message or "可用；本地向量将在初始化时准备和验证"),
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            except Exception as exc:
+                from openbiliclaw.llm.sponsored_errors import SponsoredError
+                from openbiliclaw.sponsored_status import GUIDANCE
+
+                error = (
+                    GUIDANCE.get(exc.code, ("", f"免费模型测试失败：{exc.code}"))[1]
+                    if isinstance(exc, SponsoredError)
+                    else "免费模型测试失败，请检查组件或稍后重试"
+                )
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="sponsored",
+                    provider="sponsored",
+                    model=settings.model,
+                    error=error,
+                    service_status=sponsored_status(cfg),
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            finally:
+                await provider.aclose()
+
+        # Draft-provider probes must validate their selected target, including
+        # embedding and default-chain probes, rather than borrow sponsor health.
+        with bypass_sponsored():
+            if payload.kind == "embedding":
+                return await _probe_embedding_config(cfg)
+            return await _probe_llm_config(
+                cfg,
+                kind=payload.kind,
+                instance_id=payload.instance_id,
+            )
+
+    @app.post("/api/config/sponsored/prepare", response_model=None)
+    async def prepare_sponsored_runtime(request: Request) -> dict[str, object] | JSONResponse:
+        """Install only the release pinned by this Core version, without accepting paths."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+        if load_config().llm.sponsored.relay_url:
+            return {"ok": True, "message": "已配置免费中继，可在模型设置中测试连接"}
+        try:
+            await asyncio.to_thread(ensure_runtime)
+            return {"ok": True, "message": "免费模型组件已就绪"}
+        except BundleError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception:
+            return {"ok": False, "error": "免费模型组件下载失败，请检查网络后重试"}
 
     @app.post("/api/config/discover-models", response_model=ConfigModelDiscoveryResponse)
     async def discover_config_models(
@@ -23278,6 +23947,8 @@ def create_app(
             _MIN_COPY_READY_TARGET_COUNT,
             _MIN_EVAL_MAX_WAIT_SECONDS,
             _MIN_EVAL_MIN_BATCH_SIZE,
+            ConfigError,
+            ConfigIssue,
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
@@ -23287,6 +23958,8 @@ def create_app(
             _normalize_scheduler_int,
             _normalize_source_incremental_hours,
             _validate_auto_update_check_interval,
+            build_jev_evaluation_config,
+            decision_routes_enabled,
             load_config,
             normalize_outbound_proxy,
             normalize_outbound_proxy_mode,
@@ -23323,6 +23996,13 @@ def create_app(
             cfg.language = _validated_config_language(update["language"])
         if "data_dir" in update:
             cfg.data_dir = str(update["data_dir"])
+        if "decision" in update:
+            from openbiliclaw.config import update_decision_config
+
+            try:
+                cfg.decision = update_decision_config(cfg.decision, update["decision"])
+            except ConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
 
         tailnet_restart_required = False
         tailnet_bootstrap_credential = ""
@@ -24980,12 +25660,24 @@ def create_app(
                     cfg.discovery.eval_prefilter_mode = eval_prefilter_mode
                 if "eval_scorer" in ddata:
                     eval_scorer = str(ddata["eval_scorer"] or "").strip().lower()
-                    if eval_scorer not in {"llm", "shadow", "learned"}:
+                    if eval_scorer not in {"llm", "shadow", "learned", "jev"}:
                         raise HTTPException(
                             status_code=422,
-                            detail="discovery.eval_scorer must be llm, shadow, or learned",
+                            detail="discovery.eval_scorer must be llm, shadow, learned, or jev",
                         )
                     cfg.discovery.eval_scorer = eval_scorer
+                if "jev_evaluation" in ddata:
+                    raw_jev_evaluation = ddata["jev_evaluation"]
+                    if not isinstance(raw_jev_evaluation, dict):
+                        raise HTTPException(
+                            status_code=422, detail="discovery.jev_evaluation must be an object"
+                        )
+                    try:
+                        cfg.discovery.jev_evaluation = build_jev_evaluation_config(
+                            {**asdict(cfg.discovery.jev_evaluation), **raw_jev_evaluation}
+                        )
+                    except ConfigError as exc:
+                        raise HTTPException(status_code=422, detail=str(exc)) from exc
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:
                         setattr(
@@ -25139,6 +25831,21 @@ def create_app(
             setattr(subsection, target[2], "")
 
         issues = _validate_llm_buildable(cfg, _collect_config_issues(cfg))
+        if decision_routes_enabled(cfg):
+            from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                issues.append(
+                    ConfigIssue(
+                        field="decision.providers.jev.api_key_env",
+                        message=(
+                            "Jev 路由需要有效 Token；请在连接配置区填写，或配置后端环境变量。"
+                        ),
+                        severity="blocking",
+                    )
+                )
         posture_issue = _posture_gate_enforce_issue(cfg, getattr(ctx, "database", None))
         if posture_issue is not None:
             issues.append(posture_issue)
@@ -25263,6 +25970,12 @@ def create_app(
                 saved_path=saved_path,
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
+                allow_llm_instance_live_apply=(
+                    # Both settings UIs echo Tailnet even when it is unchanged.
+                    # Actual settings/credential changes still require restart;
+                    # mere presence must not turn a chain switch into a drain.
+                    not pending_credential_writes and not tailnet_restart_required
+                ),
             )
 
             # 持久化与运行时应用是两个阶段。统一进入已有 latest-wins 队列，
@@ -25435,77 +26148,15 @@ def create_app(
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
-        _desktop_index_path = _desktop_dir / "index.html"
+        from openbiliclaw.api.desktop_assets import DesktopAssets
 
-        def _desktop_asset_version() -> str:
-            import hashlib
-
-            digest = hashlib.sha256()
-            # Paths are relative to the desktop root except the shared modules,
-            # which live outside it — an upgrade that only changed
-            # shared renderers would otherwise be served from cache forever.
-            for relative, root in (
-                ("assets/css/app.css", _desktop_dir),
-                ("assets/css/classic.css", _desktop_dir),
-                ("assets/js/app.js", _desktop_dir),
-                ("assets/js/chat-agent-core.js", _desktop_dir),
-                ("agent-chat.js", _shared_web_dir),
-                ("i18n.js", _shared_web_dir),
-                ("dialogue-confirmation.js", _shared_web_dir),
-                ("source-status.js", _shared_web_dir),
-            ):
-                path = root / relative
-                if not path.is_file():
-                    continue
-                stat = path.stat()
-                digest.update(relative.encode("utf-8"))
-                digest.update(str(stat.st_mtime_ns).encode("ascii"))
-                digest.update(str(stat.st_size).encode("ascii"))
-            return digest.hexdigest()[:12]
+        _desktop_assets = DesktopAssets(_web_dir)
 
         def _desktop_index_response() -> Response:
-            if not _desktop_index_path.is_file():
+            if not (_desktop_dir / "index.html").is_file():
                 raise HTTPException(status_code=404, detail="desktop web index not found")
-            version = _desktop_asset_version()
-            html = _desktop_index_path.read_text(encoding="utf-8")
-            html = html.replace(
-                'href="/web/assets/css/app.css"',
-                f'href="/web/assets/css/app.css?v={version}"',
-            )
-            html = html.replace(
-                'href="/web/assets/css/classic.css"',
-                f'href="/web/assets/css/classic.css?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/app.js"',
-                f'src="/web/assets/js/app.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/chat-agent-core.js"',
-                f'src="/web/assets/js/chat-agent-core.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/fish-settings.js"',
-                f'src="/web/assets/js/fish-settings.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/agent-chat.js"',
-                f'src="/shared/agent-chat.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/i18n.js"',
-                f'src="/shared/i18n.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/dialogue-confirmation.js"',
-                f'src="/shared/dialogue-confirmation.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/source-status.js"',
-                f'src="/shared/source-status.js?v={version}"',
-            )
             return Response(
-                html,
+                _desktop_assets.current().html,
                 media_type="text/html; charset=utf-8",
                 headers={"Cache-Control": "no-store"},
             )
@@ -25517,6 +26168,18 @@ def create_app(
         @app.get("/web/", include_in_schema=False)
         def _desktop_index_slash() -> Response:
             return _desktop_index_response()
+
+        @app.get("/web/index.html", include_in_schema=False)
+        def _desktop_index_file() -> Response:
+            return _desktop_index_response()
+
+        @app.get("/web/assets/desktop-bundle.js", include_in_schema=False)
+        def _desktop_bundle(request: Request, v: str | None = None) -> Response:
+            return _desktop_assets.response(
+                v,
+                accept_encoding=request.headers.get("accept-encoding", ""),
+                if_none_match=request.headers.get("if-none-match", ""),
+            )
 
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 

@@ -1,0 +1,24 @@
+{
+  "schema": "director-browser-observations.v1",
+  "date": "2026-10-02",
+  "method": "Playwright CLI against isolated live-data server, with read-only SQLite inspection",
+  "server_report": "live-e2e-1002-browser.json",
+  "network_routes_mocked": false,
+  "surfaces": ["/web/", "/m/"],
+  "observations": [
+    "Desktop displayed ten delivered cards after the real generation completed.",
+    "Desktop reload and mobile navigation displayed the same committed batch without replacing its cards.",
+    "Before STAY, SQLite contained two presented receipts and one like receipt after the real mobile Like button was clicked.",
+    "Clicking Load more before initial generation completed returned HTTP 409; initial generation subsequently displayed normally.",
+    "The mobile Change batch button committed STAY with the same experience_step_seq of 1."
+  ],
+  "committed_batch_observations": [
+    {"intent": "NEXT", "requested_strategy": "agent_only", "realized_strategy": "deterministic", "item_count": 10, "experience_step_seq": 1, "planning_reason": "planner_timeout"},
+    {"intent": "STAY", "realized_strategy": "deterministic", "item_count": 10, "experience_step_seq": 1, "planning_reason": "planner_timeout"}
+  ],
+  "private_screenshots_not_committed": [
+    "output/playwright/director-desktop-real.png",
+    "output/playwright/director-mobile-real.png"
+  ],
+  "verdict": "Observed real browser delivery, restore, ACK, feedback and fallback STAY; not an Agent-only or full three-mode acceptance pass."
+}

@@ -1,0 +1,628 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "http_user_surfaces_and_state_endpoints",
+      "status": "pass",
+      "result": {
+        "/api/health": {
+          "status": 200,
+          "bytes": 136
+        },
+        "/api/profile-summary": {
+          "status": 200,
+          "bytes": 7935
+        },
+        "/api/profile/edit-state": {
+          "status": 200,
+          "bytes": 1696
+        },
+        "/api/recommendations?limit=3": {
+          "status": 200,
+          "bytes": 813
+        },
+        "/api/chat/sessions": {
+          "status": 200,
+          "bytes": 719
+        },
+        "/api/chat/tasks": {
+          "status": 200,
+          "bytes": 44
+        },
+        "/api/runtime-status": {
+          "status": 200,
+          "bytes": 2519
+        },
+        "/api/config": {
+          "status": 200,
+          "bytes": 13778
+        },
+        "/api/notifications/pending": {
+          "status": 200,
+          "bytes": 234
+        },
+        "/api/chat/approvals": {
+          "status": 200,
+          "bytes": 22
+        },
+        "/api/chat/pending-confirmations": {
+          "status": 200,
+          "bytes": 350
+        },
+        "/web/": {
+          "status": 200,
+          "bytes": 185538
+        },
+        "/m/": {
+          "status": 200,
+          "bytes": 1685
+        },
+        "/setup/": {
+          "status": 200,
+          "bytes": 111849
+        }
+      },
+      "seconds": 16.098,
+      "calls": []
+    },
+    {
+      "name": "profile_manual_edit_dedup_and_invalid_input",
+      "status": "pass",
+      "result": {
+        "duplicate_edit_deduplicated": true,
+        "invalid_edit_rejected": true,
+        "removed": true
+      },
+      "seconds": 0.221,
+      "calls": []
+    },
+    {
+      "name": "durable_turn_idempotency_conflict_and_session_lifecycle",
+      "status": "pass",
+      "result": {
+        "turn_id": "comprehensive-1793878236649513000",
+        "reply": "本次验收代号：银杏6029。",
+        "stored_turns": 1,
+        "conflict_status": 409,
+        "rename_archive_restore": true
+      },
+      "seconds": 2.271,
+      "calls": [
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5090,
+          "completion_tokens": 12,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "background_agent_task_real_tool_and_persistence",
+      "status": "pass",
+      "result": {
+        "task_id": "agent-task-bc056268ea9e43be9b3b6b4dba980383",
+        "session_id": "",
+        "title": "只读画像任务",
+        "prompt": "必须用 get_profile 工具读取画像，最后概括两个兴趣，不要修改数据。",
+        "status": "completed",
+        "skill": "",
+        "progress": "## 综合叙事\n\n根据用户画像，可以总结出两个主要兴趣：\n\n1. **技术学习**：用户对编程，特别是 Rust 编程表现出浓厚兴趣，持续关注相关教程和内容。\n2. **园艺与生活实践**：用户对阳台种植（如番茄）有兴趣，表明对生活中的实际",
+        "report": "## 综合叙事\n\n根据用户画像，可以总结出两个主要兴趣：\n\n1. **技术学习**：用户对编程，特别是 Rust 编程表现出浓厚兴趣，持续关注相关教程和内容。\n2. **园艺与生活实践**：用户对阳台种植（如番茄）有兴趣，表明对生活中的实际应用和种植活动感兴趣。\n\n这两个兴趣反映了用户当前的生活阶段和状态，即作为技术学习者，正在学习编程的同时尝试园艺实践。",
+        "suggestions": [],
+        "steps": [
+          {
+            "type": "tool_call",
+            "step": 1,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 1,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "tool_call",
+            "step": 2,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 2,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "tool_call",
+            "step": 3,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 3,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "tool_call",
+            "step": 4,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 4,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "tool_call",
+            "step": 5,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 5,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "tool_call",
+            "step": 6,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 6,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "tool_call",
+            "step": 7,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 7,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 0.95)\n- 编程 (0.95)\n- Rust (0.85)\n\n#### 生活 (权重 0.60)\n- 阳台种植 (0.60)\n- 园艺 (0.35)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 技术学习者\n- 当前状态: 学习 Rust 编程和尝试阳台种植番茄\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: medium\n- 深度偏好: 0.85\n- 质量敏感度: 0.70\n\n### 情境模式\n- 工作日: 持续关注编程技术类内容\n- 周末: 未观察到显著行为模式\n- 探索开放度: 0.60\n\n---\n\n## 综合叙事\n\n用户明确喜欢 Rust 编程教程和阳台种番茄，表明对技术学习和园艺有兴趣。未提及性格、价值观、动机等信息。\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "final",
+            "step": 8,
+            "text": "## 综合叙事\n\n根据用户画像，可以总结出两个主要兴趣：\n\n1. **技术学习**：用户对编程，特别是 Rust 编程表现出浓厚兴趣，持续关注相关教程和内容。\n2. **园艺与生活实践**：用户对阳台种植（如番茄）有兴趣，表明对生活中的实际应用和种植活动感兴趣。\n\n这两个兴趣反映了用户当前的生活阶段和状态，即作为技术学习者，正在学习编程的同时尝试园艺实践。"
+          }
+        ],
+        "error": "",
+        "created_at": "2026-11-05 11:30:38",
+        "started_at": "2026-11-05 11:30:38",
+        "finished_at": "2026-11-05 11:31:54",
+        "updated_at": "2026-11-05 11:31:54"
+      },
+      "seconds": 75.82,
+      "calls": [
+        {
+          "caller": "soul.avoidance_speculate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1353,
+          "completion_tokens": 1653,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2021,
+          "completion_tokens": 16,
+          "success": 1
+        },
+        {
+          "caller": "soul.speculate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2138,
+          "completion_tokens": 1716,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2399,
+          "completion_tokens": 16,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2703,
+          "completion_tokens": 17,
+          "success": 1
+        },
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1934,
+          "completion_tokens": 590,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3007,
+          "completion_tokens": 17,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3311,
+          "completion_tokens": 17,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3615,
+          "completion_tokens": 17,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3919,
+          "completion_tokens": 17,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4223,
+          "completion_tokens": 100,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "web_content_extraction_preserves_items_and_urls",
+      "status": "fail",
+      "error": "AssertionError: [DiscoveredContent(bvid='', title='Rust借用检查实例', up_name='', up_mid=0, cover_url='', duration=0, view_count=0, like_count=0, favorite_count=0, collect_count=0, comment_count=0, share_count=0, danmaku_count=0, reply_count=0, retweet_count=0, bookmark_count=0, engagement_available=[], rating_score=0.0, rating_count=0, source_rank=0, tags=[], topic_key='', topic_group='', style_key='', franchise_key='', description='用三个可运行的例子解释引用的作用域。', published_at='', published_label='', source_strategy='web_extract', discovery_lane='', relevance_score=0.0, relevance_reason='', semantic_filter_deferred=False, semantic_filter_review=False, temporal_class='unknown', temporal_confidence=0.0, temporal_reason='', temporal_policy_version='v2', temporal_validity_mode='none', temporal_valid_until='', temporal_scope='none', temporal_evidence='', temporal_state='unknown', temporal_next_review_at='', temporal_evaluated_at='', temporal_evidence_complete=False, temporal_evaluated=False, pool_expression='', pool_topic_label='', candidate_tier='primary', discovered_at='', last_scored_at='', content_id='17', item_key='web:17', content_url='https://example.com/post/rust-17', source_platform='web', author_name='小林', score_threshold=0.0, body_text='', content_type='video', source_metadata={}, source_keyword_id=None), DiscoveredContent(bvid='', title='番茄支架搭建记录', up_name='', up_mid=0, cover_url='', duration=0, view_count=0, like_count=0, favorite_count=0, collect_count=0, comment_count=0, share_count=0, danmaku_count=0, reply_count=0, retweet_count=0, bookmark_count=0, engagement_available=[], rating_score=0.0, rating_count=0, source_rank=0, tags=[], topic_key='', topic_group='', style_key='', franchise_key='', description='记录阳台番茄支架安装过程以及本周的浇水安排。', published_at='', published_label='', source_strategy='web_extract', discovery_lane='', relevance_score=0.0, relevance_reason='', semantic_filter_deferred=False, semantic_filter_review=False, temporal_class='unknown', temporal_confidence=0.0, temporal_reason='', temporal_policy_version='v2', temporal_validity_mode='none', temporal_valid_until='', temporal_scope='none', temporal_evidence='', temporal_state='unknown', temporal_next_review_at='', temporal_evaluated_at='', temporal_evidence_complete=False, temporal_evaluated=False, pool_expression='', pool_topic_label='', candidate_tier='primary', discovered_at='', last_scored_at='', content_id='29', item_key='web:29', content_url='https://example.com/post/garden-29', source_platform='web', author_name='阿青', score_threshold=0.0, body_text='', content_type='video', source_metadata={}, source_keyword_id=None)]",
+      "seconds": 41.393,
+      "calls": [
+        {
+          "caller": "discovery.keyword_planner",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3242,
+          "completion_tokens": 1396,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5967,
+          "completion_tokens": 1051,
+          "success": 1
+        },
+        {
+          "caller": "sources.web.extract",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 364,
+          "completion_tokens": 648,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "five_platform_keyword_generation_and_cache",
+      "status": "pass",
+      "result": {
+        "generated": {
+          "bilibili": 3,
+          "xiaohongshu": 10,
+          "douyin": 10,
+          "youtube": 10,
+          "github": 10
+        },
+        "calls": [
+          {
+            "caller": "discovery.evaluate_batch",
+            "success": 1
+          },
+          {
+            "caller": "discovery.temporal_repair",
+            "success": 1
+          },
+          {
+            "caller": "discovery.keyword_planner",
+            "success": 1
+          }
+        ]
+      },
+      "seconds": 53.341,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5693,
+          "completion_tokens": 960,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1035,
+          "completion_tokens": 336,
+          "success": 1
+        },
+        {
+          "caller": "discovery.keyword_planner",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3121,
+          "completion_tokens": 1449,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "director_two_screens_with_default_planning_budget",
+      "status": "fail",
+      "error": "AssertionError: plan=None reason_code='planner_timeout' calls=1",
+      "seconds": 20.047,
+      "calls": [
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1001,
+          "completion_tokens": 590,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "interest_speculation_generation_and_persistence",
+      "status": "fail",
+      "error": "AssertionError: []",
+      "seconds": 0.007,
+      "calls": []
+    },
+    {
+      "name": "deep_write_gate_rejects_unsupported_occupation",
+      "status": "pass",
+      "result": {
+        "verdict": "downgrade",
+        "reason": "当前core_memory为空，缺乏基础信息支撑职业属性判定；虽然存在Rust教程的观察记录，但单一行为不足以证明职业身份，需更多证据验证。",
+        "enforced": true,
+        "is_error": false
+      },
+      "seconds": 43.271,
+      "calls": [
+        {
+          "caller": "discovery.keyword_inspiration",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4569,
+          "completion_tokens": 2926,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5984,
+          "completion_tokens": 983,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5063,
+          "completion_tokens": 157,
+          "success": 1
+        },
+        {
+          "caller": "soul.posture_gate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 499,
+          "completion_tokens": 352,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "dislike_embedding_recall_and_precise_llm_judgement",
+      "status": "pass",
+      "result": {
+        "recalled": [
+          [
+            "fixture-bad",
+            0.8020681756835644
+          ]
+        ],
+        "purge_decisions": [
+          "fixture-bad"
+        ]
+      },
+      "seconds": 18.628,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5084,
+          "completion_tokens": 142,
+          "success": 1
+        },
+        {
+          "caller": "pool_purge.llm_agent",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 385,
+          "completion_tokens": 396,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "long_context_middle_record_and_model_specific_bound",
+      "status": "fail",
+      "error": "SponsoredContractMismatchError: invalid fixed SDK operation input",
+      "seconds": 0.028,
+      "calls": []
+    },
+    {
+      "name": "explicit_thinking_real_stream_and_correct_arithmetic",
+      "status": "pass",
+      "result": {
+        "answer": "\n\n17×12−39=204−39=165  \n答案：165支",
+        "first_text_seconds": 17.89068958070129,
+        "deltas": 27,
+        "selected_model": "Qwen/Qwen3-8B"
+      },
+      "seconds": 18.764,
+      "calls": []
+    },
+    {
+      "name": "all_submitted_learning_and_edits_finish",
+      "status": "pass",
+      "result": {
+        "learning_drained": true,
+        "pending_edits_finished": true
+      },
+      "seconds": 0.0,
+      "calls": []
+    }
+  ],
+  "background_observations": [
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    }
+  ]
+}

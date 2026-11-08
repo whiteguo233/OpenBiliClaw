@@ -1,0 +1,434 @@
+{
+  "before": [
+    {
+      "port": 18475,
+      "total_ms": 1098,
+      "results": [
+        {
+          "ms": 1097,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 460,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 802,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 730,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 586,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 723,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    },
+    {
+      "port": 18476,
+      "total_ms": 2173,
+      "results": [
+        {
+          "ms": 2172,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 1777,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 2023,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 2008,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 1834,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 2011,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    },
+    {
+      "port": 18475,
+      "total_ms": 601,
+      "results": [
+        {
+          "ms": 601,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 228,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 498,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 451,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 302,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 373,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    },
+    {
+      "port": 18476,
+      "total_ms": 2038,
+      "results": [
+        {
+          "ms": 2038,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 1656,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 1897,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 1866,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 1734,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 1884,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    }
+  ],
+  "after": [
+    {
+      "port": 18475,
+      "total_ms": 1573,
+      "results": [
+        {
+          "ms": 1571,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 992,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 1152,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 1113,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 899,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 1050,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    },
+    {
+      "port": 18476,
+      "total_ms": 625,
+      "results": [
+        {
+          "ms": 621,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 574,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 618,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 601,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 582,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 567,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    },
+    {
+      "port": 18475,
+      "total_ms": 176,
+      "results": [
+        {
+          "ms": 95,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 100,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 142,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 165,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 116,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 133,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    },
+    {
+      "port": 18476,
+      "total_ms": 255,
+      "results": [
+        {
+          "ms": 181,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 76653
+        },
+        {
+          "ms": 180,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 28385
+        },
+        {
+          "ms": 236,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 24691
+        },
+        {
+          "ms": 241,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 75575
+        },
+        {
+          "ms": 174,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 61609
+        },
+        {
+          "ms": 220,
+          "status": 200,
+          "cache": "hit",
+          "bytes": 38543
+        }
+      ]
+    }
+  ],
+  "browser": [
+    {
+      "round": 0,
+      "ms": 284,
+      "images": [
+        {
+          "index": 0,
+          "width": 640,
+          "height": 401,
+          "ms": 284
+        },
+        {
+          "index": 1,
+          "width": 640,
+          "height": 400,
+          "ms": 247
+        },
+        {
+          "index": 2,
+          "width": 640,
+          "height": 360,
+          "ms": 277
+        },
+        {
+          "index": 3,
+          "width": 640,
+          "height": 400,
+          "ms": 274
+        },
+        {
+          "index": 4,
+          "width": 640,
+          "height": 360,
+          "ms": 261
+        },
+        {
+          "index": 5,
+          "width": 640,
+          "height": 400,
+          "ms": 266
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "ms": 238,
+      "images": [
+        {
+          "index": 0,
+          "width": 640,
+          "height": 401,
+          "ms": 169
+        },
+        {
+          "index": 1,
+          "width": 640,
+          "height": 400,
+          "ms": 229
+        },
+        {
+          "index": 2,
+          "width": 640,
+          "height": 360,
+          "ms": 185
+        },
+        {
+          "index": 3,
+          "width": 640,
+          "height": 400,
+          "ms": 238
+        },
+        {
+          "index": 4,
+          "width": 640,
+          "height": 360,
+          "ms": 189
+        },
+        {
+          "index": 5,
+          "width": 640,
+          "height": 400,
+          "ms": 215
+        }
+      ]
+    }
+  ],
+  "service_unavailable_fallback": {
+    "status": 200,
+    "ms": 1810,
+    "bytes": 76653,
+    "type": "image/jpeg"
+  }
+}

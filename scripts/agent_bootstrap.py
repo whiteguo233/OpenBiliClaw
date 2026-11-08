@@ -57,6 +57,8 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Constants
 
+INSTALL_LANGUAGES = ("zh-Hans", "zh-Hant", "en")
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8420
 DEFAULT_REPO_URL = "https://github.com/whiteguo233/OpenBiliClaw.git"
@@ -157,7 +159,7 @@ LLM_PRESETS: dict[str, dict[str, str]] = {
     },
     "minimax": {
         "base_url": "https://api.minimax.io/v1",
-        "model": "MiniMax-M2.7",
+        "model": "MiniMax-M3.1-Flash",
     },
     "qwen": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -296,6 +298,7 @@ class HumanInstallAnswers:
     bilibili_cookie: str = ""
     bilibili_favorite_limit: int = DEFAULT_BILIBILI_FAVORITE_LIMIT
     bilibili_follow_limit: int = DEFAULT_BILIBILI_FOLLOW_LIMIT
+    language: str = "zh-Hans"
 
     def __post_init__(self) -> None:
         if self.provider not in SUPPORTED_PROVIDERS:
@@ -712,6 +715,28 @@ def _collect_human_cookie_config(
     return "extension", ""
 
 
+def collect_human_language(input_func: Any, existing: str = "zh-Hans") -> str:
+    """Choose the UI/output language without importing pre-install dependencies."""
+    tag = existing.strip().lower().replace("_", "-")
+    default = (
+        "en"
+        if tag.startswith("en")
+        else (
+            "zh-Hant"
+            if any(part in tag.split("-") for part in ("hant", "tw", "hk", "mo"))
+            else "zh-Hans"
+        )
+    )
+    print("\n语言 / 語言 / Language")
+    print("  1. 简体中文 (zh-Hans)\n  2. 繁體中文 (zh-Hant)\n  3. English (en)")
+    while True:
+        raw = str(input_func(f"选择 / 選擇 / Select [{default}]: ")).strip() or default
+        language = INSTALL_LANGUAGES[int(raw) - 1] if raw in {"1", "2", "3"} else raw
+        if language in INSTALL_LANGUAGES:
+            return language
+        print("请输入 / 請輸入 / Enter: 1, 2, 3 / zh-Hans, zh-Hant, en")
+
+
 def collect_human_install_wizard(
     *,
     input_func: Any = input,
@@ -720,11 +745,14 @@ def collect_human_install_wizard(
     existing_api_key: str = "",
     existing_base_url: str = "",
     existing_model: str = "",
+    language: str | None = None,
+    existing_language: str = "zh-Hans",
 ) -> HumanInstallAnswers:
     """Collect full human one-line installer choices before bootstrap starts."""
 
     ensure_human_wizard_tty(input_func)
     secret_input_func = secret_input_func or read_secret_no_echo
+    selected_language = language or collect_human_language(input_func, existing_language)
     llm = collect_human_llm_config(
         input_func=input_func,
         secret_input_func=secret_input_func,
@@ -773,6 +801,7 @@ def collect_human_install_wizard(
     cookie_mode, bilibili_cookie = _collect_human_cookie_config(input_func, secret_input_func)
 
     return HumanInstallAnswers(
+        language=selected_language,
         provider=llm.provider,
         llm_api_key=llm.llm_api_key,
         llm_base_url=llm.llm_base_url,
@@ -828,6 +857,8 @@ def apply_human_install_answers_to_args(
 
     if answers.provider not in SUPPORTED_PROVIDERS:
         raise RuntimeError(f"unknown provider from human install wizard: {answers.provider}")
+    if args.language is None:
+        args.language = answers.language
     if args.provider is None:
         args.provider = answers.provider
     if args.llm_api_key is None and answers.llm_api_key:
@@ -872,6 +903,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Automated OpenBiliClaw bootstrap for AI coding agents.",
         allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--language",
+        choices=INSTALL_LANGUAGES,
+        default=None,
+        help="UI/output language: zh-Hans / zh-Hant / en; preserve config when omitted.",
     )
     parser.add_argument(
         "--project-dir",
@@ -947,7 +984,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "installs don't have to remember each vendor's endpoint. "
             "Implies --provider=openai_compatible. --llm-base-url / --llm-model still "
             "override the preset on a per-field basis. Presets: "
-            "kimi (Moonshot), minimax (M2.7), qwen (DashScope), zhipu (GLM), "
+            "kimi (Moonshot), minimax (M3.1-Flash), qwen (DashScope), zhipu (GLM), "
             "sensenova (商汤日日新, 免费额度), yi (零一万物), self-hosted (vLLM/LMStudio), "
             "relay (中转站/OneAPI), azure (Azure OpenAI), custom (no preset)."
         ),
@@ -3542,6 +3579,12 @@ def run(args: argparse.Namespace) -> int:
                 read_simple_toml(project_dir / "config.toml")
             )
             answers = collect_human_install_wizard(
+                language=args.language,
+                existing_language=str(
+                    read_simple_toml(project_dir / "config.toml")
+                    .get("general", {})
+                    .get("language", "zh-Hans")
+                ),
                 existing_provider=provider,
                 existing_api_key=str(provider_cfg.get("api_key", "") or ""),
                 existing_base_url=str(provider_cfg.get("base_url", "") or ""),
@@ -3567,6 +3610,10 @@ def run(args: argparse.Namespace) -> int:
                 },
             )
         )
+
+    if args.language:
+        update_config_secret(project_dir / "config.toml", "general", "language", args.language)
+        emit(BootstrapResult("ok", "language_set", {"language": args.language}))
 
     if args.provider:
         apply_provider_override(project_dir, args.provider)
@@ -3759,6 +3806,19 @@ def run(args: argparse.Namespace) -> int:
             emit(BootstrapResult("error", str(exc), {"step": "install"}))
             return 3
         emit(BootstrapResult("ok", "dependencies_installed", {}))
+        # Source installs use the same signed binary as desktop/Docker; no Rust toolchain.
+        sdk_python = project_dir / ".venv" / (
+            "Scripts/python.exe" if os.name == "nt" else "bin/python"
+        )
+        if sdk_python.exists():
+            try:
+                run_streaming(
+                    [str(sdk_python), "-m", "openbiliclaw.runtime.sponsored_bundle", "--if-available"],
+                    cwd=project_dir,
+                )
+            except RuntimeError as exc:
+                emit(BootstrapResult("error", str(exc), {"step": "sponsored_runtime_install"}))
+                return 3
 
     ego_setup = prepare_ego_for_deployment(project_dir, mode)
     emit(
@@ -3857,7 +3917,17 @@ def run(args: argparse.Namespace) -> int:
                     "waiting_for_extension_cookie",
                     {
                         "timeout_seconds": 300,
-                        "hint": "Install the browser extension and log in to bilibili.com.",
+                        "hint": (
+                            "Docker: in another terminal, run docker exec -it "
+                            "openbiliclaw-backend openbiliclaw set-password, then "
+                            "openbiliclaw ext-key generate and ext-key enable inside "
+                            "the container. Restart the backend, pair the extension "
+                            "with its device key, and log in to bilibili.com. "
+                            "See docs/docker-deployment.md for commands and preserving "
+                            "the runtime auth config before rerunning bootstrap."
+                            if mode == "docker"
+                            else "Install the browser extension and log in to bilibili.com."
+                        ),
                     },
                 )
             )

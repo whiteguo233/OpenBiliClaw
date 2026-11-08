@@ -173,15 +173,18 @@ interface TaskProgress {
 
 let progress: TaskProgress | null = null;
 
-interface SearchProgress {
+interface SearchNavigationProgress {
+  navigation_resume_count: number;
+  navigation_resume_dispatched: boolean;
+  navigation_generation: number;
+}
+
+interface SearchProgress extends SearchNavigationProgress {
   task_id: string;
   keywords: string[];
   current_keyword_idx: number;
   accumulated_count: number;
   max_items_per_keyword: number;
-  navigation_resume_count: number;
-  navigation_resume_dispatched: boolean;
-  navigation_generation: number;
 }
 
 let searchProgress: SearchProgress | null = null;
@@ -190,7 +193,7 @@ let searchNavigationListener:
   | null = null;
 let searchNavigationFallbackId: ReturnType<typeof setTimeout> | null = null;
 
-interface HotProgress {
+interface HotProgress extends SearchNavigationProgress {
   task_id: string;
   hot_items: DyHotTaskItem[];
   current_hot_idx: number;
@@ -734,7 +737,12 @@ async function restorePersistedTaskState(record: PersistedDyTaskState): Promise<
   ownsTaskTab = record.owns_task_tab && tabAlive;
   progress = record.progress;
   searchProgress = record.search_progress;
-  hotProgress = record.hot_progress;
+  hotProgress = record.hot_progress ? {
+    ...record.hot_progress,
+    navigation_resume_count: record.hot_progress.navigation_resume_count ?? 0,
+    navigation_resume_dispatched: record.hot_progress.navigation_resume_dispatched ?? false,
+    navigation_generation: record.hot_progress.navigation_generation ?? 0,
+  } : null;
   feedProgress = record.feed_progress;
   taskInFlight = true;
   tryAcquireDispatcherMutex("dy");
@@ -743,11 +751,40 @@ async function restorePersistedTaskState(record: PersistedDyTaskState): Promise<
     await failActiveTask("task_timeout");
     return;
   }
+  if (ownsTaskTab && taskTabId !== null) {
+    try {
+      await chrome.tabs.update(taskTabId, { muted: true });
+    } catch {
+      // Do not leave a recovered autoplay page audible while its terminal
+      // callback waits for the backend to reconnect.
+      try {
+        await chrome.tabs.remove(taskTabId);
+        taskTabId = null;
+        ownsTaskTab = false;
+      } catch {
+        // Terminal cleanup retries closing the same owned tab after ACK.
+      }
+      await failActiveTask("task_tab_mute_failed");
+      return;
+    }
+  }
   if (record.owns_task_tab && !tabAlive) {
     // The task tab is gone (user closed it or the browser discarded it);
     // nothing can deliver further results, so settle immediately instead
     // of burning the remaining deadline budget.
     await failActiveTask("task_tab_closed");
+    return;
+  }
+  if (ownsTaskTab && taskTabId !== null) {
+    if (searchProgress) {
+      searchProgress.navigation_resume_dispatched = false;
+      const keyword = navigationKeyword("search");
+      if (keyword) armSearchNavigationWatcher(taskTabId, keyword);
+    } else if (hotProgress) {
+      hotProgress.navigation_resume_dispatched = false;
+      const word = navigationKeyword("hot");
+      if (word) armSearchNavigationWatcher(taskTabId, word, "hot");
+    }
   }
 }
 
@@ -978,42 +1015,49 @@ function sendSearchExecuteMessage(resumeAfterNavigation: boolean = false): void 
     });
 }
 
+type SearchNavigationSource = "search" | "hot";
+
+function navigationProgress(source: SearchNavigationSource): SearchProgress | HotProgress | null {
+  return source === "hot" ? hotProgress : searchProgress;
+}
+
+function navigationKeyword(source: SearchNavigationSource): string | undefined {
+  return source === "hot"
+    ? hotProgress?.hot_items[hotProgress.current_hot_idx]?.word?.trim()
+    : searchProgress?.keywords[searchProgress.current_keyword_idx];
+}
+
+function isCurrentSearchNavigation(
+  tabId: number, keyword: string, generation: number, source: SearchNavigationSource,
+): boolean {
+  return taskTabId === tabId && navigationKeyword(source) === keyword
+    && navigationProgress(source)?.navigation_generation === generation;
+}
+
 function dispatchSearchNavigationResume(
   tabId: number,
   keyword: string,
   generation: number,
+  source: SearchNavigationSource,
 ): void {
+  const current = navigationProgress(source);
   if (
-    !searchProgress ||
-    taskTabId !== tabId ||
-    searchProgress.keywords[searchProgress.current_keyword_idx] !== keyword ||
-    searchProgress.navigation_generation !== generation ||
-    searchProgress.navigation_resume_dispatched
+    !current || !isCurrentSearchNavigation(tabId, keyword, generation, source)
+    || current.navigation_resume_dispatched
   ) {
     return;
   }
-  searchProgress.navigation_resume_dispatched = true;
-  searchProgress.navigation_resume_count += 1;
+  current.navigation_resume_dispatched = true;
+  current.navigation_resume_count += 1;
   clearSearchNavigationWatcher();
   onTabReady(
     tabId,
     () => {
-      if (
-        !searchProgress ||
-        taskTabId !== tabId ||
-        searchProgress.navigation_generation !== generation ||
-        searchProgress.keywords[searchProgress.current_keyword_idx] !== keyword
-      ) {
-        return;
-      }
+      if (!isCurrentSearchNavigation(tabId, keyword, generation, source)) return;
       void injectFetchTapInto(tabId).then(() => {
-        if (
-          searchProgress &&
-          taskTabId === tabId &&
-          searchProgress.navigation_generation === generation &&
-          searchProgress.keywords[searchProgress.current_keyword_idx] === keyword
-        ) {
-          sendSearchExecuteMessage(true);
+        if (isCurrentSearchNavigation(tabId, keyword, generation, source)) {
+          if (source === "hot") sendHotExecuteMessage(true);
+          else sendSearchExecuteMessage(true);
         }
       });
     },
@@ -1021,11 +1065,14 @@ function dispatchSearchNavigationResume(
   );
 }
 
-function armSearchNavigationWatcher(tabId: number, keyword: string): void {
+function armSearchNavigationWatcher(
+  tabId: number, keyword: string, source: SearchNavigationSource = "search",
+): void {
   clearSearchNavigationWatcher();
-  if (!searchProgress) return;
-  searchProgress.navigation_generation += 1;
-  const generation = searchProgress.navigation_generation;
+  const current = navigationProgress(source);
+  if (!current) return;
+  current.navigation_generation += 1;
+  const generation = current.navigation_generation;
   const listener = (
     updatedId: number,
     info: { status?: string; url?: string },
@@ -1034,7 +1081,7 @@ function armSearchNavigationWatcher(tabId: number, keyword: string): void {
     if (updatedId !== tabId) return;
     const candidateUrl = info.url ?? tab.url ?? "";
     if (!isDySearchResultUrl(candidateUrl, keyword)) return;
-    dispatchSearchNavigationResume(tabId, keyword, generation);
+    dispatchSearchNavigationResume(tabId, keyword, generation, source);
   };
   searchNavigationListener = listener;
   chrome.tabs.onUpdated.addListener(listener);
@@ -1044,19 +1091,19 @@ function armSearchNavigationWatcher(tabId: number, keyword: string): void {
   // accepts it and continues collection.
   searchNavigationFallbackId = setTimeout(() => {
     searchNavigationFallbackId = null;
-    if (!searchProgress || taskTabId !== tabId) return;
+    if (!isCurrentSearchNavigation(tabId, keyword, generation, source)) return;
     void chrome.tabs
       .get(tabId)
       .then((tab) => {
         if (isDySearchResultUrl(tab.url ?? "", keyword)) {
-          dispatchSearchNavigationResume(tabId, keyword, generation);
+          dispatchSearchNavigationResume(tabId, keyword, generation, source);
         }
       })
       .catch(() => {});
   }, 10_000);
 }
 
-function sendHotExecuteMessage(): void {
+function sendHotExecuteMessage(resumeAfterNavigation = false): void {
   if (!hotProgress || !taskTabId) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
@@ -1069,8 +1116,12 @@ function sendHotExecuteMessage(): void {
         sentence_id: hotItem.sentence_id,
         word: hotItem.word ?? "",
         ...(seedAwemeId ? { seed_aweme_id: seedAwemeId } : {}),
-        max_items: hotProgress.max_items_per_hot,
+        max_items: Math.min(
+          hotProgress.max_items_per_hot,
+          Math.max(1, hotProgress.max_items_total - hotProgress.accumulated_count),
+        ),
         debug_inject_status: _lastInjectStatus,
+        ...(resumeAfterNavigation ? { resume_after_navigation: true } : {}),
       },
     })
     .catch((err) => {
@@ -1176,12 +1227,14 @@ function navigateToCurrentHot(): void {
   if (!hotProgress || taskTabId === null) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
-  chrome.tabs.update(taskTabId, { url: buildDyDiscoveryPageUrl("hot", hotItem.sentence_id) }, () => {
-    onTabReady(taskTabId!, () => {
-      void injectFetchTapInto(taskTabId!).then(() => {
-        sendHotExecuteMessage();
-      });
-    }, { fallbackMs: 10_000 });
+  const tabId = taskTabId;
+  const word = hotItem.word?.trim();
+  if (word) armSearchNavigationWatcher(tabId, word, "hot");
+  // The task page is already ready. Submit the next board word through its
+  // search UI instead of reloading the homepage between every word. Real
+  // document navigations resume collection without submitting a second search.
+  void injectFetchTapInto(tabId).then(() => {
+    if (taskTabId === tabId && hotProgress) sendHotExecuteMessage();
   });
 }
 
@@ -1367,6 +1420,9 @@ export async function executeTask(
         Math.min(maxItemsTotal, Math.floor(task.max_items_per_hot ?? maxItemsTotal)),
       ),
       max_items_total: maxItemsTotal,
+      navigation_resume_count: 0,
+      navigation_resume_dispatched: false,
+      navigation_generation: 0,
     };
 
     let tab: chrome.tabs.Tab;
@@ -1584,6 +1640,11 @@ export async function handleDySearchResult(result: DySearchResult): Promise<void
   clearSearchNavigationWatcher();
 
   if (result.status === "failed") {
+    if (result.items.length > 0) {
+      searchProgress.accumulated_count += result.items.length;
+      await postTaskResult({ task_id: searchProgress.task_id, status: "partial",
+        videos: result.items, scope_counts: { dy_search: searchProgress.accumulated_count } });
+    }
     await postTaskResult({
       task_id: searchProgress.task_id,
       status: "failed",
@@ -1633,9 +1694,16 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
   if (!hotProgress || result.task_id !== hotProgress.task_id) return;
   const expected = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!expected || result.sentence_id !== expected.sentence_id) return;
+  hotProgress.navigation_generation += 1;
+  clearSearchNavigationWatcher();
 
   const terminalFailure = buildDyHotTerminalFailure(result);
   if (terminalFailure) {
+    if (result.items.length > 0) {
+      hotProgress.accumulated_count += result.items.length;
+      await postTaskResult({ task_id: hotProgress.task_id, status: "partial",
+        videos: result.items, scope_counts: { dy_hot: hotProgress.accumulated_count } });
+    }
     await postTaskResult(terminalFailure);
     cleanupTask();
     return;
@@ -1651,6 +1719,7 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
       sentence_id: result.sentence_id,
       word: result.word,
       hot_status: result.status,
+      search_navigation_resumes: hotProgress.navigation_resume_count,
       ...(result.debug ?? {}),
       ...(result.error ? { error: result.error } : {}),
     },
@@ -1675,6 +1744,7 @@ export async function handleDyHotResult(result: DyHotResult): Promise<void> {
   }
 
   hotProgress.current_hot_idx += 1;
+  hotProgress.navigation_resume_dispatched = false;
   if (hotProgress.current_hot_idx < hotProgress.hot_items.length) {
     void persistActiveTaskState();
     navigateToCurrentHot();

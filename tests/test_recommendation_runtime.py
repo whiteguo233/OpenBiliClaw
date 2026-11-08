@@ -100,6 +100,9 @@ def test_ensure_recommendation_transport_env_posix_with_explicit_port(
     monkeypatch.delenv(RECOMMENDATION_SOCK_ENV, raising=False)
     monkeypatch.setenv(RECOMMENDATION_PORT_ENV, "18424")
     monkeypatch.setattr(recommendation_runtime.os, "name", "posix")
+    # This branch tests an available explicit port, independently of local apps.
+    # Occupied-port probing is exercised by the socket-binding tests below.
+    monkeypatch.setattr(recommendation_runtime, "find_free_loopback_port", lambda base: base)
 
     description = ensure_recommendation_transport_env(tmp_path)
 

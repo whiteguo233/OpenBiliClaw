@@ -1,11 +1,17 @@
 # OpenBiliClaw install instructions (for AI agents)
 
+## Phone QR connections (2026-10-26)
+
+Desktop packages and AI / script installs default to `0.0.0.0`; preserve a user's explicit loopback setting. The local `Health URL` is intentionally loopback and must not be encoded as a phone link. Open Desktop Web / extension **手机版** and choose LAN, Tailscale or public/custom access. Both surfaces refresh `/api/qr-info` each time; missing detection never produces a loopback QR. The companion Android / iOS App now offers **扫码连接** to save the endpoint and connection mode; a phone camera opens the same `/m/` URL. System Tailscale uses direct App transport; an embedded helper adds `?obc_connection=tailscale` for the App's built-in transport. First-time enrollment and existing password login are still required. No new installation dependency or config field. For Docker, enter a reachable host URL with its published port. See [connection protocol](mobile-connection.md).
+
 > 本机 Ollama 向量请求自动选择加速设备，原生 runner 崩溃时以 CPU 重试；仅有效向量确认恢复。完整重启后重新尝试自动加速，无需新增配置。Windows 包保留 Vulkan 与 CPU，CUDA/ROCm 仍不随包分发。
 
 > **Important:** If you're an AI coding agent reading this file, use
 > `curl -fsSL <url> -o /tmp/agent-install.md` via Bash to fetch it —
 > **do NOT use the WebFetch tool.** WebFetch hands the document to an
 > internal summariser model which can silently drop exact commands.
+
+The human installer now asks for `简体中文 / 繁體中文 / English` first and saves `[general].language` before starting the backend. For agent-driven installs pass `--language zh-Hans`, `--language zh-Hant`, or `--language en` to `scripts/agent_bootstrap.py`; omission preserves existing config. Standalone interactive `openbiliclaw init` also asks first. Installer logs and legacy CLI prompts are not all translated.
 
 ## The only thing you actually need to do
 
@@ -60,11 +66,11 @@ Either command:
 1. Clones the OpenBiliClaw repo (default `~/OpenBiliClaw` on Unix, `%USERPROFILE%\OpenBiliClaw` on Windows; override with the `INSTALL_DIR` env var)
    - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses the full LLM instance registry, ordered chains, API keys, and Bilibili cookie** so same-type relay endpoints are not collapsed and the user never has to retype them
-3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
+3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks language first, then LLM provider, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
 4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli`, Reddit discovery's `rdt-cli`, and Public Web's bounded `httpx[socks]>=0.28,<1` + direct `httpcore>=1,<2` socket backend are part of the default dependency set, so AI one-line installs need no extra flag or browser service for them
 5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN over available IPv4 or IPv6; the backend creates separate `0.0.0.0` and `[::]` listeners while the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
-   - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
-   - **Optional app-embedded Tailnet for native Android / iOS**: do this only when the user explicitly asks to use the `OpenBiliClaw-mobile` Android or iOS native App away from the LAN; do not claim support for its Web / Linux / macOS / Windows Flutter builds. Those mobile Apps already embed tsnet; the source-installed computer side must have **Go 1.26.6**, then run `openbiliclaw tailnet build-helper`, `openbiliclaw tailnet enable --hostname openbiliclaw-host`, and fully restart the backend. Complete the first browser login, verify with `openbiliclaw tailnet status`, and enable `openbiliclaw set-password` as defense in depth. The helper follows the effective startup port (normally `[api].port`, but `start` / `serve-api --port` overrides it); status distinguishes configured and recent listen ports. The computer does not need system Tailscale. For Tailnet-only + local access, prefer `[api].host="127.0.0.1"`; `localhost` / `0.0.0.0` also work, but a specific LAN-interface IP does not because the helper upstream is fixed to loopback. `OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` explicitly override local/base config and make the CLI reject shadowed writes; Auth Key / helper-path variables are runtime-only. Do not enable Funnel / Serve, do not claim the browser extension supports `http://100.x`, and do not persist `OPENBILICLAW_TAILNET_AUTH_KEY` in config or command arguments; if unattended enrollment is explicitly required, pass a short-lived key in the parent process environment and let the supervisor deliver it over stdin. Desktop installers already bundle the helper, but their tray executable does not expose the Tailnet CLI in the first version; packaged users quit the app, edit `[tailnet]` in the runtime `config.toml`, relaunch, and use the local Web settings—not `set-password` CLI—to enable the password. macOS 10.15 / 11 still run the local app but cannot use the helper, whose measured minimum is macOS 12. **Docker images do not bundle it in the first version**; use the HTTPS paths below for Docker. See [`docs/modules/tailnet.md`](modules/tailnet.md).
+   - **Required LAN authentication**: exposing `0.0.0.0` makes the UI reachable by any device on the network. Private APIs reject remote access until a password is configured (trusted local callers keep their existing bypass). To enable LAN/remote access, run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, configure `[api.auth].trusted_proxies` for forwarding; proxy authentication does not replace the application password. Docker bridge users must set the password inside the container and pair the extension before cookie sync; see the first-time authentication steps in `docs/docker-deployment.md`. Explicitly pass authentication environment variables into the container when using the environment-based setup.
+   - **Optional app-embedded Tailnet for native Android / iOS**: do this only when the user explicitly asks to use the `OpenBiliClaw-mobile` Android or iOS native App away from the LAN; do not claim support for its Web / Linux / macOS / Windows Flutter builds. Those mobile Apps already embed tsnet; the source-installed computer side must have **Go 1.26.6**, then run `openbiliclaw tailnet build-helper`, `openbiliclaw tailnet enable --hostname openbiliclaw-host`, and fully restart the backend. Complete the first browser login, verify with `openbiliclaw tailnet status`, and set the application password with `openbiliclaw set-password` before remote access. The helper follows the effective startup port (normally `[api].port`, but `start` / `serve-api --port` overrides it); status distinguishes configured and recent listen ports. The computer does not need system Tailscale. For Tailnet-only + local access, prefer `[api].host="127.0.0.1"`; `localhost` / `0.0.0.0` also work, but a specific LAN-interface IP does not because the helper upstream is fixed to loopback. `OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` explicitly override local/base config and make the CLI reject shadowed writes; Auth Key / helper-path variables are runtime-only. Do not enable Funnel / Serve, do not claim the browser extension supports `http://100.x`, and do not persist `OPENBILICLAW_TAILNET_AUTH_KEY` in config or command arguments; if unattended enrollment is explicitly required, pass a short-lived key in the parent process environment and let the supervisor deliver it over stdin. Desktop installers already bundle the helper, but their tray executable does not expose the Tailnet CLI in the first version; packaged users quit the app, edit `[tailnet]` in the runtime `config.toml`, relaunch, and use the local Web settings—not `set-password` CLI—to enable the password. macOS 10.15 / 11 still run the local app but cannot use the helper, whose measured minimum is macOS 12. **Docker images do not bundle it in the first version**; use the HTTPS paths below for Docker. See [`docs/modules/tailnet.md`](modules/tailnet.md).
    - **Optional public-domain HTTPS**: the installer intentionally keeps the default HTTP deployment. If the user explicitly asks for public HTTPS and already controls a DNS name pointing to the Docker host, use Compose `2.24.4+`, download / use `docker-compose.https.yml`, set `OPENBILICLAW_DOMAIN=<dns-name>`, and layer it over the selected source or prebuilt compose. Confirm TCP 80/443 reachability, then enable `set-password` and the remote extension `ext-key` flow and restart backend + Caddy; never expose bare `8420` publicly. The overlay pins Caddy, persists certificates, restricts `8420` to host loopback, and waits without binding public ports until `/api/auth/status` reports the password gate enabled. Follow [`docs/https-deployment.md`](https-deployment.md) exactly.
    - **Optional LAN/self-managed HTTPS**: the installer intentionally leaves the TLS proxy disabled and does not add the local-mode `[tls]` extra. Only enable it after asking which exact IP/hostname clients will use. Local source installs run `uv sync --extra tls`, then `uv run openbiliclaw tls-proxy enable --san <IP_OR_HOST>` and start with `uv run openbiliclaw serve-api`. Source Docker installs set comma-separated `OPENBILICLAW_TLS_SAN_NAMES` before `docker compose --profile tls up -d --build`. No remote SAN means localhost-only; this is not a public-Internet production proxy. Do not combine it with the public Caddy overlay. Follow [`docs/https-deployment.md`](https-deployment.md).
 6. Verifies the configured global LLM instance chain and embedding service with real lightweight calls before init; any healthy chat instance satisfies the chain check, while embedding remains an independent check. If either service is unavailable, bootstrap blocks init with `status=service_check_failed`.
@@ -101,7 +107,7 @@ Next action (AI service check failed):
 
 Next action (init has been run automatically):
   - Verify the backend is healthy: curl -sS <Health URL>
-  - Open Mobile Web: click the phone icon in the extension header and scan the QR code; if the backend address is loopback, the extension calls `GET /api/qr-info` and reads the `lan_ip` response field to show the LAN URL automatically
+  - Open Mobile Web: click the phone icon in the extension header and scan the QR code; the extension refreshes `GET /api/qr-info` on every open and offers LAN, Tailscale and public/custom links; the companion App can scan the same URL to import the backend
   - See recommendations:    cd <dir> && uv run openbiliclaw recommend
   - View the soul profile:  cd <dir> && uv run openbiliclaw profile
   - Re-run init manually if needed: cd <dir> && uv run openbiliclaw init
@@ -300,6 +306,8 @@ embedding choice is instead pointed at the compose sidecar
 
 ### Step 1 — Pick an LLM service
 
+First offer the free Qwen3-8B / Qwen3.5-4B + BGE-M3 scheme. Use the backend's `/setup/` page or `openbiliclaw init` interactive guide; do not invent a `--provider sponsored` bootstrap flag. The guide prepares and verifies the runtime, probes the selected model and embedding, and saves the normal config. An unpublished runtime catalog is a real blocker for that option; report it and preserve the user's current configuration. The BYOK menu below applies when the user selects their own provider. For free chat, skip the shared-key question and offer two vector modes: cloud BGE-M3 (recommended default) or existing/local Ollama. Local mode still requires preparing and checking the selected model before initialization.
+
 Tell the user, in plain Chinese (or the conversation's language):
 
 > 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选:」
@@ -338,7 +346,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 |---|---|---|---|
 | ★ 1 | **中转站 / OneAPI / 公司团队 LLM 网关 (大多数人选这个)** | 用户自填 | 默认 `gpt-5-nano`;按你充值的那家给你的模型清单填(中转站常代理 OpenAI / Claude / 国产) |
 | 2 | **Kimi (Moonshot AI 月之暗面) 官方** | `https://api.moonshot.ai/v1` | `kimi-k2.6`(最新 / 256K ctx / 多模态)。⚠ 旧 K2-series **2026/05/25 停服**;旧 `moonshot-v1-*` 也将停 |
-| 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M2.7`(4/2026 / 228K ctx / $0.30 ~ $1.20 per M) |
+| 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M3.1-Flash`(默认 / 1M ctx / 自适应推理 / $0.15 ~ $0.60 per M) / `MiniMax-M3`。旧模型与自定义 ID 仍可用 |
 | 4 | **通义千问 (阿里 DashScope) 官方** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`(自动跟最新快照,当前 → qwen3.6-plus) / `qwen-flash`(便宜) / `qwen-max`(旗舰) |
 | 5 | **智谱 ChatGLM 官方** | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash`(1/2026 免费 / 200K ctx) / `glm-5`(2/2026 付费旗舰 / 745B MoE)。注意 base_url 用 `/api/paas/v4` 不是 `/v1` |
 | 6 | **商汤日日新 (SenseNova) 官方** | `https://token.sensenova.cn/v1` | `deepseek-v4-flash`(已实测连通)。新用户免费额度，可零成本体验本项目(issue #193)；其它可用模型以控制台清单为准。token 端点未验证 embedding，Phase 3 默认推荐独立 Ollama bge-m3 |
@@ -907,6 +915,38 @@ system-level package the user must consent to.
 > embeddings without registering Ollama for chat or causing any
 > `llama3` probe. Older v0.3.0–v0.3.2 installs should be upgraded.
 
+## Optional: Jev decision provider and recommendation director
+
+The model is always user-selected. `jev-1.13.0` has registered dual context limits;
+other exact model IDs require verified `max_request_tokens` and `max_state_question_tokens`
+under `decision.providers.jev.context_limits."<exact-id>"`, followed by a full backend restart.
+Do not guess a G5 capacity or silently change the model. Evaluation byte guards default to
+`0=auto`; existing explicit guards remain stricter overrides. See [configuration](modules/config.md#decisionprovidersjev).
+On-demand profile loading needs no new dependency, migration, credential, or installer step.
+
+The Bash and PowerShell completion summaries link this optional configuration; they
+do not enable a route, add onboarding flags, collect a Jev key, or make a paid probe.
+
+Keep these experimental routes off during normal installation. If the user explicitly asks
+for them after installation, follow [the director / filter configuration reference](modules/config.md#director).
+They use the existing dependencies; there is no additional SDK, model download, installer
+flag, or automatic service probe. The three mode and filter switches are TOML-only, not
+settings-page toggles. Pure `agent_only` with the independent filter off needs no Jev key.
+
+For a Jev-enabled route, arrange the environment variable named by `api_key_env` in the
+**actual backend launch environment**. Keep its value out of TOML, command arguments,
+logs, and repository files. A variable set in an unrelated terminal does not update a
+running desktop app. Docker needs an explicit backend-service environment mapping and
+container recreation; use [the Docker opt-in instructions](docker-deployment.md#可选jev-决策与推荐导演).
+
+After configuration or credential changes, fully stop and restart the backend (including
+the API, recommendation, and discovery processes); restarting one runtime or refreshing
+the UI is insufficient. For desktop installs, quit and relaunch the whole application.
+Completion means the restarted service is healthy and the authenticated
+`GET /api/recommendations/director/status` reports the requested mode / strategy.
+`config-show` does not make a paid call or prove Jev credentials work. Report filtering
+as configured, not calibrated: only the user's real calibration record can justify enforce.
+
 ## Hard rules
 
 1. **Never edit `config.toml` by hand.** Every credential write goes through `scripts/agent_bootstrap.py`.
@@ -1036,3 +1076,21 @@ origins, methods and public DNS; it does not pin the host's socket resolution. S
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
 macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行传输；逐段校验后才缓存，服务器忽略范围时回到单流。签名、系统信任及原生握手验证仍必须全部通过。Linux/Docker 的原生 Ego 支持范围未扩大。
+
+
+## 免费模型安装与切换
+
+初始化与原有 LLM 实例列表预填“硅基流动（免费）”，Embedding Provider 下拉也提供独立选项。桌面新安装在随包组件验证通过后默认启用8B和云端BGE-M3；已有配置保持用户选择。后端打包和Docker构建必须成功纳入当前平台固定的已签名SDK，缺失或版本不符会中止。更新应用时优先使用新包固定版本，旧active缓存不会遮住新凭据；源码安装仍可通过初始化页准备组件。
+
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件/PC模型设置把免费实例加入默认链或模块链；手机可选择主实例。模型在该实例中选择8B/4B，Embedding 在原下拉框独立选择，保存并等待应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+
+源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
+
+固定组件目录为 `sponsored-runtime-2026-11-06.2`（兼容 Core0.3.234）；本次实例统一改动尚需随应用发布，旧版应用不会因为 SDK 已发布自动获得新的统一入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+
+默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。
+
+
+### 免费中继发行模式
+
+默认兼容模式继续纳入固定验签的 Rust SDK。已部署并验收的官方中继地址写入发行默认后，安装包/镜像不携带上游 Key SDK，首次使用创建独立设备身份。手工配置 `llm.sponsored.relay_url` 仅改变调用路由，不会移除旧包中的凭据；生产迁移必须发布不含 Key 的包并由供应商撤销旧 Key。[部署顺序及限制](sponsored-relay.md)。

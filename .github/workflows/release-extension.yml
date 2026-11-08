@@ -132,7 +132,7 @@ jobs:
 
   safari:
     name: Build Safari extension package
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       safari_packaged: ${{ steps.safari-detect.outputs.packaged }}
       safari_signed: ${{ steps.safari-detect.outputs.signed }}

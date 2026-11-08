@@ -196,7 +196,7 @@ interface ChromeMock {
   tabs: {
     create: (opts: { url: string; active?: boolean }) => Promise<{ id: number }>;
     query: (opts: { active?: boolean; currentWindow?: boolean }) => Promise<Array<{ id?: number; url?: string; status?: string }>>;
-    update: (tabId: number, opts: { url?: string; active?: boolean; muted?: boolean }) => Promise<void>;
+    update: (tabId: number, opts: { url?: string; active?: boolean; muted?: boolean }) => Promise<{ id: number }>;
     remove: (tabId: number) => Promise<void>;
     sendMessage: (tabId: number, message: unknown) => Promise<void>;
     onUpdated: {
@@ -245,6 +245,7 @@ function installChromeMock(): MockState {
       },
       update: async (tabId, opts) => {
         state.updatedTabs.push({ tabId, ...opts });
+        return { id: tabId };
       },
       remove: async (tabId) => {
         state.removedTabs.push(tabId);
@@ -383,7 +384,7 @@ test("executeTask opens bootstrap_profile in a foreground tab regardless of scro
   await executeTask(task);
 
   assert.deepEqual(state.createdTabs, [
-    { url: "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1", active: true },
+    { url: "about:blank", active: true },
   ]);
 
   await handleTaskResult({ task_id: "t-bootstrap-no-scroll", urls: [], status: "ok" });
@@ -398,7 +399,7 @@ test("executeTask keeps search discovery in a background tab", async () => {
 
   assert.deepEqual(state.createdTabs, [
     {
-      url: "https://www.xiaohongshu.com/search_result?keyword=demo&openbiliclaw_xhs_task=1",
+      url: "about:blank",
       active: false,
     },
   ]);
@@ -407,7 +408,10 @@ test("executeTask keeps search discovery in a background tab", async () => {
   await handleTaskResult({ task_id: "t-search-bg", urls: [], status: "ok" });
   await flush();
   assert.deepEqual(state.removedTabs, [42]);
-  assert.deepEqual(state.updatedTabs, [{ tabId: 42, muted: true }]);
+  assert.deepEqual(state.updatedTabs, [
+    { tabId: 42, muted: true },
+    { tabId: 42, url: "https://www.xiaohongshu.com/search_result?keyword=demo&openbiliclaw_xhs_task=1" },
+  ]);
 });
 
 test("rate-limited task result is reported and closes the task tab", async () => {
@@ -465,7 +469,7 @@ test("executeTask opens explore active and waits after clicked profile navigatio
 
   assert.deepEqual(state.createdTabs, [
     {
-      url: "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1",
+      url: "about:blank",
       active: true,
     },
   ]);
@@ -496,8 +500,11 @@ test("executeTask opens explore active and waits after clicked profile navigatio
 
   assert.deepEqual(
     state.updatedTabs,
-    [{ tabId: 42, muted: true }],
-    "clicked profile navigation must not call tabs.update beyond the initial mute",
+    [
+      { tabId: 42, muted: true },
+      { tabId: 42, url: "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1" },
+    ],
+    "clicked profile navigation must not call tabs.update beyond the initial navigation",
   );
 
   chrome.tabs.onUpdated._emit(42, { status: "complete" });
@@ -577,6 +584,7 @@ test("bootstrap task follows a discovered profile URL before reporting the resul
 
   assert.deepEqual(state.updatedTabs, [
     { tabId: 42, muted: true },
+    { tabId: 42, url: "https://www.xiaohongshu.com/explore?openbiliclaw_xhs_task=1" },
     {
       tabId: 42,
       url: "https://www.xiaohongshu.com/user/profile/current-user?openbiliclaw_xhs_task=1",

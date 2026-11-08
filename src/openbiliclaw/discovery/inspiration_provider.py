@@ -19,13 +19,16 @@ from xml.etree import ElementTree
 import httpx
 
 from openbiliclaw.discovery.inspiration import ExaPreviewItem
+from openbiliclaw.discovery.inspiration_backends import (
+    normalize_inspiration_search_backends,
+)
 from openbiliclaw.proc import no_window_kwargs
 
 
 def _overseas_routing_kwargs(transport: httpx.AsyncBaseTransport | None) -> dict[str, Any]:
     """Routing kwargs for an overseas search-API ``httpx.AsyncClient``.
 
-    Exa / You.com / Serply are overseas SaaS endpoints, so they follow the
+    Exa / You.com / Serply / Keenable are overseas SaaS endpoints, so they follow the
     process-wide ``[network]`` routing policy (``custom`` passes the explicit
     proxy, ``system`` inherits environment proxies, ``direct`` forces off).
     Hardwiring ``trust_env=False`` here left them direct-connected even when
@@ -42,15 +45,6 @@ def _overseas_routing_kwargs(transport: httpx.AsyncBaseTransport | None) -> dict
 
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_SEARCH_BACKENDS: tuple[str, ...] = (
-    "local_cache",
-    "platform_sources",
-    "bing_rss",
-    "exa",
-    "you",
-    "serply",
-)
 
 
 def _ledger_int(value: object) -> int:
@@ -530,6 +524,47 @@ class SerplyInspirationProvider:
         return parse_serply_search_payload(response.json())[:count]
 
 
+class KeenableInspirationProvider:
+    """Keenable provider implemented through Keenable's public search API.
+
+    Anonymous-only by project decision: Keenable's free public endpoint needs no
+    account or API key, only the ``X-Keenable-Title`` app identifier. There is
+    deliberately no keyed path — the key only ever bought a higher rate limit,
+    and keeping a second, paid branch around was surface without value.
+    """
+
+    backend_alias = "keenable"
+    _PUBLIC_URL = "https://api.keenable.ai/v1/search/public"
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 6.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            **_overseas_routing_kwargs(transport),
+            headers={"X-Keenable-Title": "OpenBiliClaw", "Accept": "application/json"},
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query:
+            return []
+        response = await self._client.post(
+            self._PUBLIC_URL,
+            json={"query": clean_query, "max_results": count},
+        )
+        response.raise_for_status()
+        return parse_keenable_search_payload(response.json())[:count]
+
+
 def _rss_element_text(element: ElementTree.Element | None) -> str:
     if element is None:
         return ""
@@ -558,6 +593,12 @@ class BingRssInspirationProvider:
             # the image cache's CN-CDN branch.
             trust_env=False,
             transport=transport,
+            # Bing answers ``www.bing.com`` with a 302 to the regional edge
+            # (``cn.bing.com`` from CN networks). httpx does not follow
+            # redirects by default, so ``raise_for_status()`` turned that hop
+            # into a failure and this key-free fallback produced nothing there
+            # (measured 2026-10-24: 302 → 200 with valid RSS).
+            follow_redirects=True,
             headers={
                 "user-agent": (
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -622,6 +663,12 @@ class FallbackInspirationSearchProvider:
         self._disabled_until: dict[int, float] = {}
         self._ledger = self._new_ledger()
         self.last_search_provider: str | None = None
+
+    @property
+    def providers(self) -> tuple[InspirationSearchProvider, ...]:
+        """Providers in chain order (read-only view for introspection and tests)."""
+
+        return tuple(self._providers)
 
     @staticmethod
     def _new_ledger() -> dict[str, object]:
@@ -1951,6 +1998,37 @@ def build_platform_source_backends(
     return backends
 
 
+@dataclass(frozen=True)
+class InspirationGroundingKeys:
+    """API keys for the optional external grounding backends.
+
+    The four keys always travel together from ``[discovery]`` through CLI / API
+    runtime setup into :func:`build_inspiration_search_provider`. Bundling them
+    keeps a new grounding backend from editing every call site.
+    """
+
+    exa: str = ""
+    you: str = ""
+    serply: str = ""
+
+    @classmethod
+    def from_discovery_config(cls, discovery: object) -> InspirationGroundingKeys:
+        """Read the optional keys off a ``[discovery]`` config section.
+
+        Keenable is intentionally absent: its grounding backend only uses the
+        free anonymous endpoint, so there is no key to carry.
+        """
+
+        def _key(name: str) -> str:
+            return str(getattr(discovery, name, "") or "")
+
+        return cls(
+            exa=_key("exa_api_key"),
+            you=_key("you_api_key"),
+            serply=_key("serply_api_key"),
+        )
+
+
 def build_inspiration_search_provider(
     backends: object = None,
     *,
@@ -1961,14 +2039,13 @@ def build_inspiration_search_provider(
     platforms_per_probe: int = 2,
     riskcontrolled_probe_budget: int = 4,
     pages_per_probe: int = 1,
-    exa_api_key: str = "",
-    you_api_key: str = "",
-    serply_api_key: str = "",
+    grounding_keys: InspirationGroundingKeys | None = None,
 ) -> InspirationSearchProvider | None:
     """Build the configured inspiration search provider chain."""
 
+    keys = grounding_keys or InspirationGroundingKeys()
     providers: list[InspirationSearchProvider] = []
-    for backend in _normalize_search_backends(backends):
+    for backend in normalize_inspiration_search_backends(backends):
         if backend == "local_cache":
             if database is not None:
                 providers.append(LocalInspirationProvider(database))
@@ -1991,10 +2068,10 @@ def build_inspiration_search_provider(
         elif backend == "parallel":
             providers.append(ParallelInspirationProvider(timeout_seconds=timeout_seconds))
         elif backend == "exa":
-            if str(exa_api_key or "").strip():
+            if str(keys.exa or "").strip():
                 providers.append(
                     ExaInspirationProvider(
-                        api_key=exa_api_key,
+                        api_key=keys.exa,
                         timeout_seconds=timeout_seconds,
                     )
                 )
@@ -2008,10 +2085,10 @@ def build_inspiration_search_provider(
             else:
                 _warn_mcporter_missing_once("exa")
         elif backend == "you":
-            if str(you_api_key or "").strip():
+            if str(keys.you or "").strip():
                 providers.append(
                     YouInspirationProvider(
-                        api_key=you_api_key,
+                        api_key=keys.you,
                         timeout_seconds=timeout_seconds,
                     )
                 )
@@ -2024,61 +2101,26 @@ def build_inspiration_search_provider(
                 )
             else:
                 _warn_mcporter_missing_once("you")
-        elif backend == "serply" and str(serply_api_key or "").strip():
+        elif backend == "serply" and str(keys.serply or "").strip():
             providers.append(
                 SerplyInspirationProvider(
-                    api_key=serply_api_key,
+                    api_key=keys.serply,
                     timeout_seconds=timeout_seconds,
                 )
             )
+        elif backend == "keenable":
+            providers.append(KeenableInspirationProvider(timeout_seconds=timeout_seconds))
     if not providers:
         return None
     if len(providers) == 1:
-        return providers[0]
+        # Keep the wrapper even for a lone backend: it owns the error cooldown
+        # and the ``last_search_provider`` attribution the inspiration pipeline
+        # reads into ``grounding_source``. A bare provider silently reported
+        # ``grounding_source="none"`` and re-hit a failing endpoint on every
+        # probe. ``pages_per_probe`` stays at its default 1 so the request size
+        # for single-backend configs is unchanged.
+        return FallbackInspirationSearchProvider(providers)
     return FallbackInspirationSearchProvider(providers, pages_per_probe=pages_per_probe)
-
-
-def _normalize_search_backends(value: object) -> tuple[str, ...]:
-    raw_values: list[str]
-    if value is None:
-        raw_values = list(_DEFAULT_SEARCH_BACKENDS)
-    elif isinstance(value, str):
-        raw_values = [item.strip() for item in value.split(",") if item.strip()]
-    elif isinstance(value, (list, tuple)):
-        raw_values = [str(item).strip() for item in value if str(item).strip()]
-    else:
-        raw_values = []
-
-    aliases = {
-        "bing": "bing_rss",
-        "bing_rss": "bing_rss",
-        "bing-rss": "bing_rss",
-        "exa": "exa",
-        "parallel": "parallel",
-        "local": "local_cache",
-        "cache": "local_cache",
-        "local_cache": "local_cache",
-        "local-cache": "local_cache",
-        "platform_sources": "platform_sources",
-        "platform-source": "platform_sources",
-        "platform": "platform_sources",
-        "you": "you",
-        "you.com": "you",
-        "youcom": "you",
-        "you-search": "you",
-        "you_search": "you",
-        "serply": "serply",
-        "serply.io": "serply",
-    }
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        backend = aliases.get(raw.strip().lower())
-        if backend is None or backend in seen:
-            continue
-        normalized.append(backend)
-        seen.add(backend)
-    return tuple(normalized or _DEFAULT_SEARCH_BACKENDS)
 
 
 def _mcporter_cli_missing() -> bool:
@@ -2208,6 +2250,41 @@ def parse_serply_search_payload(payload: object) -> list[ExaPreviewItem]:
         description = str(item.get("description") or "").strip()
         previews.append(
             ExaPreviewItem(title=title, url=url, highlights=(description,) if description else ())
+        )
+    return previews
+
+
+# Same per-result text budget the Exa direct provider requests through
+# ``contents.text.maxCharacters``; Keenable returns longer snippets uncapped.
+_KEENABLE_SNIPPET_MAX_CHARS = 400
+
+
+def parse_keenable_search_payload(payload: object) -> list[ExaPreviewItem]:
+    """Parse Keenable search JSON output into preview items."""
+
+    if isinstance(payload, str):
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError):
+            return []
+    else:
+        data = payload
+    raw_results: object = data.get("results", []) if isinstance(data, dict) else data
+    if not isinstance(raw_results, list):
+        return []
+
+    previews: list[ExaPreviewItem] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        title = _clean_title(item.get("title"))
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        snippet = _first_text(item.get("snippet"), item.get("description"))
+        snippet = snippet[:_KEENABLE_SNIPPET_MAX_CHARS].rstrip()
+        previews.append(
+            ExaPreviewItem(title=title, url=url, highlights=(snippet,) if snippet else ())
         )
     return previews
 

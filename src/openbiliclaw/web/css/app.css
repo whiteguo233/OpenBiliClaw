@@ -2759,6 +2759,9 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
 .mobile-settings-retry[hidden] { display: none; }
 .mobile-settings-field { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; }
 .mobile-settings-field input { width: 44px; height: 44px; accent-color: var(--brand); }
+.mobile-settings-provider { grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 12px; }
+#mobile-eval-scorer, .mobile-settings-provider select { width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); color: var(--text); font: inherit; }
+#mobile-eval-scorer:focus-visible, .mobile-settings-provider select:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .mobile-settings-hint, .mobile-settings-status { margin-top: 10px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
 .mobile-settings-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
 .mobile-source-settings { min-width: 0; padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }

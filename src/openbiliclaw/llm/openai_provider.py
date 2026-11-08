@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -253,6 +254,7 @@ class OpenAIProvider(LLMProvider):
             if (
                 not content.strip()
                 and self._provider_name == "openai_compatible"
+                and not self._is_minimax_flash(effective_model)
                 and reasoning_effort is not None
                 and not effective_reasoning_effort
                 and self._reasoning_like_content(getattr(choice, "message", None))
@@ -406,6 +408,11 @@ class OpenAIProvider(LLMProvider):
             usage=self._chat_usage(response),
             raw=response,
             tool_calls=tool_calls or None,
+            reasoning_content=(
+                str(getattr(message, "reasoning_content", "") or "")
+                if self._is_minimax_flash(effective_model)
+                else ""
+            ),
         )
 
     def _chat_completion_kwargs(
@@ -566,6 +573,7 @@ class OpenAIProvider(LLMProvider):
         kwargs["stream_options"] = {"include_usage": True}
         stream = await self._chat_stream_request(**kwargs)
         parts: list[str] = []
+        reasoning_parts: list[str] = []
         pending_calls: dict[int, dict[str, Any]] = {}
         model_seen = ""
         usage: dict[str, int] | None = None
@@ -584,6 +592,8 @@ class OpenAIProvider(LLMProvider):
                 if content:
                     parts.append(content)
                     yield LLMStreamChunk(delta=content)
+                if self._is_minimax_flash(kwargs["model"]):
+                    reasoning_parts.append(str(getattr(delta, "reasoning_content", "") or ""))
                 for raw_call in getattr(delta, "tool_calls", None) or []:
                     index = int(getattr(raw_call, "index", 0) or 0)
                     entry = pending_calls.setdefault(
@@ -628,6 +638,7 @@ class OpenAIProvider(LLMProvider):
                 provider=self._provider_name,
                 usage=usage,
                 tool_calls=tool_calls or None,
+                reasoning_content="".join(reasoning_parts),
             )
         )
 
@@ -914,10 +925,16 @@ class OpenAIProvider(LLMProvider):
         return await self._send_with_retry(self._create_response, **kwargs)
 
     async def _create_chat_completion(self, **kwargs: Any) -> Any:
-        return await self._client.chat.completions.create(**kwargs)
+        # SDK resources are lazy cached properties: the first access imports
+        # openai.resources synchronously, which can stall unrelated HTTP work
+        # during a startup readiness probe. Resolve only that resource off-loop;
+        # the async transport and stream continue on their original event loop.
+        completions = await asyncio.to_thread(lambda: self._client.chat.completions)
+        return await completions.create(**kwargs)
 
     async def _create_response(self, **kwargs: Any) -> Any:
-        return await self._client.responses.create(**kwargs)
+        responses = await asyncio.to_thread(lambda: self._client.responses)
+        return await responses.create(**kwargs)
 
     async def _send_with_retry(self, send: Callable[..., Awaitable[Any]], **kwargs: Any) -> Any:
         """Send a request with bounded retry for transient failures."""
@@ -1150,6 +1167,27 @@ class OpenAIProvider(LLMProvider):
             str(getattr(item, "id", "") or "").strip()
             for item in (getattr(page, "data", None) or [])
         }
+        current: list[str] = []
+        text_pattern = ""
+        if self._is_minimax_endpoint():
+            current = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
+            text_pattern = r"(?:minimax-(?:m\d|text-\d|vl-\d)|abab\d)"
+        elif (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai":
+            # Live catalog (2026-10-23) lists the paid route only; a ``:free``
+            # variant is absent. Prioritize whatever the endpoint advertises.
+            current = ["minimax/minimax-m3.1-flash", "minimax/minimax-m3"]
+            text_pattern = r"minimax/(?:minimax-(?:m\d|\d|text-\d|vl-\d)|abab\d)"
+        if current:
+            # Discovery is advisory: saved/custom IDs still pass through requests.
+            # Leave non-text model IDs untouched and never invent unadvertised routes.
+            other = {
+                identifier
+                for identifier in identifiers
+                if not re.match(text_pattern, identifier, re.IGNORECASE)
+            }
+            return [model for model in current if model in identifiers] + sorted(
+                (identifier for identifier in other if identifier), key=str.casefold
+            )
         return sorted((identifier for identifier in identifiers if identifier), key=str.casefold)
 
     async def _create_model_list(self) -> Any:
@@ -1181,6 +1219,16 @@ class OpenAIProvider(LLMProvider):
         """
 
         normalized = effort.strip().lower()
+        if self._is_minimax_flash(model):
+            # Flash always reasons: empty means the API default, not disabled.
+            if normalized and normalized not in {"low", "medium", "high", "xhigh", "max"}:
+                raise LLMProviderError(
+                    "MiniMax-M3.1-Flash requires adaptive reasoning; use low, medium, "
+                    "high, xhigh, max, or leave reasoning_effort empty."
+                )
+            if self._provider_name == "openrouter":
+                return None  # Its adapter emits the gateway's nested reasoning object.
+            return normalized or None
         if not normalized:
             return None
         if self._provider_name == "openai_compatible":
@@ -1190,6 +1238,16 @@ class OpenAIProvider(LLMProvider):
         if normalized in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
             return normalized
         return DEFAULT_REASONING_EFFORT
+
+    def _is_minimax_endpoint(self) -> bool:
+        parsed = urlparse(self.base_url)
+        return (parsed.hostname or "").lower() in {"api.minimax.io", "api.minimaxi.com"}
+
+    def _is_minimax_flash(self, model: str) -> bool:
+        return (self._is_minimax_endpoint() and model == "MiniMax-M3.1-Flash") or (
+            (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai"
+            and model == "minimax/minimax-m3.1-flash"
+        )
 
     def _is_official_openai_endpoint(self) -> bool:
         if not self.base_url.strip():

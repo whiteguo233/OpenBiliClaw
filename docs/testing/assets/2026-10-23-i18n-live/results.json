@@ -1,0 +1,179 @@
+{
+  "code_commit": "ed752712",
+  "chat": {
+    "en": {
+      "status": 200,
+      "seconds": 4.2,
+      "response": {
+        "reply": "In a library, you can borrow and read books, magazines, and other materials for free or with a library card. It's also a calm space where you can sit down and study, do homework, or research without distractions."
+      }
+    },
+    "zh-Hant": {
+      "status": 200,
+      "seconds": 5.5,
+      "active": "zh-Hant",
+      "disk": "zh-Hant",
+      "apply_revision": 1,
+      "response": {
+        "reply": "\n\n圖書館是讀書的好地方，你可以安靜地沉浸在書頁之間。這裡也適合學習，無論是複習功課還是自學新知識，都能找到專注的空間。"
+      }
+    },
+    "zh-Hans": {
+      "status": 200,
+      "seconds": 5.31,
+      "active": "zh-Hans",
+      "disk": "zh-Hans",
+      "apply_revision": 2,
+      "response": {
+        "reply": "\n\n图书馆里可以安静地读书，沉浸在文字的世界里，也可以找个角落学习、查资料，把知识一点点攒进脑子。总之，它是读书和学习最舒服的地方。"
+      }
+    },
+    "invalid_locale": {
+      "status": 400,
+      "response": {
+        "detail": {
+          "error": "unsupported_language",
+          "value": "unsupported-language",
+          "supported": [
+            "zh-Hans",
+            "zh-Hant",
+            "en"
+          ]
+        }
+      }
+    }
+  },
+  "api": {
+    "alias": {
+      "input": "en-US",
+      "active": "en",
+      "applied": "applied",
+      "disk": "en"
+    },
+    "other_config_preserved": true,
+    "resources": {
+      "/setup/": {
+        "status": 200,
+        "bytes": 107824
+      },
+      "/web/": {
+        "status": 200,
+        "bytes": 185609
+      },
+      "/m/": {
+        "status": 200,
+        "bytes": 1549
+      },
+      "/i18n/ui/zh-Hans.json": {
+        "status": 200,
+        "bytes": 272475,
+        "messages": 2917
+      },
+      "/i18n/ui/zh-Hant.json": {
+        "status": 200,
+        "bytes": 273249,
+        "messages": 2917
+      },
+      "/i18n/ui/en.json": {
+        "status": 200,
+        "bytes": 294910,
+        "messages": 2917
+      }
+    }
+  },
+  "cli_real_pty": [
+    {
+      "choice": "1",
+      "locale": "zh-Hans",
+      "real_pty": true,
+      "saved_before_credentials": true
+    },
+    {
+      "choice": "2",
+      "locale": "zh-Hant",
+      "real_pty": true,
+      "saved_before_credentials": true
+    },
+    {
+      "choice": "3",
+      "locale": "en",
+      "real_pty": true,
+      "saved_before_credentials": true
+    }
+  ],
+  "restart": {
+    "status": 200,
+    "active": "en",
+    "disk": "en",
+    "real_process_restart": true
+  },
+  "usage": [
+    {
+      "timestamp": "2026-10-23 07:49:25",
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "caller": "soul.dialogue.tools",
+      "prompt_tokens": 1003,
+      "completion_tokens": 98,
+      "total_tokens": 1101,
+      "estimated_cost_cny": 0.001297,
+      "success": 1
+    },
+    {
+      "timestamp": "2026-10-23 07:49:27",
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "caller": "soul.dialogue_insight",
+      "prompt_tokens": 805,
+      "completion_tokens": 71,
+      "total_tokens": 876,
+      "estimated_cost_cny": 0.001018,
+      "success": 1
+    },
+    {
+      "timestamp": "2026-10-23 07:50:03",
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "soul.dialogue.tools",
+      "prompt_tokens": 1139,
+      "completion_tokens": 67,
+      "total_tokens": 1206,
+      "estimated_cost_cny": 0.00134,
+      "success": 1
+    },
+    {
+      "timestamp": "2026-10-23 07:50:09",
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "soul.dialogue_insight",
+      "prompt_tokens": 808,
+      "completion_tokens": 71,
+      "total_tokens": 879,
+      "estimated_cost_cny": 0.001021,
+      "success": 1
+    },
+    {
+      "timestamp": "2026-10-23 07:50:15",
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "soul.dialogue.tools",
+      "prompt_tokens": 1098,
+      "completion_tokens": 71,
+      "total_tokens": 1169,
+      "estimated_cost_cny": 0.001311,
+      "success": 1
+    },
+    {
+      "timestamp": "2026-10-23 07:50:24",
+      "provider": "openai_compatible",
+      "model": "sensenova-6.8-flash-lite",
+      "caller": "soul.dialogue_insight",
+      "prompt_tokens": 809,
+      "completion_tokens": 324,
+      "total_tokens": 1133,
+      "estimated_cost_cny": 0.001781,
+      "success": 1
+    }
+  ],
+  "browser_status": "Initial real selector change to English observed; refresh and remaining three-locale browser verification blocked because browser connection became unavailable."
+}
