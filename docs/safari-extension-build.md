@@ -161,3 +161,7 @@ Xcode 的普通 build 会注入调试基础权限，正式打包显式设置
 修复已发布版本的打包流程时，可从修复分支手动触发 Release Extension Package，
 `release_tag` 填现有 `extension-vX.Y.Z`。版本校验仍生效；仅修复打包签名，
 不得用此入口替换不同应用代码。保持原 tag 不变，并在发布验证记录中记录构建提交。
+
+## Apple 票据服务临时中断
+
+公证 Accepted 后，`package-safari.mjs` 对 staple 和 validate 的明确网络故障执行最多三次退避重试（5、15、30 秒），每次命令限时 60 秒；不跳过验证、不再次提交公证。签名／票据永久错误或重试耗尽会失败。v0.3.235 两轮原始失败为 Apple CloudKit `NSURLErrorDomain -1005`，实际补发结果见发行记录。
