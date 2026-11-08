@@ -99,6 +99,17 @@ build 3 的出口合规问卷选「与 Apple 操作系统加密并用的标准�
 
 版本页重新载入后六张截图完整，「添加以供审核」通过，草稿提交只包含 `macOS App 1.0.0`、构建 `1.0.0 (3)`。随后点击最终「提交以供审核」，Apple 返回「已提交 1 个项目」，版本侧栏变为「正在等待审核」。进入 App 审核详情后，唯一项目显示「等待审核」，提交日期为 **2026-11-08 02:55（北京时间）**，提交 ID 为 `3f87d5f8-bab3-4a64-9a4a-7d2de420dbb1`。
 
-本轮没有生成新二进制，继续使用既有 build 3 安装包与六张真实截图；免费、中国大陆供应范围、隐私标签和原有自动发布设置保持原有配置。既有手机 App 记录未参与本次提交。当前为等待审核，尚未通过审核或上架。
+该提交使用既有 build 3 安装包与六张真实截图。免费、中国大陆供应范围、隐私标签和原有自动发布设置已保存；当时显示「等待审核」。
 
 本机证据：build 3 evidence 下的 `asc-content-rights-confirmed.json` 和 `asc-review-submitted.json`，分别记录声明重新载入核验，以及 Apple 最终提交回执、等待审核状态、构建与提交详情链接。
+
+### 2026-11-09 Apple Silicon build 4
+
+- Apple 在 2026-11-08 02:57（北京时间）将 build 3 标记为「二进制文件无效」。该构建的上传警告 `ITMS-91167` 报告缺少 arm64。审核页面未列出更详细的原因。
+- 首次 Apple Silicon 归档的全量架构检查发现 32 个仅有 Intel 切片的 Ollama 动态库。官方 v0.40.14 的 arm64 runner 静态链接这些组件。修复在签名前筛除这批 Intel 库、提取通用二进制的 arm64 切片，并拒绝其余架构不匹配的代码。
+- GitHub Actions 以提交 `593db6e4` 生成 `1.0.0 (4)`，9 项真实 HTTP、同机局域网的手机页面请求、内置 Ollama 384 维向量请求、Tailnet 二进制自检、IPv6 重启和退出清理均通过。[GitHub 构建及测试](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42500305550)
+- GitHub 归档按发布的 SHA-256 校验后，用本机已有的 Apple Distribution 证书重新签名，并用 Mac App Store Installer 证书生成安装包。解包复验了全部 241 个 Mach-O 的 arm64 切片、App 签名、安装包签名、沙盒权限和发行描述文件。签名安装包为 220,018,915 字节，SHA-256 `333d322208d8a1c590dcbfde729d431c7a28d80a0c3b68719c2fbafcbbfa24ea`。本机为 Intel，运行测试使用 GitHub 的 Apple Silicon 沙盒归档。
+- 打包相关 pytest 为 138 passed / 2 skipped，修改文件的 Ruff 与 `git diff --check` 通过。
+- Xcode 命令行上传报 `Failed to Use Accounts`。商店安装包已准备好，待在解锁的 Xcode Organizer 中上传。App Store Connect 的上传列表仍只有 build 2 和 build 3。
+
+本机归档目录为 `2026-11-09/OpenBiliClaw-1.0.0-4-Store.xcarchive`，安装包和验证记录分别保存在同日的 `OpenBiliClaw-1.0.0-4-Store-export/` 和 `OpenBiliClaw-1.0.0-4-evidence/`。

@@ -1,6 +1,6 @@
 # Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 于 2026-11-08 02:55（北京时间）提交后被 Apple 标记为「二进制文件无效」。build 4 的商店归档面向 Apple Silicon。原有 Developer ID / 公证 DMG 使用 `packaging/build.py`。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 于 2026-11-08 02:55（北京时间）提交后被 Apple 标记为「二进制文件无效」。Apple Silicon 的 `1.0.0 (4)` 已由 GitHub 构建并完成本机发行签名，待上传。原有 Developer ID / 公证 DMG 使用 `packaging/build.py`。
 
 安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
@@ -68,7 +68,7 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
 ## 验证与材料
 
 - [真实环境验收记录](verification/2026-11-05-mac-app-store.md)
-- [OpenBiliClaw 1.0.0 (3) 上传、签名与版本草稿状态](verification/2026-11-07-mac-app-store-distribution.md)
+- [OpenBiliClaw 1.0.0 签名、上传与审核记录](verification/2026-11-07-mac-app-store-distribution.md)
 - [中英文商店文案与审核备注草稿](mac-app-store-listing.md)
 - `.github/workflows/build-mac-app-store.yml` 在 Apple Silicon runner 上归档，执行真实 HTTP、私有 Ollama 向量推理和重启检查。手动触发时可传 `build_number`，下载归档后用本机发行证书签名和导出。
 
