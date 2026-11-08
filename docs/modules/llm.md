@@ -1,5 +1,17 @@
 # LLM 多模型支持
 
+## 请求时间预算（2026-11-08，待发布）
+
+| 能力 / 接口 | 行为 |
+| --- | --- |
+| 原生免费 LLM 实例 | 和其他 Provider 一样继承 `[llm].timeout`，默认 1200 秒；旧 sponsored 180 秒配置不再覆盖原生 LLM。 |
+| `LLMRegistry.request_timeout_seconds` | 暴露本次构建的全局请求预算，供初始化计算阶段等待上限。 |
+| Rust IPC `timeout_ms` | hello 声明 `request_timeouts=true` 后发送，1..3600000 毫秒；普通与流式均生效，HTTP 重试共用剩余预算。未声明能力的旧 SDK 不发送该字段。 |
+| Embedding / 交互首字 | Embedding 最多 180 秒；无显式思考的交互流式首个有效输出最多 300 秒，且不超过请求预算。 |
+
+旧 Rust 二进制仍有 180 秒硬上限，必须随下次安装包更新 SDK 才能完整生效。当前分支未发布。时间预算不改变模型上下文上限、签名输入、可用模型或额度。详见[验证记录](../testing/2026-11-08-model-timeout-alignment.md)。
+
+
 ## 免费初始化请求预算（2026-11-08，待发布）
 
 偏好提取的 `soul.preference` / `soul.preference.chunk` 调用在实际路由包含免费实例时，显式关闭未指定的思考强度，并把输出预算限制到 4096 token。公共 LLM/SDK API、签名任务和 Rust 二进制不变；其他业务调用的思考策略不随本修复全局修改。

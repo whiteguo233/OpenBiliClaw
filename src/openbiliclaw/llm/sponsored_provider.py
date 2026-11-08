@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -21,6 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 from openbiliclaw import __version__
 from openbiliclaw.proc import no_window_kwargs
+from openbiliclaw.sponsored_runtime_state import (
+    DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS,
+    SPONSORED_EMBEDDING_TIMEOUT_SECONDS,
+)
 
 from .base import LLMResponse, LLMStreamChunk
 from .concurrency import is_interactive_caller
@@ -50,13 +55,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 180.0
+DEFAULT_REQUEST_TIMEOUT_SECONDS = DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
 DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 10.0
-# Provisional bound from Nov 4-5 live acceptance: short free-model chat waited
-# 27-85s for its first delta. Share 30s between signed model candidates so a
-# silent primary cannot starve fallback. Explicit thinking is excluded.
-# This is a provisional latency tradeoff; remeasure after a provider swap.
-INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS = 30.0
+# Nov 8: 30s rejected the already-observed 27–85s cold first responses.
+# Allow queued/cold chat five minutes within the configured overall deadline.
+# Explicit thinking keeps the full request budget. Recheck after model swaps.
+INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS = 300.0
 _STDERR_TAIL_BYTES = 4096
 
 SPONSORED_ENABLED_ENV = "OPENBILICLAW_SPONSORED_ENABLED"
@@ -89,13 +93,14 @@ class SponsoredProvider:
 
         if model is not None and model not in CHAT_MODELS:
             raise ValueError("unsupported free chat model")
-        if request_timeout <= 0 or handshake_timeout <= 0:
+        if any(not math.isfinite(t) or t <= 0 for t in (request_timeout, handshake_timeout)):
             raise ValueError("timeouts must be positive")
         self._runtime_command = tuple(str(part) for part in runtime_command)
         self._registry = registry
         self._chat_model = model
         self._free_fallback = fallback_to_other_free_model
         self._streaming = False
+        self._request_timeouts = False
         self._request_timeout = float(request_timeout)
         self._handshake_timeout = float(handshake_timeout)
         self._extra_env = dict(env) if env is not None else None
@@ -113,6 +118,22 @@ class SponsoredProvider:
     @property
     def runtime_running(self) -> bool:
         return self._process is not None and self._process.returncode is None
+
+    def _operation_timeout(self, operation: str) -> float:
+        """Keep embedding latency bounded independently of long text jobs."""
+        return (
+            min(self._request_timeout, SPONSORED_EMBEDDING_TIMEOUT_SECONDS)
+            if operation.startswith("embedding_")
+            else self._request_timeout
+        )
+
+    def _transport_budget(self, seconds: float) -> dict[str, int]:
+        # Old signed SDKs reject unknown frame fields; negotiate the extension.
+        return (
+            {"timeout_ms": max(1, min(3_600_000, int(seconds * 1000)))}
+            if self._request_timeouts
+            else {}
+        )
 
     async def execute_task(
         self,
@@ -262,6 +283,7 @@ class SponsoredProvider:
                 "task_id": contract.task_id,
                 "contract_version": contract.contract_version,
                 "input": json.loads(payload_text),
+                **self._transport_budget(self._operation_timeout(contract.operation)),
             }
 
             try:
@@ -276,7 +298,7 @@ class SponsoredProvider:
             try:
                 response = await asyncio.wait_for(
                     read_frame_async(process.stdout),
-                    self._request_timeout,
+                    self._operation_timeout(contract.operation),
                 )
             except TimeoutError as exc:
                 self._cancel_in_flight(process, request_id)
@@ -612,7 +634,7 @@ class SponsoredProvider:
                 raise SponsoredUnavailableError("runtime pipes are unavailable")
             request_id = uuid.uuid4().hex
             try:
-                async with asyncio.timeout(self._request_timeout):
+                async with asyncio.timeout(self._operation_timeout(contract.operation)):
                     await write_frame_async(
                         process.stdin,
                         {
@@ -621,6 +643,7 @@ class SponsoredProvider:
                             "task_id": contract.task_id,
                             "contract_version": contract.contract_version,
                             "input": json.loads(payload_text),
+                            **self._transport_budget(self._operation_timeout(contract.operation)),
                         },
                     )
                     while True:
@@ -945,6 +968,7 @@ class SponsoredProvider:
             )
         contracts = hello.get("contracts")
         self._streaming = hello.get("streaming") is True
+        self._request_timeouts = hello.get("request_timeouts") is True
         if not isinstance(contracts, Mapping) or any(
             contracts.get(contract.policy_key) != contract.system_prompt_sha256
             for contract in self._registry

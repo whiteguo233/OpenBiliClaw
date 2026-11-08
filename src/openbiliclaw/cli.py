@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import math
 import os
 import re
 import shutil
@@ -164,6 +165,7 @@ def _profile_analysis_deadlines(
     requested: float | None,
     concurrency: int = 1,
     batch_count: int | None = None,
+    request_timeout_seconds: float | None = None,
 ) -> tuple[float | None, float | None]:
     """Return stage 2's ``(idle_seconds, absolute_seconds)`` deadline pair.
 
@@ -180,7 +182,27 @@ def _profile_analysis_deadlines(
         batch_count=batch_count,
     )
     absolute = max(_INIT_PROGRESS_ABSOLUTE_SECONDS, scaled or 0.0)
-    return _INIT_PROGRESS_IDLE_SECONDS, absolute
+    idle = _INIT_PROGRESS_IDLE_SECONDS
+    if request_timeout_seconds is not None and request_timeout_seconds > 0:
+        from openbiliclaw.soul.preference_analyzer import (
+            PREFERENCE_RATE_LIMIT_MAX_RETRIES,
+            PREFERENCE_RATE_LIMIT_RETRY_SECONDS,
+        )
+
+        # A timed-out parent may need two sequential halves. Budget all three
+        # requests plus each request's bounded cooldowns, not a 300s guess.
+        # This is a worst-case cancellation ceiling, never an ETA.
+        chunk_budget = 3 * (
+            request_timeout_seconds
+            + PREFERENCE_RATE_LIMIT_MAX_RETRIES * PREFERENCE_RATE_LIMIT_RETRY_SECONDS
+        )
+        chunks = max(1, batch_count or math.ceil(event_count / DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE))
+        waves = math.ceil(chunks / max(1, concurrency))
+        idle = max(idle, chunk_budget + _INIT_PROFILE_ANALYSIS_RECOVERY_RESERVE_SECONDS)
+        absolute = max(
+            absolute, waves * chunk_budget + _INIT_PROFILE_ANALYSIS_RECOVERY_RESERVE_SECONDS
+        )
+    return idle, absolute
 
 
 def _timeout_minutes(seconds: float) -> int:
@@ -10922,11 +10944,17 @@ async def run_guided_init(
     expected_chunk_total = soul_engine.preference_analysis_batch_count(
         events, event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
     )
+    analysis_service = getattr(getattr(soul_engine, "_preference_analyzer", None), "registry", None)
+    analysis_registry = getattr(analysis_service, "registry", analysis_service)
+    request_budget = getattr(analysis_registry, "request_timeout_seconds", None)
+    if not isinstance(request_budget, (int, float)) or isinstance(request_budget, bool):
+        request_budget = None
     profile_analysis_idle_budget, profile_analysis_budget = _profile_analysis_deadlines(
         event_count=len(events),
         requested=profile_analysis_timeout_seconds,
         concurrency=profile_analysis_concurrency,
         batch_count=expected_chunk_total,
+        request_timeout_seconds=request_budget,
     )
     stage2_marker = _InitProgressMarker()
 

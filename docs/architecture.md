@@ -858,3 +858,5 @@ Git / Docker / desktop + updater → pinned SDK verification → atomic activati
 
 
 中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。
+
+Request budget flow (pending release, 2026-11-08): `llm.timeout → LLM registry / free adapter → Rust IPC timeout_ms → HTTP remaining budget`. Guided initialization derives its watchdog from the registry budget; component boundaries and signed model input are unchanged.

@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 from openbiliclaw.runtime.relay_release import official_relay_url
 
-DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS = 180.0
+DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS = 1200.0
+SPONSORED_EMBEDDING_TIMEOUT_SECONDS = 180.0
 
 
 @dataclass(frozen=True)

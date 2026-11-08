@@ -58,11 +58,13 @@ def build_llm_registry(
     migrate_sponsored_provider_config(config.llm)
     if not sponsored_bypassed():
         install_sponsored_settings(config.llm.sponsored, data_path=config.data_path)
-    return _build_user_llm_registry(
+    registry = _build_user_llm_registry(
         config,
         provider_overrides=provider_overrides,
         fallback_order=fallback_order,
     )
+    registry.request_timeout_seconds = float(config.llm.timeout)
+    return registry
 
 
 def _build_user_llm_registry(
@@ -243,9 +245,16 @@ def _build_instance_provider(
 ) -> LLMProvider | None:
     """Reuse the mature per-adapter factories with one v2 endpoint config."""
     if provider_type == "siliconflow_free":
+        from dataclasses import replace
+
         from .sponsored_adapter import SponsoredChatAdapter
 
-        return SponsoredChatAdapter(model=instance.model, settings=config.llm.sponsored)
+        return SponsoredChatAdapter(
+            model=instance.model,
+            settings=replace(
+                config.llm.sponsored, request_timeout_seconds=float(config.llm.timeout)
+            ),
+        )
     factories = {
         "openai": _maybe_openai_provider,
         "claude": _maybe_claude_provider,

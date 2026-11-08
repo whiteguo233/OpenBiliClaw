@@ -2392,7 +2392,7 @@ class SponsoredConfigOut(BaseModel):
     fallback_to_other_free_model: bool = True
     fallback_to_user_provider: bool = False
     notify_on_fallback: bool = True
-    request_timeout_seconds: float = 180.0
+    request_timeout_seconds: float = 1200.0
     runtime_available: bool = False
     embedding_model: str = "BAAI/bge-m3"
     context_window: int = 131072

@@ -6,6 +6,10 @@ Instagram 与其它平台共用 `recommendation_date_preset/start/end/weight`，
 
 > `config.toml` 所有配置段落详解。
 
+## LLM 超时（2026-11-08，待发布）
+
+原生免费与自有 Key 的 LLM 实例统一继承 `[llm].timeout`（秒，默认 1200，现有校验范围 10..1200）。`[llm.sponsored].request_timeout_seconds` 的兼容默认同步为 1200，供直接 SDK / 中继使用；原生免费 LLM 实例以全局值为准，不修改持久化的旧字段。Embedding 请求独立限制为最多 180 秒。旧 Rust SDK 仍受自身 180 秒限制，需更新随包 SDK。
+
 ## 快速开始
 
 ```bash

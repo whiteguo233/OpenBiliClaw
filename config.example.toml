@@ -313,7 +313,7 @@ runtime_path = ""
 # 可选的已验证 HTTPS 中继；留空沿用发行版默认。
 relay_url = ""
 notify_on_fallback = true
-request_timeout_seconds = 180.0
+request_timeout_seconds = 1200.0
 
 # Per-module routes. inherit=true 表示完整继承 [llm].default_chain；
 # 需要隔离质量/成本时改为 false，并按优先级填写实例 ID。

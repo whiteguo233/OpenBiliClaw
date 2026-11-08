@@ -35,7 +35,13 @@ from openbiliclaw.runtime.sponsored_bundle import ensure_runtime, install_archiv
 
 
 async def run(
-    root: Path, model: str, count: int, archive: Path | None, *, inject_first_timeout: bool = False
+    root: Path,
+    model: str,
+    count: int,
+    archive: Path | None,
+    *,
+    inject_first_timeout: bool = False,
+    runtime_command: str | None = None,
 ) -> None:
     """Call only the selected free model; capture metadata, never credentials."""
     root.mkdir(parents=True, exist_ok=False)
@@ -48,6 +54,8 @@ async def run(
     config.llm.embedding.provider = "siliconflow_free"
     config.llm.embedding.model = "BAAI/bge-m3"
     config.llm.embedding.output_dimensionality = 1024
+    if runtime_command:
+        config.llm.sponsored.runtime_path = runtime_command
     config.scheduler.auto_update_enabled = False
     config.network.mode = "direct"
     for field in fields(config.sources):
@@ -57,7 +65,7 @@ async def run(
     save_config(config, root / "config.toml")
     if archive:
         install_archive(archive)
-    else:
+    elif not runtime_command:
         ensure_runtime()
 
     report: dict[str, Any] = {"model": model, "event_count": count, "calls": [], "progress": []}
@@ -95,6 +103,8 @@ async def run(
             # Observation only: original production implementation and network.
             result = await original(provider, **kwargs)
             record["ok"] = True
+            record["request_timeout_seconds"] = provider._request_timeout
+            record["runtime_negotiated_timeouts"] = provider._request_timeouts
             return result
         except BaseException as exc:
             record["error_type"] = type(exc).__name__
@@ -142,7 +152,11 @@ async def run(
             )
             report["planned_batches"] = batches
             idle, absolute = _profile_analysis_deadlines(
-                event_count=count, requested=None, concurrency=3, batch_count=batches
+                event_count=count,
+                requested=None,
+                concurrency=3,
+                batch_count=batches,
+                request_timeout_seconds=float(config.llm.timeout),
             )
             report["deadlines"] = {"idle": idle, "absolute": absolute}
             with _background_admission_bypass():
@@ -178,7 +192,11 @@ def main() -> None:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--model", required=True, choices=CHAT_MODELS)
     parser.add_argument("--events", type=int, default=800)
-    parser.add_argument("--sdk-archive", type=Path, help="Optional signed release archive")
+    runtime_source = parser.add_mutually_exclusive_group()
+    runtime_source.add_argument("--sdk-archive", type=Path, help="Optional signed release archive")
+    runtime_source.add_argument(
+        "--runtime-command", help="Local candidate command with signed policy"
+    )
     parser.add_argument(
         "--inject-first-timeout", action="store_true", help="Force one real IPC request timeout"
     )
@@ -192,6 +210,7 @@ def main() -> None:
             args.events,
             args.sdk_archive,
             inject_first_timeout=args.inject_first_timeout,
+            runtime_command=args.runtime_command,
         )
     )
 

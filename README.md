@@ -992,3 +992,5 @@ OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站
 [![LINUX DO](https://img.shields.io/badge/LINUX_DO-友情链接-4D6BFE?style=flat-square&logo=discourse&logoColor=white)](https://linux.do/)
 
 </details>
+
+Request budget flow (pending release, 2026-11-08): `llm.timeout → LLM registry / free adapter → Rust IPC timeout_ms → HTTP remaining budget`. Guided initialization derives its watchdog from the registry budget; component boundaries and signed model input are unchanged.

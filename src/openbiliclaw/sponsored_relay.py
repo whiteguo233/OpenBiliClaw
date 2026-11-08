@@ -22,6 +22,10 @@ from openbiliclaw.llm.relay_auth import RelayDeniedError, RelayLimitError, Relay
 from openbiliclaw.llm.sponsored_errors import SponsoredError
 from openbiliclaw.llm.sponsored_pool import SponsoredProviderPool
 from openbiliclaw.llm.sponsored_profiles import approved_registry
+from openbiliclaw.sponsored_runtime_state import (
+    DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS,
+    SPONSORED_EMBEDDING_TIMEOUT_SECONDS,
+)
 
 if TYPE_CHECKING:
     from starlette.types import Receive, Scope, Send
@@ -180,7 +184,12 @@ def create_relay(
 
         async def frames() -> Any:
             try:
-                async with asyncio.timeout(180):
+                deadline = (
+                    SPONSORED_EMBEDDING_TIMEOUT_SECONDS
+                    if contract.operation.startswith("embedding_")
+                    else DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+                )
+                async with asyncio.timeout(deadline):
                     if message["stream"]:
                         async with worker._worker("chat.stream") as child:
                             stream = child._stream_task_once(contract, message["input"])
