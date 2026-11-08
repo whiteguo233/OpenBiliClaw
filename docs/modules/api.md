@@ -906,7 +906,7 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 
 ## Mac App Store distribution status
 
-In Store builds, `POST /api/config/sponsored/prepare` checks the bundled policy and helper. The managed Ego installation endpoint returns HTTP 409 in the Store sandbox.
+`POST /api/config/sponsored/prepare` remains reachable while the LLM registry is unconfigured, subject to the normal configuration write authorization. In Store builds it checks the bundled policy and helper. The managed Ego installation endpoint returns HTTP 409 in the Store sandbox.
 
 | Implemented feature | Status |
 |---|---|

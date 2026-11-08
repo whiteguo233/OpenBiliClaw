@@ -350,6 +350,24 @@ def test_degraded_mode_allows_llm_independent_repair_surfaces(
     assert repair_status_response.status_code != 503
 
 
+def test_degraded_mode_can_prepare_the_free_model_runtime(monkeypatch, tmp_path) -> None:
+    _clear_llm_env(monkeypatch)
+    _save_project_config(monkeypatch, tmp_path, _invalid_config(tmp_path))
+    app = create_app()
+    assert app.state.runtime_context.degraded is True
+    prepared = []
+    monkeypatch.setattr(
+        "openbiliclaw.runtime.sponsored_bundle.ensure_runtime", lambda: prepared.append(True)
+    )
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
+
+    response = client.post("/api/config/sponsored/prepare")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert prepared == [True]
+
+
 def test_degraded_mode_allows_draft_llm_recovery_probes_and_model_discovery(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

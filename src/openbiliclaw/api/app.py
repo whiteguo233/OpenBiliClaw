@@ -2960,6 +2960,7 @@ def create_app(
                 in {
                     "/api/config/probe-service",
                     "/api/config/discover-models",
+                    "/api/config/sponsored/prepare",
                     "/api/sources/web/probe",
                 }
                 and method == "POST"
