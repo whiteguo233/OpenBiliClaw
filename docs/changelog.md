@@ -5,7 +5,7 @@
 ## v0.3.236：浏览器扩展初始化（2026-11-09）
 
 - 首次设置中，勾选 Bangumi 或 GitHub 后才显示该平台的账号、令牌和填写说明。取消勾选后仍保留本次输入。
-- 插件的向量连接测试会等待后端完成有界的限流恢复。独立插件发行由 Chrome Web Store 和 Firefox AMO 接收审核，GitHub 插件发行页提供手动安装包。
+- 插件的向量连接测试会等待后端完成有界的限流恢复。GitHub 已发布 Chrome、Firefox 和 Safari 手动安装包。Chrome Web Store 已进入 `PENDING_REVIEW`，Firefox AMO 已接收 listed 版并标为 `unreviewed`。[GitHub 插件发行](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.236)
 
 ## v0.3.235：统一免费 Provider 与动态来源（2026-11-08）
 

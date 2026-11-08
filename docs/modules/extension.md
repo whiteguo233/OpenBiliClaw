@@ -10,6 +10,8 @@
 
 向量连接测试等待 190 秒，覆盖后端 180 秒预算内的限流恢复。独立插件发版使用 `extension-v*`，只在版本号与后端相同时更新聚合下载页。[插件发行](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.236)
 
+本版以主干 `8b760446` 为基线，插件类型检查、1,900 项 Node 测试和 28 项发布检查通过。公开 Chrome / Firefox ZIP 的 194 / 80 个文件分别与本地构建一致。Chrome Web Store 已受理 `0.3.236` 并标为 `PENDING_REVIEW`，Firefox AMO 已受理 listed `0.3.236` 并标为 `unreviewed`。[Chrome 回执](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42521629175) · [Firefox 回执](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42521629101)
+
 Safari发行环境（2026-11-06）：`release-extension.yml` 使用macOS15 runner。macOS14曾在调度阶段返回不支持的配置，未执行编译；可使用 `workflow_dispatch.release_tag` 指向已有版本标签，从修复后的工作流补齐资产，不移动已有标签或改动插件功能。最终构建/公证结果以对应发行工作流为准。
 
 小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
