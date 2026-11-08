@@ -330,8 +330,12 @@ class PreferenceAnalyzer:
                 caller="soul.preference",
             )
         except (LLMProviderError, LLMServiceError) as exc:
-            free_timeout = self._is_free_timeout_error(exc)
-            if self._is_context_overflow_error(exc) or free_timeout or is_llm_moderation_error(exc):
+            free_transient = self._is_free_transient_error(exc)
+            if (
+                self._is_context_overflow_error(exc)
+                or free_transient
+                or is_llm_moderation_error(exc)
+            ):
                 logger.warning(
                     "preference analysis needs smaller independent requests; "
                     "falling back to chunked isolation: events=%d error=%s",
@@ -345,8 +349,8 @@ class PreferenceAnalyzer:
                         chunk_size=max(1, len(events) // 2),
                         awareness_notes=awareness_notes,
                         active_insights=active_insights,
-                        timeout_recovery=not free_timeout,
-                        llm_concurrency=1 if free_timeout else None,
+                        transient_recovery=not free_transient,
+                        llm_concurrency=1 if free_transient else None,
                     )
             raise PreferenceAnalysisError(str(exc)) from exc
 
@@ -491,7 +495,7 @@ class PreferenceAnalyzer:
         return chunks
 
     @staticmethod
-    def _is_free_timeout_error(exc: BaseException) -> bool:
+    def _is_free_transient_error(exc: BaseException) -> bool:
         from openbiliclaw.llm.base import classify_llm_failure_kind
         from openbiliclaw.llm.sponsored_errors import (
             SponsoredUnavailableError,
@@ -499,11 +503,28 @@ class PreferenceAnalyzer:
             find_sponsored_error,
         )
 
+        error = find_sponsored_error(exc)
+        if not isinstance(error, (SponsoredUnavailableError, SponsoredUpstreamError)):
+            return False
+        if classify_llm_failure_kind(exc) == "timeout":
+            return True
+        # The live Nov 8 run exhausted Rust's bounded HTTP retries on a TLS
+        # peer disconnect. Recover extraction once with smaller inputs, but
+        # do not mistake certificate/config/response errors for transient I/O.
+        message = str(error).lower()
         return (
-            isinstance(
-                find_sponsored_error(exc), (SponsoredUnavailableError, SponsoredUpstreamError)
+            isinstance(error, SponsoredUpstreamError)
+            and message.startswith("transport error:")
+            and any(
+                marker in message
+                for marker in (
+                    "peer closed connection",
+                    "connection reset",
+                    "connection aborted",
+                    "unexpected eof",
+                    "broken pipe",
+                )
             )
-            and classify_llm_failure_kind(exc) == "timeout"
         )
 
     @staticmethod
@@ -606,7 +627,7 @@ class PreferenceAnalyzer:
         awareness_notes: list[dict[str, object]] | None = None,
         active_insights: list[dict[str, object]] | None = None,
         llm_concurrency: int | None = None,
-        timeout_recovery: bool = True,
+        transient_recovery: bool = True,
     ) -> dict[str, object]:
         """Split events into bounded concurrent chunk batches, then fold."""
         import asyncio as _asyncio
@@ -749,7 +770,7 @@ class PreferenceAnalyzer:
         async def _split_or_compact_chunk(
             chunk: list[dict[str, object]],
             *,
-            timeout_recovery: bool = True,
+            transient_recovery: bool = True,
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
             if len(chunk) <= 1:
                 compact = self._compact_event_for_prompt(chunk[0]) if chunk else {}
@@ -789,14 +810,18 @@ class PreferenceAnalyzer:
             # scheduler. Concurrent recursive halves used to queue 4/8/… calls
             # behind LLMService.concurrency; one 429 then released the whole
             # queue into the provider cooldown and produced a retry storm.
-            left = await _run_chunk_resilient(chunk[:midpoint], timeout_recovery=timeout_recovery)
-            right = await _run_chunk_resilient(chunk[midpoint:], timeout_recovery=timeout_recovery)
+            left = await _run_chunk_resilient(
+                chunk[:midpoint], transient_recovery=transient_recovery
+            )
+            right = await _run_chunk_resilient(
+                chunk[midpoint:], transient_recovery=transient_recovery
+            )
             return [*left, *right]
 
         async def _run_chunk_resilient(
             chunk: list[dict[str, object]],
             *,
-            timeout_recovery: bool = True,
+            transient_recovery: bool = True,
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
             messages = build_preference_analysis_prompt(
                 events=chunk,
@@ -806,24 +831,24 @@ class PreferenceAnalyzer:
                 input_view=self.cognition_prompt_view,
             )
             if not self._prompt_fits_budget(messages):
-                return await _split_or_compact_chunk(chunk, timeout_recovery=timeout_recovery)
+                return await _split_or_compact_chunk(chunk, transient_recovery=transient_recovery)
             try:
                 return [await _run_chunk_once(chunk)]
             except PreferenceAnalysisError as exc:
                 if exc.__cause__ is not None:
-                    if timeout_recovery and self._is_free_timeout_error(exc):
-                        # Extraction is read-only; the timed-out SDK process has
-                        # been cancelled. One recovery level bounds extra cost:
+                    if transient_recovery and self._is_free_transient_error(exc):
+                        # Extraction is read-only; the failed request has ended.
+                        # One recovery level bounds extra cost:
                         # retry the halves sequentially, or one single-row retry.
                         # Auth, quota, policy errors and cancellation never retry.
                         logger.warning(
-                            "free preference request timed out; retrying once with "
+                            "free preference request timed out or disconnected; retrying once with "
                             "smaller batches: events=%d",
                             len(chunk),
                         )
                         if len(chunk) <= 1:
                             return [await _run_chunk_once(chunk)]
-                        return await _split_or_compact_chunk(chunk, timeout_recovery=False)
+                        return await _split_or_compact_chunk(chunk, transient_recovery=False)
                     if self._is_context_overflow_error(exc):
                         logger.warning(
                             "preference chunk exceeded provider context; splitting: "
@@ -832,7 +857,7 @@ class PreferenceAnalyzer:
                             exc,
                         )
                         return await _split_or_compact_chunk(
-                            chunk, timeout_recovery=timeout_recovery
+                            chunk, transient_recovery=transient_recovery
                         )
                     if not is_llm_moderation_error(exc):
                         raise
@@ -857,7 +882,7 @@ class PreferenceAnalyzer:
                         str(event.get("title", "")) if isinstance(event, dict) else "",
                     )
                     return []
-                return await _split_or_compact_chunk(chunk, timeout_recovery=timeout_recovery)
+                return await _split_or_compact_chunk(chunk, transient_recovery=transient_recovery)
 
         # Each top-level chunk completing is a natural progress point. A shared
         # counter (bumped between the resilient run and the callback await, with
@@ -885,7 +910,7 @@ class PreferenceAnalyzer:
                 len(chunk),
             )
             try:
-                result = await _run_chunk_resilient(chunk, timeout_recovery=timeout_recovery)
+                result = await _run_chunk_resilient(chunk, transient_recovery=transient_recovery)
             except _asyncio.CancelledError:
                 logger.info(
                     "preference chunk %d/%d cancelled after %.1fs",

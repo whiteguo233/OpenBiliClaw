@@ -13,7 +13,7 @@ import asyncio
 import json
 import os
 import time
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -55,7 +55,7 @@ async def run(
     config.llm.embedding.model = "BAAI/bge-m3"
     config.llm.embedding.output_dimensionality = 1024
     if runtime_command:
-        config.llm.sponsored.runtime_path = runtime_command
+        config.llm.sponsored = replace(config.llm.sponsored, runtime_path=runtime_command)
     config.scheduler.auto_update_enabled = False
     config.network.mode = "direct"
     for field in fields(config.sources):

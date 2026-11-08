@@ -7,7 +7,7 @@
 | 请求大小预规划 | `PreferenceAnalyzer.analyze_events(..., event_chunk_size=N)` 把 N 作为事件数上限，再按现有完整 prompt 预算预拆成独立批次，有限并发执行；每个计划批次完成即报告进度，不再等整个 200 条父批次。 |
 | 初始化预算 | 新增 `PreferenceAnalyzer.planned_batch_count(events, *, event_chunk_size)`，由 `SoulEngine.preference_analysis_batch_count(...)` 暴露给共享初始化编排，采用相同过滤与空偏好种子计算请求批次。 |
 | 免费模型偏好提取 | 实际调用链包含免费实例时，偏好提取的输出预算最多 4096 token；未显式指定思考强度时关闭额外思考。既有字段校验、事实落地和全部输入事件仍保留。 |
-| 有界故障恢复 | 沿异常原因链识别免费 SDK 的 `REQUEST_TOO_LARGE` 并拆批；免费超时只允许一层恢复，多事件顺序重试两半，单事件最多再试一次。持续超时仍失败，不无限重放，不将鉴权／配额／策略错误当超时。自动单请求路径也采用同样规则。 |
+| 有界故障恢复 | 沿异常原因链识别免费 SDK 的 `REQUEST_TOO_LARGE` 并拆批；免费超时以及明确的上游传输断连（TLS peer closed / reset / aborted / unexpected EOF / broken pipe）只允许一层恢复，多事件顺序重试两半，单事件最多再试一次。持续故障仍失败，不无限重放，不将鉴权／配额／策略错误、证书验证失败、返回格式或模型错误当临时断连。自动单请求路径也采用同样规则。 |
 
 完整上下文上限仍由公共 SDK 入口校验；偏好分析使用更小的业务请求预算以限制延迟，不能把上下文容量当作完成时间保证。复现、真实请求与验证范围见[验收记录](../testing/2026-11-08-free-model-init-timeouts.md)。
 

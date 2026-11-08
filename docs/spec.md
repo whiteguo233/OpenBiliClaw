@@ -1025,4 +1025,4 @@ TikTok 封面：`image_cache → DoH 解析/公网地址验证 → IP 固定（�
 
 中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。
 
-Request budget flow (pending release, 2026-11-08): `llm.timeout → LLM registry / free adapter → Rust IPC timeout_ms → HTTP remaining budget`. Guided initialization derives its watchdog from the registry budget; component boundaries and signed model input are unchanged.
+请求预算数据流（2026-11-08，待发布）：`llm.timeout → LLM 注册表 / 免费适配器 → Rust IPC timeout_ms → HTTP 剩余预算`。初始化根据注册表预算计算阶段期限；组件边界和签名模型输入不变。

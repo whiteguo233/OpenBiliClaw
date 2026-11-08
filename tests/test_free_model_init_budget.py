@@ -89,13 +89,14 @@ async def test_free_context_guard_splits_at_the_preference_call_site(chunk_size:
     assert len(calls) == 3
 
 
+@pytest.mark.parametrize("failure", ["timeout", "tls_disconnect"])
 @pytest.mark.parametrize("persistent", [False, True])
 @pytest.mark.parametrize("chunk_size", [0, 2])
 async def test_free_timeout_recovers_once_with_smaller_read_only_batches(
-    persistent: bool, chunk_size: int
+    persistent: bool, chunk_size: int, failure: str
 ) -> None:
     from openbiliclaw.llm.sponsored_adapter import SponsoredChatAdapter
-    from openbiliclaw.llm.sponsored_errors import SponsoredUnavailableError
+    from openbiliclaw.llm.sponsored_errors import SponsoredUnavailableError, SponsoredUpstreamError
     from openbiliclaw.soul.preference_analyzer import PreferenceAnalysisError
 
     calls: list[str] = []
@@ -107,6 +108,11 @@ async def test_free_timeout_recovers_once_with_smaller_read_only_batches(
             if persistent or ("EVENT_A" in text and "EVENT_B" in text):
                 SponsoredChatAdapter._raise(
                     SponsoredUnavailableError("sponsored runtime timed out")
+                    if failure == "timeout"
+                    else SponsoredUpstreamError(
+                        "transport error: Network Error: Error encountered in the status line: "
+                        "peer closed connection without sending TLS close_notify"
+                    )
                 )
             return LLMResponse(content='{"interests": []}', provider="siliconflow_free")
 
@@ -182,3 +188,18 @@ async def test_free_preference_wire_disables_thinking_and_bounds_output(model: s
     await analyzer.analyze_events(events=[{"title": "Rust 入门"}], existing_preference={})
     assert captured[0]["reasoning_effort"] == ""
     assert captured[0]["max_tokens"] <= 4096
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "transport error: certificate verify failed",
+        "completion was truncated or rejected",
+        "completion model mismatch",
+        "invalid JSON response",
+    ],
+)
+def test_free_recovery_does_not_hide_permanent_or_invalid_upstream_responses(message):
+    from openbiliclaw.llm.sponsored_errors import SponsoredUpstreamError
+
+    assert not PreferenceAnalyzer._is_free_transient_error(SponsoredUpstreamError(message))

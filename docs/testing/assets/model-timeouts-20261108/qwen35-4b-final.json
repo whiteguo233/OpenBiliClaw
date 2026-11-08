@@ -1,0 +1,364 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "event_count": 200,
+  "calls": [
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 30.91
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 20.75
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 37.99
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33239,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 22.75
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33246,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 25.26
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33247,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 24.26
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 33200,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 28.39
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 18723,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 107.15
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.2
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.3
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.22
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.19
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.16
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.18
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.2
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.17
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.17
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.2
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.18
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.19
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.17
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.25
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.29
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.15
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.29
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.25
+    },
+    {
+      "caller": null,
+      "task_id": "llm.embedding_text",
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 0.28
+    },
+    {
+      "caller": "soul.profile_build",
+      "task_id": "llm.structured.qwen35_4b",
+      "input_bytes": 9648,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 6.2
+    }
+  ],
+  "progress": [
+    {
+      "done": 1,
+      "total": 8,
+      "seconds": 21.06
+    },
+    {
+      "done": 2,
+      "total": 8,
+      "seconds": 31.18
+    },
+    {
+      "done": 3,
+      "total": 8,
+      "seconds": 59.06
+    },
+    {
+      "done": 4,
+      "total": 8,
+      "seconds": 81.82
+    },
+    {
+      "done": 5,
+      "total": 8,
+      "seconds": 84.34
+    },
+    {
+      "done": 6,
+      "total": 8,
+      "seconds": 106.08
+    },
+    {
+      "done": 7,
+      "total": 8,
+      "seconds": 134.48
+    },
+    {
+      "done": 8,
+      "total": 8,
+      "seconds": 217.42
+    }
+  ],
+  "planned_batches": 8,
+  "deadlines": {
+    "idle": 4290.0,
+    "absolute": 12270.0
+  },
+  "preference_seconds": 217.5,
+  "ok": true,
+  "total_seconds": 223.72
+}

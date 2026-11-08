@@ -1,0 +1,9 @@
+{
+  "core_build_sha": "a1509410",
+  "runtime_build_sha": "583e9b6",
+  "binary_sha256": "335408d2f9378b96e59a3592e209e1d21a41c09148756d77f31559b61613a555",
+  "policy_signature_verified": true,
+  "release_status": "local acceptance only; not OS-notarized or published",
+  "temporary_build_material_removed": true,
+  "test_input": "synthetic fixture events; no user account data"
+}
