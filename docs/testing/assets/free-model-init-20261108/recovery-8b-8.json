@@ -1,0 +1,59 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "event_count": 8,
+  "calls": [
+    {
+      "caller": "soul.preference",
+      "task_id": "llm.structured",
+      "input_bytes": 16024,
+      "max_tokens": 4096,
+      "effort": "",
+      "injected_timeout_seconds": 0.05,
+      "error_type": "SponsoredUnavailableError",
+      "runtime_stopped_after_timeout": true,
+      "seconds": 0.05
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 12406,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 12.68
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 12376,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 14.65
+    },
+    {
+      "caller": "soul.profile_build",
+      "task_id": "llm.structured",
+      "input_bytes": 2285,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 4.69
+    }
+  ],
+  "progress": [
+    {
+      "done": 1,
+      "total": 1,
+      "seconds": 27.56
+    }
+  ],
+  "planned_batches": 1,
+  "deadlines": {
+    "idle": 1500.0,
+    "absolute": 2700.0
+  },
+  "preference_seconds": 27.57,
+  "ok": true,
+  "total_seconds": 32.28
+}

@@ -1,5 +1,14 @@
 # CLI 命令参考
 
+## 初始化分析偏好超时修复（2026-11-08，待发布）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `run_guided_init(...)` 共享编排 | 从 `SoulEngine.preference_analysis_batch_count()` 获取实际 prompt 批数，供「已完成 X/N 批」与阶段绝对时间预算使用；不再仅按历史条数除以 200 估算。CLI、PC、移动端与插件走同一后端入口。 |
+| 进度监控 | 每个计划请求批次完成后更新活跃时间，仍保留空闲和绝对截止时间。显式 `profile_analysis_timeout_seconds` 覆盖值的原有含义不变；没有新增命令或配置字段。 |
+
+免费模型的单请求超时恢复由偏好分析层负责，持续失败仍明确报错。详见[真实请求验收](../testing/2026-11-08-free-model-init-timeouts.md)。
+
 ## 手机访问与有效监听参数（2026-10-26）
 
 `start`、`serve-api`、安装脚本与内部 `_run_api_server()` 默认均为 `0.0.0.0`；显式配置 / 启动覆盖继续有效。实际 host / port 提供给 `GET /api/qr-info`，因此非默认端口也能生成手机链接。没有新 CLI 命令或配置字段，扫码入口位于桌面 Web / 插件「手机版」，参见[连接说明](../mobile-connection.md)。

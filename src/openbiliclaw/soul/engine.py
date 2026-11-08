@@ -681,6 +681,14 @@ class SoulEngine:
         """
         return self._unified_interest_line
 
+    def preference_analysis_batch_count(
+        self, events: list[dict[str, Any]], *, event_chunk_size: int
+    ) -> int:
+        """Return actual prompt-sized batches for guided initialization budgets."""
+        return self._preference_analyzer.planned_batch_count(
+            events, event_chunk_size=event_chunk_size
+        )
+
     async def analyze_events(
         self,
         events: list[dict[str, Any]],
@@ -697,10 +705,9 @@ class SoulEngine:
 
         Args:
             events: List of behavioral event dicts from the collector.
-            event_chunk_size: When > 0, split the event list into chunks
-                of this size and analyse each chunk in parallel. Useful
-                for the init bootstrap where a single max-thinking call
-                on ~800 events would block for ~6 minutes.
+            event_chunk_size: When > 0, cap each batch's event count and
+                pre-split against the prompt budget. Analyse independent
+                batches with bounded concurrency, reporting each completion.
         """
         import time as _time
 

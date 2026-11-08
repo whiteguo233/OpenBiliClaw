@@ -136,14 +136,19 @@ def _profile_analysis_timeout_seconds(
     event_count: int,
     requested: float | None,
     concurrency: int = 1,
+    batch_count: int | None = None,
 ) -> float | None:
     """Return stage-2's bounded wall clock for this bootstrap size."""
     if requested is not None:
         return requested if requested > 0 else None
-    chunks = max(
-        1,
-        (max(0, event_count) + DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE - 1)
-        // DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    chunks = (
+        max(1, batch_count)
+        if batch_count is not None
+        else max(
+            1,
+            (max(0, event_count) + DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE - 1)
+            // DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+        )
     )
     waves = (chunks + max(1, concurrency) - 1) // max(1, concurrency)
     return max(
@@ -158,6 +163,7 @@ def _profile_analysis_deadlines(
     event_count: int,
     requested: float | None,
     concurrency: int = 1,
+    batch_count: int | None = None,
 ) -> tuple[float | None, float | None]:
     """Return stage 2's ``(idle_seconds, absolute_seconds)`` deadline pair.
 
@@ -171,6 +177,7 @@ def _profile_analysis_deadlines(
         event_count=event_count,
         requested=None,
         concurrency=concurrency,
+        batch_count=batch_count,
     )
     absolute = max(_INIT_PROGRESS_ABSOLUTE_SECONDS, scaled or 0.0)
     return _INIT_PROGRESS_IDLE_SECONDS, absolute
@@ -10912,10 +10919,14 @@ async def run_guided_init(
     # ones. ``profile_analysis_budget`` remains the number published to the GUI
     # as ``progress.max_seconds`` — it is now the absolute ceiling, i.e. still
     # the only limit that can end the stage on the clock.
+    expected_chunk_total = soul_engine.preference_analysis_batch_count(
+        events, event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
+    )
     profile_analysis_idle_budget, profile_analysis_budget = _profile_analysis_deadlines(
         event_count=len(events),
         requested=profile_analysis_timeout_seconds,
         concurrency=profile_analysis_concurrency,
+        batch_count=expected_chunk_total,
     )
     stage2_marker = _InitProgressMarker()
 
@@ -10927,11 +10938,6 @@ async def run_guided_init(
     # count onto coordinator.stage_progress for the GUI. ``_chunk_progress`` is
     # a live mirror the heartbeat reads so every tick shows "已完成 X/N 批";
     # when a chunk hangs that count freezes next to the growing clock.
-    expected_chunk_total = max(
-        1,
-        (len(events) + DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE - 1)
-        // DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
-    )
     _chunk_progress = {"done": 0, "total": expected_chunk_total}
     stage2_started_at = asyncio.get_running_loop().time()
 

@@ -192,10 +192,17 @@ class PreferenceAnalyzer:
         """
         events = self._maybe_filter_events(events)
         if event_chunk_size > 0 and len(events) >= event_chunk_size:
+            planned_chunks = self._plan_fitting_independent_chunks(
+                events=events,
+                awareness_notes=awareness_notes,
+                active_insights=active_insights,
+                max_chunk_size=event_chunk_size,
+            )
             return await self._analyze_events_chunked(
                 events=events,
                 existing_preference=existing_preference,
                 chunk_size=event_chunk_size,
+                planned_chunks=planned_chunks,
                 progress_callback=progress_callback,
                 awareness_notes=awareness_notes,
                 active_insights=active_insights,
@@ -236,6 +243,25 @@ class PreferenceAnalyzer:
         # Un-chunked path has a single natural completion point.
         await self._emit_progress(progress_callback, 1, 1)
         return result
+
+    def planned_batch_count(self, events: list[dict[str, Any]], *, event_chunk_size: int) -> int:
+        """Count prompt-sized init batches for progress and wall-clock budgets.
+
+        Uses the same filtering and empty preference seed as independent init
+        chunks. Individually oversized events remain one recoverable work unit.
+        """
+        filtered = self._maybe_filter_events(events)
+        return max(
+            1,
+            len(
+                self._plan_fitting_independent_chunks(
+                    events=filtered,
+                    awareness_notes=None,
+                    active_insights=None,
+                    max_chunk_size=event_chunk_size,
+                )
+            ),
+        )
 
     def _maybe_filter_events(
         self,
@@ -304,9 +330,10 @@ class PreferenceAnalyzer:
                 caller="soul.preference",
             )
         except (LLMProviderError, LLMServiceError) as exc:
-            if is_llm_moderation_error(exc):
+            free_timeout = self._is_free_timeout_error(exc)
+            if self._is_context_overflow_error(exc) or free_timeout or is_llm_moderation_error(exc):
                 logger.warning(
-                    "preference analysis blocked by provider content moderation; "
+                    "preference analysis needs smaller independent requests; "
                     "falling back to chunked isolation: events=%d error=%s",
                     len(events),
                     exc,
@@ -318,6 +345,8 @@ class PreferenceAnalyzer:
                         chunk_size=max(1, len(events) // 2),
                         awareness_notes=awareness_notes,
                         active_insights=active_insights,
+                        timeout_recovery=not free_timeout,
+                        llm_concurrency=1 if free_timeout else None,
                     )
             raise PreferenceAnalysisError(str(exc)) from exc
 
@@ -359,6 +388,15 @@ class PreferenceAnalyzer:
         }
         complete = cast("Any", self.registry.complete_structured_task)
         kwargs.update(without_core_memory_kwargs(complete))
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
+
+        free_route = uses_sponsored_route(self.registry, caller)
+        if free_route:
+            kwargs["max_tokens"] = min(max_tokens, PREFERENCE_CHUNK_MAX_TOKENS)
+        if reasoning_effort is None and free_route:
+            # Bounded extraction does not need the SDK's implicit 8B thinking.
+            # November 8 live init: even 25-row chunks took 30–180+ seconds.
+            reasoning_effort = ""
         if reasoning_effort is not None and call_accepts_keyword(complete, "reasoning_effort"):
             kwargs["reasoning_effort"] = reasoning_effort
         return cast("LLMResponse", await complete(**kwargs))
@@ -425,6 +463,7 @@ class PreferenceAnalyzer:
         events: list[dict[str, object]],
         awareness_notes: list[dict[str, object]] | None,
         active_insights: list[dict[str, object]] | None,
+        max_chunk_size: int = 0,
     ) -> list[list[dict[str, object]]]:
         """Greedily pack each automatic chunk against its exact prompt shape.
 
@@ -438,7 +477,9 @@ class PreferenceAnalyzer:
         chunks: list[list[dict[str, object]]] = []
         offset = 0
         while offset < len(events):
-            remaining = events[offset:]
+            remaining = (
+                events[offset : offset + max_chunk_size] if max_chunk_size > 0 else events[offset:]
+            )
             chunk_size = self._largest_fitting_independent_chunk_size(
                 events=remaining,
                 awareness_notes=awareness_notes,
@@ -450,7 +491,30 @@ class PreferenceAnalyzer:
         return chunks
 
     @staticmethod
-    def _is_context_overflow_error(exc: PreferenceAnalysisError) -> bool:
+    def _is_free_timeout_error(exc: BaseException) -> bool:
+        from openbiliclaw.llm.base import classify_llm_failure_kind
+        from openbiliclaw.llm.sponsored_errors import (
+            SponsoredUnavailableError,
+            SponsoredUpstreamError,
+            find_sponsored_error,
+        )
+
+        return (
+            isinstance(
+                find_sponsored_error(exc), (SponsoredUnavailableError, SponsoredUpstreamError)
+            )
+            and classify_llm_failure_kind(exc) == "timeout"
+        )
+
+    @staticmethod
+    def _is_context_overflow_error(exc: BaseException) -> bool:
+        from openbiliclaw.llm.sponsored_errors import (
+            SponsoredRequestTooLargeError,
+            find_sponsored_error,
+        )
+
+        if isinstance(find_sponsored_error(exc), SponsoredRequestTooLargeError):
+            return True
         text = str(exc).lower()
         markers = (
             "context length",
@@ -542,6 +606,7 @@ class PreferenceAnalyzer:
         awareness_notes: list[dict[str, object]] | None = None,
         active_insights: list[dict[str, object]] | None = None,
         llm_concurrency: int | None = None,
+        timeout_recovery: bool = True,
     ) -> dict[str, object]:
         """Split events into bounded concurrent chunk batches, then fold."""
         import asyncio as _asyncio
@@ -683,6 +748,8 @@ class PreferenceAnalyzer:
 
         async def _split_or_compact_chunk(
             chunk: list[dict[str, object]],
+            *,
+            timeout_recovery: bool = True,
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
             if len(chunk) <= 1:
                 compact = self._compact_event_for_prompt(chunk[0]) if chunk else {}
@@ -722,12 +789,14 @@ class PreferenceAnalyzer:
             # scheduler. Concurrent recursive halves used to queue 4/8/… calls
             # behind LLMService.concurrency; one 429 then released the whole
             # queue into the provider cooldown and produced a retry storm.
-            left = await _run_chunk_resilient(chunk[:midpoint])
-            right = await _run_chunk_resilient(chunk[midpoint:])
+            left = await _run_chunk_resilient(chunk[:midpoint], timeout_recovery=timeout_recovery)
+            right = await _run_chunk_resilient(chunk[midpoint:], timeout_recovery=timeout_recovery)
             return [*left, *right]
 
         async def _run_chunk_resilient(
             chunk: list[dict[str, object]],
+            *,
+            timeout_recovery: bool = True,
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
             messages = build_preference_analysis_prompt(
                 events=chunk,
@@ -737,11 +806,24 @@ class PreferenceAnalyzer:
                 input_view=self.cognition_prompt_view,
             )
             if not self._prompt_fits_budget(messages):
-                return await _split_or_compact_chunk(chunk)
+                return await _split_or_compact_chunk(chunk, timeout_recovery=timeout_recovery)
             try:
                 return [await _run_chunk_once(chunk)]
             except PreferenceAnalysisError as exc:
                 if exc.__cause__ is not None:
+                    if timeout_recovery and self._is_free_timeout_error(exc):
+                        # Extraction is read-only; the timed-out SDK process has
+                        # been cancelled. One recovery level bounds extra cost:
+                        # retry the halves sequentially, or one single-row retry.
+                        # Auth, quota, policy errors and cancellation never retry.
+                        logger.warning(
+                            "free preference request timed out; retrying once with "
+                            "smaller batches: events=%d",
+                            len(chunk),
+                        )
+                        if len(chunk) <= 1:
+                            return [await _run_chunk_once(chunk)]
+                        return await _split_or_compact_chunk(chunk, timeout_recovery=False)
                     if self._is_context_overflow_error(exc):
                         logger.warning(
                             "preference chunk exceeded provider context; splitting: "
@@ -749,7 +831,9 @@ class PreferenceAnalyzer:
                             len(chunk),
                             exc,
                         )
-                        return await _split_or_compact_chunk(chunk)
+                        return await _split_or_compact_chunk(
+                            chunk, timeout_recovery=timeout_recovery
+                        )
                     if not is_llm_moderation_error(exc):
                         raise
                     logger.warning(
@@ -773,7 +857,7 @@ class PreferenceAnalyzer:
                         str(event.get("title", "")) if isinstance(event, dict) else "",
                     )
                     return []
-                return await _split_or_compact_chunk(chunk)
+                return await _split_or_compact_chunk(chunk, timeout_recovery=timeout_recovery)
 
         # Each top-level chunk completing is a natural progress point. A shared
         # counter (bumped between the resilient run and the callback await, with
@@ -801,7 +885,7 @@ class PreferenceAnalyzer:
                 len(chunk),
             )
             try:
-                result = await _run_chunk_resilient(chunk)
+                result = await _run_chunk_resilient(chunk, timeout_recovery=timeout_recovery)
             except _asyncio.CancelledError:
                 logger.info(
                     "preference chunk %d/%d cancelled after %.1fs",

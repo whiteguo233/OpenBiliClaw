@@ -1,0 +1,81 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "event_count": 200,
+  "calls": [
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 44.54
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 48.54
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 29.82
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33239,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 29.83
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33246,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 31.04
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33247,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 46.39
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33200,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 34.99
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 18723,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 16.34
+    },
+    {
+      "caller": "soul.profile_build",
+      "input_bytes": 9648,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 3.56
+    }
+  ],
+  "preference_seconds": 185.84,
+  "ok": true,
+  "total_seconds": 189.44
+}

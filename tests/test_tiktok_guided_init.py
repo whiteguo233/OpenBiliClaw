@@ -385,6 +385,9 @@ def test_init_yes_tiktok_includes_bootstrap_events_in_analysis_and_profile(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -541,6 +544,9 @@ def test_init_no_tiktok_skips_enqueue(monkeypatch: pytest.MonkeyPatch, tmp_path:
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],

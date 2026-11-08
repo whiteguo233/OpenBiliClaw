@@ -4397,6 +4397,9 @@ def test_init_runs_history_preference_profile_and_discovery(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -4545,6 +4548,9 @@ def test_init_caps_bilibili_history_and_favorites_at_500_and_following_at_100(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -4662,6 +4668,9 @@ def test_init_accepts_custom_bilibili_history_favorites_and_following_limits(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
 
@@ -4768,6 +4777,9 @@ def test_init_includes_xhs_bootstrap_events(
             self.events.append(event)
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -4922,6 +4934,9 @@ def test_init_includes_douyin_bootstrap_events_in_analysis_and_profile(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -5396,6 +5411,9 @@ def test_init_youtube_env_skip_overrides_yes_flag(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -5609,6 +5627,9 @@ def test_init_no_xhs_flag_skips_enqueue(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
 
@@ -5717,6 +5738,9 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -5860,6 +5884,9 @@ def test_init_skips_backfill_when_pool_target_is_already_reached(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -5971,6 +5998,9 @@ def test_init_reports_partial_success_when_discovery_fails(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -9175,6 +9205,9 @@ def _guided_init_pipeline_doubles(monkeypatch) -> dict[str, Any]:
             state["propagated"].append(event)
 
     class _Soul:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(self, events: list[dict[str, Any]], **kwargs: Any) -> None:
             state["analyzed"] = list(events)
 
