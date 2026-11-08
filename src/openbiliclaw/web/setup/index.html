@@ -86,6 +86,8 @@
     .init-missing.init-soft .init-mark { background: rgba(244,185,66,.14); color: var(--warn); }
     .init-hint { margin: 7px 0 0 32px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
     .init-repair-btn { margin: 8px 0 0 32px; font-size: 12.5px; padding: 5px 12px; }
+    [data-init-source-options]:not([hidden]) { display: grid; gap: 8px; }
+
     .init-sources { display: grid; gap: 8px; margin: 16px 0; }
     .init-sources-title { margin: 0 0 2px; font-size: 13px; font-weight: 800; color: var(--text); }
     .init-source-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); font-size: 13px; }
@@ -645,9 +647,9 @@
       $("#modelHint").textContent = defaultModel
         ? "已填入推荐默认模型，可按你的服务商实际模型名修改。"
         : "OpenAI 兼容接口通常需要填写你的部署名或第三方模型 ID。";
-      resetModelDiscovery();      window.OpenBiliClawSponsoredSettings.syncInstance({
+      resetModelDiscovery();
+      window.OpenBiliClawSponsoredSettings.syncInstance({
         provider: p, model: $("#model"), status: $("#modelDiscoveryStatus"),
-        prepare: prepareFreeComponent,
       });
       if (free) $("#modelHint").textContent = "选择内置固定实例；配置不可修改，可在设置页调整调用链。";
 
@@ -1367,7 +1369,11 @@
         initBangumiUsernameTouched = true;
       });
       bangumiDetail.append(bangumiText, bangumiInput);
-      root.append(bangumiDetail);
+      const bangumiOptions = document.createElement("div");
+      bangumiOptions.dataset.initSourceOptions = "bangumi";
+      bangumiOptions.hidden = bangumiInput.disabled;
+      root.append(bangumiOptions);
+      bangumiOptions.append(bangumiDetail);
 
       // Optional personal access token: identifies the account via /v0/me and
       // reads private collections; when set the username above is auto-resolved.
@@ -1386,14 +1392,15 @@
         initBangumiToken = bangumiTokenInput.value || "";
       });
       bangumiTokenDetail.append(bangumiTokenText, bangumiTokenInput);
-      root.append(bangumiTokenDetail);
+      bangumiOptions.append(bangumiTokenDetail);
       const bangumiTokenHint = document.createElement("p");
       bangumiTokenHint.className = "hint";
       bangumiTokenHint.innerHTML = 'Bangumi 账号三选一：个人令牌最完整（自动识别当前登录账号，可读私密收藏）；公开用户名次之（只读公开收藏）；两者都留空时，只要浏览器已登录 bgm.tv，扩展会自动识别账号（只拿到账号名，可能未经校验）。<a href="https://next.bgm.tv/demo/access-token" target="_blank" rel="noopener noreferrer">生成个人令牌</a>（约 1 年有效，视同密码保管）·<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/bangumi.md#获取-bangumi-个人令牌" target="_blank" rel="noopener noreferrer">取令牌步骤</a>';
-      root.append(bangumiTokenHint);
+      bangumiOptions.append(bangumiTokenHint);
 
       root.querySelector('input[data-init-source="bangumi"]')?.addEventListener("change", (event) => {
         const checked = Boolean(event.currentTarget.checked);
+        bangumiOptions.hidden = !checked;
         bangumiInput.disabled = !checked;
         bangumiTokenInput.disabled = !checked;
       });
@@ -1414,7 +1421,11 @@
         initGitHubUsernameTouched = true;
       });
       githubDetail.append(githubText, githubInput);
-      root.append(githubDetail);
+      const githubOptions = document.createElement("div");
+      githubOptions.dataset.initSourceOptions = "github";
+      githubOptions.hidden = githubInput.disabled;
+      root.append(githubOptions);
+      githubOptions.append(githubDetail);
 
       const githubTokenDetail = document.createElement("label");
       githubTokenDetail.className = "init-source-detail";
@@ -1431,13 +1442,14 @@
         initGitHubToken = githubTokenInput.value || "";
       });
       githubTokenDetail.append(githubTokenText, githubTokenInput);
-      root.append(githubTokenDetail);
+      githubOptions.append(githubTokenDetail);
       const githubTokenHint = document.createElement("p");
       githubTokenHint.className = "hint";
       githubTokenHint.innerHTML = 'GitHub 仅导入公开 starred repositories。PAT 只用于确认账号身份和提高官方 API 限额，不读取私有仓库；留空仍可使用公开发现。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a>';
-      root.append(githubTokenHint);
+      githubOptions.append(githubTokenHint);
       root.querySelector('input[data-init-source="github"]')?.addEventListener("change", (event) => {
         const checked = Boolean(event.currentTarget.checked);
+        githubOptions.hidden = !checked;
         githubInput.disabled = !checked;
         githubTokenInput.disabled = !checked;
       });

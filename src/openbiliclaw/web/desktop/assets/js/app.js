@@ -2566,7 +2566,7 @@
       const githubInput = `<label class="init-source-row"><span>GitHub 公开用户名（可留空，仅启用公开仓库发现）</span><input id="initGitHubUsername" maxlength="39" autocomplete="off" autocapitalize="off" spellcheck="false" value="${escapeHtml(githubUsername)}"${githubDisabled}></label>`;
       const githubTokenInput = `<label class="init-source-row"><span>GitHub Personal Access Token（可选）</span><input id="initGitHubToken" type="password" maxlength="512" autocomplete="off" value="${escapeHtml(state.initGitHubToken || "")}"${githubDisabled}></label>`;
       const githubTokenHint = `<p class="init-sources-hint">GitHub 仅导入公开 starred repositories。公开用户名可直接使用；PAT 只用于确认账号身份和提高官方 API 限额，不读取私有仓库。两者都留空时仍可启用公开仓库发现。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a></p>`;
-      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源（至少一个）</p>${rows}${llmConcurrencyRow}${initTimeoutRow}${bangumiInput}${bangumiTokenInput}${bangumiTokenHint}${githubInput}${githubTokenInput}${githubTokenHint}<p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
+      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源（至少一个）</p>${rows}${llmConcurrencyRow}${initTimeoutRow}<div data-init-source-options="bangumi"${selected.has("bangumi") ? "" : " hidden"}>${bangumiInput}${bangumiTokenInput}${bangumiTokenHint}</div><div data-init-source-options="github"${selected.has("github") ? "" : " hidden"}>${githubInput}${githubTokenInput}${githubTokenHint}</div><p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
     }
 
     function initOnboardingPhase(status, progress) {
@@ -2720,11 +2720,15 @@
         input.addEventListener("change", () => {
           state.initSelectedSources = selectedInitSourcesFromDom();
           const bangumiChecked = state.initSelectedSources.includes("bangumi");
+          const bangumiOptions = grid.querySelector('[data-init-source-options="bangumi"]');
+          if (bangumiOptions) bangumiOptions.hidden = !bangumiChecked;
           const bangumiUsername = grid.querySelector("#initBangumiUsername");
           if (bangumiUsername) bangumiUsername.disabled = !bangumiChecked;
           const bangumiToken = grid.querySelector("#initBangumiToken");
           if (bangumiToken) bangumiToken.disabled = !bangumiChecked;
           const githubChecked = state.initSelectedSources.includes("github");
+          const githubOptions = grid.querySelector('[data-init-source-options="github"]');
+          if (githubOptions) githubOptions.hidden = !githubChecked;
           const githubUsername = grid.querySelector("#initGitHubUsername");
           if (githubUsername) githubUsername.disabled = !githubChecked;
           const githubToken = grid.querySelector("#initGitHubToken");

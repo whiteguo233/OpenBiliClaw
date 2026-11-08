@@ -2250,14 +2250,18 @@ function _renderInitSources() {
   bangumiInput.id = "initBangumiUsername";
   bangumiInput.maxLength = 128;
   bangumiInput.autocomplete = "off";
-  bangumiInput.disabled = true;
+  bangumiInput.disabled = !elements.initSources.querySelector('input[data-init-source="bangumi"]')?.checked;
   bangumiInput.value = state.initBangumiUsername;
   bangumiInput.addEventListener("input", () => {
     state.initBangumiUsername = bangumiInput.value;
     state.initBangumiUsernameTouched = true;
   });
   bangumiRow.append(bangumiLabel, bangumiInput);
-  elements.initSources.append(bangumiRow);
+  const bangumiOptions = document.createElement("div");
+  bangumiOptions.dataset.initSourceOptions = "bangumi";
+  bangumiOptions.hidden = bangumiInput.disabled;
+  elements.initSources.append(bangumiOptions);
+  bangumiOptions.append(bangumiRow);
 
   // Optional personal access token: identifies the account via /v0/me and reads
   // private collections. When set, the username above is auto-resolved.
@@ -2270,13 +2274,13 @@ function _renderInitSources() {
   bangumiTokenInput.type = "password";
   bangumiTokenInput.maxLength = 512;
   bangumiTokenInput.autocomplete = "off";
-  bangumiTokenInput.disabled = true;
+  bangumiTokenInput.disabled = bangumiInput.disabled;
   bangumiTokenInput.value = state.initBangumiToken;
   bangumiTokenInput.addEventListener("input", () => {
     state.initBangumiToken = bangumiTokenInput.value;
   });
   bangumiTokenRow.append(bangumiTokenLabel, bangumiTokenInput);
-  elements.initSources.append(bangumiTokenRow);
+  bangumiOptions.append(bangumiTokenRow);
   const bangumiTokenHint = document.createElement("p");
   bangumiTokenHint.className = "init-sources-hint";
   // Spell out the three-way choice: the backend accepts a token, an explicit
@@ -2304,10 +2308,11 @@ function _renderInitSources() {
     document.createTextNode("（约 1 年有效，视同密码保管）·"),
     bangumiTokenDocLink,
   );
-  elements.initSources.append(bangumiTokenHint);
+  bangumiOptions.append(bangumiTokenHint);
 
   elements.initSources.querySelector('input[data-init-source="bangumi"]')?.addEventListener("change", (event) => {
     const checked = Boolean(event.currentTarget.checked);
+    bangumiOptions.hidden = !checked;
     bangumiInput.disabled = !checked;
     bangumiTokenInput.disabled = !checked;
   });
@@ -2322,14 +2327,18 @@ function _renderInitSources() {
   githubInput.autocomplete = "off";
   githubInput.autocapitalize = "off";
   githubInput.spellcheck = false;
-  githubInput.disabled = true;
+  githubInput.disabled = !elements.initSources.querySelector('input[data-init-source="github"]')?.checked;
   githubInput.value = state.initGitHubUsername;
   githubInput.addEventListener("input", () => {
     state.initGitHubUsername = githubInput.value;
     state.initGitHubUsernameTouched = true;
   });
   githubRow.append(githubLabel, githubInput);
-  elements.initSources.append(githubRow);
+  const githubOptions = document.createElement("div");
+  githubOptions.dataset.initSourceOptions = "github";
+  githubOptions.hidden = githubInput.disabled;
+  elements.initSources.append(githubOptions);
+  githubOptions.append(githubRow);
 
   const githubTokenRow = document.createElement("label");
   githubTokenRow.className = "init-source-row";
@@ -2340,13 +2349,13 @@ function _renderInitSources() {
   githubTokenInput.type = "password";
   githubTokenInput.maxLength = 512;
   githubTokenInput.autocomplete = "off";
-  githubTokenInput.disabled = true;
+  githubTokenInput.disabled = githubInput.disabled;
   githubTokenInput.value = state.initGitHubToken;
   githubTokenInput.addEventListener("input", () => {
     state.initGitHubToken = githubTokenInput.value;
   });
   githubTokenRow.append(githubTokenLabel, githubTokenInput);
-  elements.initSources.append(githubTokenRow);
+  githubOptions.append(githubTokenRow);
 
   const githubTokenHint = document.createElement("p");
   githubTokenHint.className = "init-sources-hint";
@@ -2364,10 +2373,11 @@ function _renderInitSources() {
     githubTokenDocLink,
     document.createTextNode("。"),
   );
-  elements.initSources.append(githubTokenHint);
+  githubOptions.append(githubTokenHint);
 
   elements.initSources.querySelector('input[data-init-source="github"]')?.addEventListener("change", (event) => {
     const checked = Boolean(event.currentTarget.checked);
+    githubOptions.hidden = !checked;
     githubInput.disabled = !checked;
     githubTokenInput.disabled = !checked;
   });
