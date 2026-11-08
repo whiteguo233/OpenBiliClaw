@@ -206,6 +206,9 @@ def test_run_guided_init_github_only_persists_analyzes_and_builds_profile(
             state["propagated"].append(received)
 
     class _Soul:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(self, events: list[dict[str, Any]], **_: Any) -> None:
             state["analyzed"] = list(events)
 
@@ -300,6 +303,9 @@ def test_run_guided_init_isolates_github_failure_when_reddit_has_signals(
             state["propagated"].append(received)
 
     class _Soul:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(self, events: list[dict[str, Any]], **_: Any) -> None:
             state["analyzed"] = list(events)
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,104 @@ from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/audit_platform_source.py"
+
+
+def _dynamic_inventory(tmp_path: Path, *, replacements: dict[str, tuple[str, str]] | None = None):
+    """Copy only the portable registry seams, without legacy fixed-slug evidence."""
+    module = runpy.run_path(str(SCRIPT))
+    contract = module["load_contract"](ROOT / "docs/platform-source-contract.dynamic-web.toml")
+    files = (
+        "src/openbiliclaw/sources/platforms.py",
+        "src/openbiliclaw/sources/custom_sources.py",
+        "src/openbiliclaw/sources/workflow_service.py",
+        "src/openbiliclaw/sources/workflow_store.py",
+        "src/openbiliclaw/sources/workflow_executors.py",
+        "src/openbiliclaw/sources/web_recipe.py",
+        "src/openbiliclaw/runtime/custom_workflow_producer.py",
+        "src/openbiliclaw/runtime/keyword_planner.py",
+        "src/openbiliclaw/runtime/inspiration_pipeline.py",
+        "src/openbiliclaw/runtime/refresh.py",
+        "src/openbiliclaw/api/runtime_context.py",
+        "src/openbiliclaw/api/custom_sources.py",
+        "tests/test_custom_source_runtime.py",
+        "tests/test_custom_source_contract.py",
+    )
+    for relative in files:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+        if relative in (replacements or {}):
+            old, new = replacements[relative]
+            content = target.read_text(encoding="utf-8")
+            assert old in content
+            target.write_text(content.replace(old, new), encoding="utf-8")
+    return module["Inventory"](tmp_path, contract)
+
+
+def test_dynamic_workflow_audit_uses_declared_instance_registry_without_fixed_slug(
+    tmp_path: Path,
+) -> None:
+    inventory = _dynamic_inventory(tmp_path)
+    results = [*inventory._source_auth(), *inventory._discover(), *inventory._search()]
+    assert all(result.status == "PASS" for result in results), [
+        (result.capability, result.detail) for result in results if result.status != "PASS"
+    ]
+    assert "src/openbiliclaw/runtime/custom_workflow_producer.py" in inventory._producer_files()
+    assert not (tmp_path / "src/openbiliclaw/api/source_auth/verify.py").exists()
+
+
+def test_dynamic_workflow_audit_reports_removed_claim_and_resume_even_with_legacy_web(
+    tmp_path: Path,
+) -> None:
+    inventory = _dynamic_inventory(
+        tmp_path,
+        replacements={
+            "src/openbiliclaw/runtime/custom_workflow_producer.py": (
+                "coordinator.claim(",
+                "coordinator.other(",
+            ),
+            "src/openbiliclaw/api/custom_sources.py": (
+                '@router.post("/drafts/{draft_id}/resume")',
+                '@router.post("/unrelated")',
+            ),
+        },
+    )
+    _write(
+        tmp_path,
+        "src/openbiliclaw/api/source_auth/verify.py",
+        'VERIFY_ACTIONS = {"web": "live_probe"}\n',
+    )
+    _write(tmp_path, "src/openbiliclaw/runtime/web_producer.py", 'coordinator.claim("web")\n')
+    results = {
+        result.capability: result for result in [*inventory._source_auth(), *inventory._search()]
+    }
+    assert results["source-auth.verify"].status == "MISSING"
+    assert results["search.keyword-claim"].status == "MISSING"
+
+
+def test_dynamic_workflow_audit_does_not_hide_missing_instance_planner(
+    tmp_path: Path,
+) -> None:
+    inventory = _dynamic_inventory(
+        tmp_path,
+        replacements={
+            "src/openbiliclaw/runtime/keyword_planner.py": (
+                "return (*_PLANNER_PLATFORMS, *self._custom_keyword_sources())",
+                "return _PLANNER_PLATFORMS",
+            ),
+        },
+    )
+    results = {result.capability: result for result in inventory._search()}
+    assert results["search.planner"].status == "MISSING"
+
+
+def test_dynamic_surface_audit_does_not_accept_an_unrelated_web_login_link(tmp_path: Path) -> None:
+    inventory = _dynamic_inventory(tmp_path)
+    _write(tmp_path, "src/openbiliclaw/web/setup/index.html", '<a href="/web">登录后重试</a>')
+    result = inventory._surface_result("setup")
+    assert result.status == "MISSING"
+    assert "explicit dynamic-source setup entry" in result.detail
+
 
 CONTRACT = """\
 schema_version = 1
@@ -195,6 +295,19 @@ def _without_exclusions(text: str, *keys: str) -> str:
     return "".join(line for line in text.splitlines(keepends=True) if not line.startswith(prefixes))
 
 
+def _recipe_allowlist_contract(text: str = CONTRACT) -> str:
+    return (
+        text.replace("schema_version = 1", "schema_version = 2", 1)
+        .replace(
+            'integration_level = "discovery-only"\n',
+            'integration_level = "discovery-only"\nhost_policy = "recipe-allowlist"\n',
+            1,
+        )
+        .replace('hosts = ["example.test"]', "hosts = []", 1)
+        .replace('kind = "official-api"', 'kind = "web-http"', 1)
+    )
+
+
 def _fixture_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     files = {
@@ -307,6 +420,8 @@ def test_complete_fixture_passes_registration_check_but_keeps_manual_open(
     assert result.returncode == 0, result.stderr or result.stdout
     payload = _payload(result)
     assert payload["tool"] == "platform-source-registration-inventory"
+    assert payload["contract"]["schema_version"] == 1
+    assert "host_policy" not in payload["contract"]
     assert payload["summary"]["required_missing"] == 0
     assert payload["summary"]["registration_check_passed"] is True
     assert payload["summary"]["MANUAL"] > 0
@@ -332,6 +447,115 @@ def test_complete_fixture_passes_registration_check_but_keeps_manual_open(
             continue
         assert item["evidence"], item["capability"]
         assert all(evidence["path"] and evidence["line"] >= 1 for evidence in item["evidence"])
+
+
+def test_schema_v2_recipe_allowlist_accepts_empty_hosts_and_web_http(
+    tmp_path: Path,
+) -> None:
+    repo, contract = _fixture_repo(tmp_path)
+    contract.write_text(_recipe_allowlist_contract(), encoding="utf-8")
+    platforms = repo / "src/openbiliclaw/sources/platforms.py"
+    platforms.write_text(
+        platforms.read_text(encoding="utf-8").replace(
+            '    url_hosts=("example.test",),\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(contract, "--check", "--json")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = _payload(result)
+    assert payload["contract"]["schema_version"] == 2
+    assert payload["contract"]["host_policy"] == "recipe-allowlist"
+    assert payload["contract"]["hosts"] == []
+    assert payload["contract"]["transport"]["kind"] == "web-http"
+    canonical = next(
+        item for item in payload["results"] if item["capability"] == "canonical.registry"
+    )
+    assert canonical["status"] == "PASS"
+
+
+def test_schema_v1_keeps_static_hosts_and_rejects_web_http(tmp_path: Path) -> None:
+    _repo, contract = _fixture_repo(tmp_path / "empty-hosts")
+    contract.write_text(
+        CONTRACT.replace('hosts = ["example.test"]', "hosts = []", 1),
+        encoding="utf-8",
+    )
+
+    empty_hosts = _run(contract, "--json")
+
+    assert empty_hosts.returncode == 2
+    assert "contract.hosts must not be empty" in empty_hosts.stderr
+
+    _repo, contract = _fixture_repo(tmp_path / "web-http")
+    contract.write_text(
+        CONTRACT.replace('kind = "official-api"', 'kind = "web-http"', 1),
+        encoding="utf-8",
+    )
+
+    web_http = _run(contract, "--json")
+
+    assert web_http.returncode == 2
+    assert "transport.kind='web-http' requires schema_version=2" in web_http.stderr
+
+
+def test_schema_v2_recipe_allowlist_rejects_static_contract_or_registry_hosts(
+    tmp_path: Path,
+) -> None:
+    _repo, contract = _fixture_repo(tmp_path / "contract-host")
+    contract.write_text(
+        _recipe_allowlist_contract().replace("hosts = []", 'hosts = ["example.test"]', 1),
+        encoding="utf-8",
+    )
+
+    static_contract_host = _run(contract, "--json")
+
+    assert static_contract_host.returncode == 2
+    assert "host_policy='recipe-allowlist' requires hosts=[]" in static_contract_host.stderr
+
+    _repo, contract = _fixture_repo(tmp_path / "registry-host")
+    contract.write_text(_recipe_allowlist_contract(), encoding="utf-8")
+
+    static_registry_host = _run(contract, "--check", "--json")
+
+    assert static_registry_host.returncode == 1
+    canonical = next(
+        item
+        for item in _payload(static_registry_host)["results"]
+        if item["capability"] == "canonical.registry"
+    )
+    assert canonical["status"] == "MISSING"
+    assert "recipe-allowlist family has no static url_hosts" in canonical["detail"]
+
+
+def test_schema_v2_requires_a_known_host_policy(tmp_path: Path) -> None:
+    _repo, contract = _fixture_repo(tmp_path / "missing")
+    contract.write_text(
+        CONTRACT.replace("schema_version = 1", "schema_version = 2", 1),
+        encoding="utf-8",
+    )
+
+    missing = _run(contract, "--json")
+
+    assert missing.returncode == 2
+    assert "host_policy must be a non-empty string" in missing.stderr
+
+    _repo, contract = _fixture_repo(tmp_path / "unknown")
+    contract.write_text(
+        _recipe_allowlist_contract().replace(
+            'host_policy = "recipe-allowlist"',
+            'host_policy = "wildcard"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    unknown = _run(contract, "--json")
+
+    assert unknown.returncode == 2
+    assert "host_policy must be one of" in unknown.stderr
 
 
 def test_generic_status_route_does_not_substitute_for_concrete_source_roster(

@@ -1,5 +1,15 @@
 # 聊天 Agent Loop（聊一聊）
 
+## 长记忆精确读取（2026-11-06）
+
+| 已实现能力 | 合同 |
+| --- | --- |
+| 原值查询 | `read_memory` 对原始记忆层支持JSON Pointer，直接返回指定字段，避免把整层交给模型检索。 |
+| 有界且只读 | 保留读权限；拒绝无效转义、越界索引、缺失路径、过深路径和超长结果，不截断精确值后伪装成功。 |
+
+公开API与调用约定：`read_memory({layer,json_pointer,max_chars?})` 返回 `{layer,json_pointer,value}`。路径最长512字符/32层，数组索引从0开始，`~1`表示斜线、`~0`表示波浪号；不能与笔记key/keyword混用。笔记key传入斜线路径时明确提示改用json_pointer。工具保证取到的原值，模型最终措辞仍需单独验收。
+
+
 ## 概述
 
 `src/openbiliclaw/agent/` 承载「聊一聊」对话的多跳 agent 运行时（设计共识：
@@ -23,18 +33,23 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | M1 JSON Schema 工具注册表 | ✅ | `agent/tools/registry.py`：`Tool`（name / description / JSON Schema parameters / permission_level / handler）+ `ToolRegistry`（注册、按 skill 白名单 `subset()`、按权限 `filter_by_permission()`、`llm_schemas()` 渲染 OpenAI 格式、`legacy_schemas()` 渲染旧扁平格式、参数校验 + 同步/异步 dispatch） |
-| M1 SOURCE_TOOLS 迁移 | ✅ | `agent/tools/source_tools.py` 是 create_source / list_sources / toggle_source 的唯一事实来源（JSON Schema + 权限级：list=read，create/toggle=hard_write）；`sources/tools.py` 保留 `SOURCE_TOOLS` 旧扁平结构与 `SourceToolDispatcher` 同步接口，委托同一组 handler |
+| M1 SOURCE_TOOLS 迁移 | ✅ | `agent/tools/source_tools.py` 是 probe_web_source / create_source / list_sources / toggle_source 的唯一事实来源（JSON Schema + 权限级：probe/list=read，create/toggle=hard_write）；`sources/tools.py` 保留 `SOURCE_TOOLS` 旧扁平结构与 `SourceToolDispatcher` 同步接口，委托同一组 handler |
 | M1 原生 function calling | ✅ | 见 [llm 模块](llm.md)：OpenAI 系 chat-completions flavor 原生 FC，其余 provider 走 prompt 模拟兜底 |
 | M1 多跳 AgentLoop | ✅ | `agent/loop.py`：`AgentLoop.run()` 异步生成器逐跳产出事件，默认 64 跳上限（`[agent]` 配置），超限后无工具收尾汇报 |
+| 工具协议正文防护 | ✅ | `agent/tool_text.py` 在流式正文及最终回复中检查独立的工具 JSON（含误包成 JSON 代码块的调用），隔离该段及后续未经执行支持的声明；只处理完整、已注册工具的协议封套，普通正文实时输出，其他代码/引用及用户明确要求的原样数据保留。无正常答复时仅纠正一次，再次失败上抛；不会从正文执行工具 |
+| 明确调用的执行记录检查 | ✅ | `explicit_tool_requests()` 只识别用户原文中直接点名已注册工具的调用指令；没有调用记录时暂存正文并最多纠正一次，仍无调用则失败。失败调用和审批登记都计为尝试，检查本身不执行或重放操作。 |
+| 重复读取收敛 | ✅ | 连续两轮成功的只读工具、参数及完整结果均相同，模型又提出同一组调用时，第三次不执行，使用已有结果做一次无工具汇总；不同参数/结果/工具及写操作不触发此规则 |
 | M2 SSE 流式接线 | ✅ | 新端点 `POST /api/chat/agent/stream` 真流式转发 `AgentEvent`；`SocraticDialogue.stream_agent_reply()` 复用 persona prompt / 历史 / 学习队列；除 `delta` 外的 loop 事件随 turn 落 `payload.agent_events`；旧 `/api/chat` 与 `/api/chat/stream` 保持共存 |
 | M2.5 token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()`（基类一次性回退，OpenAI 系 chat-completions flavor 真流式）→ `LLMService.stream_complete_with_native_tools()` / `stream_socratic_dialogue()` → `AgentLoop` 每跳产出 `delta` 事件（工具调用阶段内容同样逐 token 流出，该跳若带 tool_calls 则由 `thinking` 全文接管）→ SSE `delta` 事件（不落 `agent_events`）；`SocraticDialogue.respond_stream()` 让 legacy `/api/chat/stream` 与 CLI `chat` 在无工具配置下逐 token 输出（工具回合保持一次性最终回复）；registry 流式链只在**首个 delta 之前**允许 fallback（已吐字后失败直接上抛，避免重复文本） |
-| M3 扩展工具集（17 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
+| M3 扩展工具集（含 Web probe 共 18 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
 | 公开网页与聊天笔记 | ✅ | search_web/read_webpage 按需联网并保留来源；agent_notes 可检索、CAS 更正和审批删除，后续聊天按权限注入有界引用 |
 | 对话收敛 | ✅ | 所有角色共享需求优先规则；口味探寻师只在用户主动探索时访谈，信息够用即总结，连续两轮提问后先收敛。详见下文 Skill 体系 |
 | 会话聊天风格 | ✅ | 六种表达模板独立于功能角色；会话持久化、发送时冻结，三端选择与示例预览，工具权限保持 |
 | M4 skill 加载与切换 | ✅ | `agent/skill.py`：`SkillDefinition` + `*/SKILL.md` 解析（手写 frontmatter 子集，无 YAML 依赖）+ `load_skill_catalog()`（内置 → `data/skills/` 覆盖，非法文件跳过记日志）；4 个内置 skill；`suggest_skill` 元工具 + 端点 skill 绑定，见下文「Skill 体系（M4）」 |
 | M6 任务中心（durable 后台任务） | ✅ | `agent/tasks.py`：`AgentTaskRunner` 在 `BackgroundTaskRegistry` 登记的 asyncio task 里跑**只读** AgentLoop（`filter_by_permission("read")` ∩ skill 白名单），事件逐步落 `agent_tasks.steps`；写动作只经 `propose_suggestion` 元工具产出结构化建议清单，完成后往来源会话写汇总消息；交互侧另有 `start_background_task` 元工具（同 suggest_skill 确认卡模式）。见下文「任务中心（M6）」 |
 | M7 L2 审批门 | ✅ | `agent/approvals.py`：loop 拦截 hard_write 调用 → `approval_request` SSE 事件 + durable 审批记录（JSON 文件存储，免迁移）；`/api/chat/approvals` 端点批准（立即返回 + 后台任务二次 dispatch 真执行，幂等）/拒绝；审计落 `profile_update_ledger`。见下文「L2 审批门（M7）」 |
+| 用户原话采集上限 | ✅ | 工具 dispatch 临时绑定当前用户原话；条数／页数约束独立于模型转述，试采和正式采集复用受限计划，确认卡显示实际预算。 |
+| 来源审批可信摘要 | ✅ | `Tool.approval_summary` 在参数校验后读取实际草稿/来源，再写入既有审批 summary；名称、URL、目标与实际份额/间隔随 SSE 与 replay 持久化，读取失败不落卡。 |
 
 ## 聊天风格：与功能角色独立
 
@@ -58,6 +73,7 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 ```
 agent/
 ├── loop.py              # AgentLoop + AgentEvent（多跳循环与事件模型，含 M7 审批拦截）
+├── tool_text.py         # 正文协议检查与明确点名调用的执行记录要求；不从正文执行操作
 ├── approvals.py         # ApprovalStore + ApprovalRecord（M7 审批台账，JSON 文件持久化）
 ├── orchestrator.py      # 既有空壳编排器（未接 loop）
 ├── persona.py           # 独立表达模板目录（不授予工具权限）
@@ -71,7 +87,7 @@ agent/
 │   └── system-steward/    # 系统管家
 └── tools/
     ├── registry.py      # Tool / ToolResult / ToolRegistry / validate_tool_arguments
-    ├── source_tools.py  # 订阅源管理三工具的 JSON Schema 定义与 handler
+    ├── source_tools.py  # 订阅源管理及只读 Web probe 的 JSON Schema 定义与 handler
     ├── common.py        # 共享错误类型（组件缺失）与输出辅助
     ├── context.py       # AgentToolContext + build_agent_tool_registry（v1 总装）
     ├── skill_tools.py   # suggest_skill 元工具（agent 建议切换 skill）
@@ -101,6 +117,7 @@ loop = AgentLoop.from_config(llm_service, tool_registry, config)
 async for event in loop.run(
     system_instruction="你是口味伙伴…",
     user_message="帮我看看我订阅了什么",
+    original_user_message="帮我看看我订阅了什么",  # 可选：未拼接语言规则/引用资料的用户原文
     history=[{"role": "user", "content": "…"}, ...],
     tools=tool_registry.subset(["list_sources"]),  # 可选：本次运行的白名单子集
 ):
@@ -120,7 +137,7 @@ async for event in loop.run(
   随后紧跟一条 `tool_result`（回填给模型的「等待审批」说明）。仅在 loop
   接线了 approval gate 时出现；未接线时保持 M1 直执行为。
 - `step_limit_reached`：达到 `max_steps` 时发出一次，随后 loop 追加一条收尾指令
-  并做一次**无工具**调用，让模型汇报进展。
+  并做一次**无工具**调用，让模型汇报进展。若还有明确点名但未尝试的工具，则直接报错，避免收尾误报完成。
 - `final`：最终回复文本，每个 run 恰好一个（正常收尾或步数上限收尾）。
 
 `step` 从 1 开始编号；LLM 调用失败直接抛给调用方（M2 映射为 SSE error 事件），
@@ -128,7 +145,49 @@ async for event in loop.run(
 `tool_calls`，结果用 `role="tool"` + `tool_call_id` 回填），对原生 FC 与 prompt
 模拟两条 service 路径透明。
 
+正文检查按当前用户原文决定是否保留工具协议示例，不使用历史消息、记忆引用或自动附加的
+输出语言规则作为用户意图。`SocraticDialogue` 显式传入 `original_user_message`；直接调用
+`run()` 时省略该参数则使用 `user_message`。检查覆盖 `delta`、`thinking`、`final` 和步数
+上限收尾，因而会话记录、SSE 回放与后续学习均接收处理后的最终正文。
+
+`ToolTextGuard.feed()` 立即返回普通文本，只暂存段落起始的潜在工具协议段
+`{"tool_call":...}` / `{"tool_calls":[...]}`（裸对象或完整 JSON 围栏）；`finish()` 判定完整封套。候选缓冲上限
+32 Ki 字符是资源限制，超出后原样透传。未知工具、不完整 JSON、其他代码块、引用和普通数据对象
+保持原样，不能把它当作通用模型输出正确性验证器。若整个回复只剩协议文本，loop 在当前
+工具结果上下文上最多增加一次纠正请求；仍无正文则抛出 `LLMResponseError`。正文里的调用
+始终不会被转换或执行，纠正后的原生调用仍经过注册表校验和原有审批门。
+若纠正前还没有任何工具结果，纠正回复必须给出正式工具调用，否则抛错；该次纠正的
+正文先暂存，避免“未调用却声称完成”先显示再撤回。已有工具结果时可直接纠正为收尾
+答复，不重复之前的操作。该分支不验证任意自然语言回答的真实性。
+
+`explicit_tool_requests(raw_request, tool_names)` 增加独立的执行记录约束：仅识别直接的
+“请先调用 read_memory”或“Please call read_memory”等命令句，不从普通“读一下记忆”
+推断工具。代码块、引用、示例、条件句与否定调用保守退出；历史、语言规则和引用资料
+不参与判断。仍有未尝试的明确工具时，正文先暂存；若没有正式调用，最多纠正一次，
+再次缺失则抛错，不把无依据的成功回复发送、保存或送入学习。若本轮已取得工具结果，
+该次纠正仅提供尚未尝试、且用户明确点名的工具 schema，减少小模型分心；初始请求仍提供
+完整工具集以完成前置依赖，纠正也不替模型生成参数。多个工具按名字分别检查，
+达到步数上限或重复读取收敛时若仍有未尝试的工具，也直接报错。
+实际调用经原注册表执行或审批拦截；参数错误、执行失败、审批待办均算一次尝试，
+不会为了满足检查自动重复写入。此规则不验证参数语义或最终总结的全部事实，也不会
+从用户文本合成工具调用。真实证据见[协议验收](../testing/2026-11-07-qwen-tool-protocol.md)。
+
+JSON 围栏只在块内内容完全是已注册工具协议、且当前用户没有索要示例/原样数据时
+参与检查；普通代码和明确索要的工具代码块均保留。该分支来自 4B 真实输出代码块而没有
+执行 `read_memory` 的失败样本，不是对任意 Markdown 的清洗。
+若工具段之后还跟着“已读取”等声明，也一并隔离，防止未执行的调用被伪装成成功；
+协议段之前的正常正文保留。当前用户明确索要示例时，完整示例及其后续说明原样保留。
+
+重复读取收敛按完整工具结果的 SHA-256 比较，只在本轮内保存摘要，继续保留原工具事件和
+参数校验。连续读取的结果变化时不累计重复；已有两次相同成功读取后，若下一步换工具
+或参数，仍可继续，只有第三个相同调用计划会转入无工具汇总。阈值来自 2026-11-07 8B 连续 11 次相同读取、
+96.87 秒后超时的实测，应在模型切换时复核。汇总仍要求如实说明缺失信息，不能把未完成
+步骤说成成功；汇总失败继续抛错。全局步数上限、写操作与审批逻辑保持。
+
 ### ToolRegistry
+
+`Tool.approval_summary: Callable[[dict[str, Any]], str] | None` 是 hard-write 审批前的只读摘要扩展点。`AgentLoop` 先执行参数校验，再调用 resolver 并写入 `ApprovalStore.summary`；异常、非字符串或空摘要返回失败工具结果，既不提交审批也不执行 handler。省略 resolver 的工具保持原参数摘要。动态来源 activate 从真实草稿读取网站与发现目标，已关联来源则显示其实际名称、份额、周期和启停；manage 显示真实来源与将发生的配置变更，不由模型重复提供可信显示字段。
+
 
 ```python
 from openbiliclaw.agent.tools import Tool, ToolRegistry, build_source_tool_registry
@@ -147,7 +206,7 @@ registry.register(Tool(
 ))
 
 registry.llm_schemas()      # OpenAI tools 格式，给原生 FC
-registry.legacy_schemas()   # 旧扁平格式（SOURCE_TOOLS 兼容）
+registry.legacy_schemas()   # 旧扁平格式（SOURCE_TOOLS 兼容形状（legacy 不暴露异步 probe））
 registry.subset([...])               # skill 白名单子集
 registry.filter_by_permission("soft_write")  # 权限上限过滤
 
@@ -168,7 +227,7 @@ result = registry.dispatch_sync("save_note", {...})  # 旧同步调用方
 工具所需的运行时组件引用（`database` / `soul_engine` / `memory_manager` /
 `recommendation_engine` / `config` / `event_ingress` / `saved_sync_service`，
 字段名与 `api/runtime_context.py` 对齐，生产接线在后续里程碑完成）。
-`build_agent_tool_registry(ctx)` 总装全部 14 个工具；除源管理三工具
+`build_agent_tool_registry(ctx)` 总装全部 18 个工具；除源管理与 Web probe 四工具
 （构造期绑定 database，无 database 时不注册）外，所有工具始终注册，
 组件缺失时 handler 抛 `ToolComponentUnavailableError`，由 dispatch 映射为
 机器可读的 `handler_error` 结果回填模型。
@@ -188,8 +247,9 @@ result = registry.dispatch_sync("save_note", {...})  # 旧同步调用方
 | `write_memory` | soft_write | 写记忆到各层 `agent_notes` 命名空间（event/preference/awareness/insight），更正现有项必须提供匹配的 expected_value，不覆盖引擎字段，soul 层禁写 |
 | `submit_feedback` | soft_write | 推荐反馈（like/dislike/dismiss/comment），复用 `POST /api/feedback` 同款 durable 事件流入（event_ingress 幂等 + 推荐行投影 + 轻量认知钩子） |
 | `save_item` | soft_write | 本地收藏/稍后再看（`SavedSyncService.save_local(auto_sync=False)`，不同步平台账号） |
+| `probe_web_source` | read | 只读探测公开 URL；可用 strategy 筛选方案，返回一个候选、可选策略、最多两个样例与完整 `create_source_arguments`，结果控制在默认 4000 字符内 |
+| `create_source` | hard_write | 创建订阅源；`source_type="web"` 使用共享 typed compiler 校验扁平参数；确认卡批准后才保存，重复相同 recipe 返回已有来源且不重新启用已停用项 |
 | `delete_memory` | hard_write | 按 layer/key/expected_value 删除一条聊天笔记，批准时再次核对原值；不删除聊天历史或系统画像 |
-| `create_source` | hard_write | 创建订阅源（M1 已有） |
 | `toggle_source` | hard_write | 订阅源开关（M1 已有） |
 | `update_config` | hard_write | 配置修改（M7 起真写入）：白名单内已存在标量键（文本/数字/布尔），密钥类与路径/存储类一律拒绝；批准后经 API `config_update_hook` 提交单字段补丁，复用设置页保存锁、应用队列与 last-good 回滚；实际热重载失败会返回失败并结束审批为 failed |
 
@@ -202,6 +262,76 @@ chat scope 且当前角色含 read_memory 才注入，不进入 system 指令或
 保留原始身份和完整链接，供模型继续调用 `save_item`。历史投影中存在真实
 `recommendation_id` 时一并返回，供 `submit_feedback` 使用；未展示的推荐池
 候选不伪造推荐记录 ID，也不能把列表序号或缓存键用作反馈 ID。
+
+### 动态网站来源的对话与管理
+
+网站、RSS、Atom、JSON Feed 的新订阅统一使用 prepare → trial/ready → activate。
+用户给出 Feed 并要求订阅全部更新时，直接使用“跟踪该订阅的新内容”试跑；仅追问缺失信息。
+`build_source_tool_registry(dynamic_web_sources=True)` 在新审批登记前阻止 Web/Feed 走
+旧 `create_source`（包括伪装为平台类型的 feed/URL 订阅），并返回动态工具指引；旧已批准操作仍可 dispatch，平台关键词订阅不受影响。
+Feed 的审批摘要从存储计划导出类型、请求域和文章链接域，明确不自动抓取文章页。
+工具的有界试跑摘要用 `kind` 表达内容类型；激活响应包含实际保存的间隔。
+修改既有流程（包括 Feed 新文章域）时，先 `list_sources` 取得流程 ID、版本、目标与状态，
+再向 prepare 传 `source_id+workflow_id`。服务端确定基线版本，可信审批摘要展示流程 ID、
+旧→新版本、发现目标及请求/内容范围；批准后替换原流程，保留已处理内容和其他流程。
+仅传 `source_id` 仍然追加流程。并发更新使草稿过期时重新准备，不让模型指定版本。
+
+动态来源的启用与管理工具由服务端 `approval_summary` 从已保存的草稿或来源生成确认摘要，
+明确列出网站、目标和实际份额/间隔；摘要随审批记录保存，不要求模型重复传入展示字段。
+三端显示四个工具的中文进度标签，审批回放保留同一份具体摘要。
+
+动态网站以独立 `source_id` 表示，可关联多个发现 workflow。聊一聊负责询问网址、
+内容意图和是否需要登录，建立草稿、试跑并展示样例。工具由
+`agent/tools/custom_source_tools.py` 注册，权限边界如下：
+
+| 工具 | 权限 | 行为 |
+|---|---|---|
+| `prepare_discovery_source` | `soft_write` | 建立持久草稿并试跑，返回最多两条样例；不会启用来源 |
+| `trial_discovery_source` | `soft_write` | 登录完成或继续草稿时重新试跑；返回 `ready` 才可提交启用审批 |
+| `activate_discovery_source` | `hard_write` | 生成真实确认卡，批准后才启用试跑成功的草稿 |
+| `manage_discovery_source` | `hard_write` | 修改名称、份额、间隔或启停同样须经确认卡批准 |
+
+需要登录时只提供后端生成的接管页面，不要求用户把网站密码或 Cookie 粘贴到聊天中。
+登录完成或失效后的继续操作使用同一个草稿/来源身份。试跑成功不代表已启用，启用后
+抓取的候选仍须经过现有 Discover 评估才能入池。
+
+工具只提供 `executor=auto/http/ego`。新普通网页默认使用官方 Ego Lite 原生执行器，
+真实 RSS/Atom/JSON Feed 才自动选择 HTTP。macOS 在源码安装依赖完成后或桌面首次启动、
+实际 CLI 服务启动时自动准备私有 Ego，不等待首次聊天。服务准备为后台一次任务，不阻塞
+HTTP/UI；API、桌面和 CLI 服务启动检查会跳过已安装且 ready 的环境，即使 offline
+也不重下或启动。源码安装重跑仍显式准备和验证握手，必要时启动宿主。失败在下次服务启动重试，
+当前进程不循环。聊天 prepare 保留补救未完成环境的能力，安装发生在页面观察的 60 秒
+预算之外；已准备宿主由实际会话按需启动。准备失败或环境不支持时报告原因，
+不回退 Playwright；Feed 不依赖 Ego。
+更新已有 workflow 的 `auto` 保留该流程执行器，因此历史流程不会被悄然迁移。
+原生连接与网站可用性必须分别验证，不能根据已安装 CLI 或环境准备完成宣称网站试跑成功。
+
+`list_sources` 同时返回最近 10 个尚未应用的草稿摘要，字段仅含
+`draft_id/name/entry_url/intent/status`。重启后或上下文缺少草稿 ID 时，Agent 先查询这些
+摘要再继续原草稿，不要求用户记住内部 ID；不会把 workflow、session 或 observation
+放进这份列表。已应用草稿不在待继续列表中。
+
+桌面、popup 和移动端的来源设置复用 `shared/custom-sources.js`，显示健康状态与
+最近运行，可按网站单独调整份额和发现间隔、启停、归档或重新登录。「去聊一聊添加来源」
+返回既有会话入口。来源管理 API 与草稿状态见 [API 动态网站来源](api.md#动态网站来源)。
+推荐展示 `source_name`，内容平台仍为 `web`；每个动态网站的候选池份额与内置平台平级。
+设置页点击保存或启停是用户直接操作，按站点调用管理 API；它不经过聊天工具确认卡，
+归档另有界面确认。设置页「准备 Ego Lite」用于显式准备或失败后重试，展示准备阶段、
+离线、待试跑、已连接与环境不支持；刷新状态不安装、不启动应用或首次设置。
+准备只初始化专用浏览器环境，不导入个人数据、不设默认浏览器、不添加 Dock、
+不启用崩溃报告，也不代用户登录网站。任一 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE`
+非空外部配置退出托管，自动准备不改动该宿主。历史 Playwright 安装接口仅保留兼容维护。
+
+以下 `probe_web_source/create_source` 描述保留的**旧版匿名 HTTP recipe 路径**和已存审批回放；新聊天订阅已统一路由到动态工具。
+它的公开页面限制与 CLI chat 排除不代表动态网站来源的完整产品范围。
+
+### 旧版 Web recipe 审批兼容
+
+旧 `probe_web_source` 保留只读候选、最多两条样例和完整 `create_source_arguments`，
+用于检查已有匿名 recipe。低层 registry 仍支持 typed compiler，既有持久审批执行时也保留
+原 handler；新聊天 registry 在登记旧 Web 创建审批前返回动态工具指引，不新增聚合订阅。
+旧 API 编辑器和 CLI `probe-web`、`discover-web`、`discover --source web` 保持兼容。
+其重复创建不重新启用停用项，公开 HTTP 网络边界不变；CLI `chat` 仍是旧对话路径。
 
 ### Skill 体系（M4）
 
@@ -233,10 +363,10 @@ source=builtin|custom）与 `SkillCatalog`（`get` / `default` /
 
 | name | 显示名 | 工具白名单 |
 |------|--------|-----------|
-| `taste-companion` | 口味伙伴（默认） | 原有查询/反馈/收藏 + search_web/read_webpage + 可审批的 delete_memory |
+| `taste-companion` | 口味伙伴（默认） | 原有查询/反馈/收藏 + search_web/read_webpage/probe_web_source + 可审批的 delete_memory/create_source/toggle_source；可在日常对话中新增 Web 来源 |
 | `taste-explorer` | 口味探寻师 | get_profile / read_memory / write_memory / delete_memory / search_history / submit_feedback / search_web / read_webpage（访谈角色） |
 | `bangumi-advisor` | 追番顾问 | get_profile / read_memory / get_recommendations / get_watch_history / save_item / submit_feedback / search_web / read_webpage |
-| `system-steward` | 系统管家 | list_sources / get_config / search_web / read_webpage + hard_write 三件套（create_source / toggle_source / update_config；人设强调改动需用户批准） |
+| `system-steward` | 系统管家 | probe_web_source / list_sources / get_config / search_web / read_webpage + hard_write 三件套（create_source / toggle_source / update_config；人设强调改动需用户批准） |
 
 **会话绑定与切换**：`POST /api/chat/agent/stream` 请求体新增可选 `skill`
 字段（空 = 默认口味伙伴，未知名返回 422）。选中 skill 后：loop 的工具集 =
@@ -309,13 +439,21 @@ turn 由 durable worker 使用原 skill 补答；进程崩溃仍遵循至少一�
 不能把网络断连的去重保证理解为跨崩溃的工具 exactly-once 保证。
 未知 turn 返回 404，消息、会话或 skill 冲突返回 409。
 
+交互流与兜底 worker 在同一个对话执行 lease 内重读 durable turn。若轮询先完成
+该回合，或客户端重试已完成的流请求，服务端回放已存的 `agent_events`
+（含后续追加的 `approval_result`）与 `done`，不重复调用模型、工具或创建审批卡；
+失败回合回放已存步骤与 `error`。成功/失败落库在释放 lease 前完成，避免等待者
+接手时仍看到 pending。准入超时不会用空事件覆盖先执行 worker 的记录。
+用户可在最终回复生成前批准或拒绝；保存整轮事件时按 `approval_id` 保留已经
+落库的审批结局，避免后到的模型回复把确认卡恢复成待批准状态。
+
 ### L2 审批门（M7）
 
 系统管家在用户改动目标和参数明确后直接调用写工具生成审批卡；该调用只提交
 提案。用户在卡片上批准才触发执行，无须先在聊天中重复口头确认。回复中仅在
 取得真实审批 ID 后声称卡片已生成。
 
-hard_write 工具（create_source / toggle_source / update_config）在 agent loop
+hard_write 工具（create_source / toggle_source / update_config / delete_memory）在 agent loop
 里**绝不直接执行**：接线了 approval gate 的 `AgentLoop` 拦截这类调用，把
 「待批准动作」登记进 `ApprovalStore`（`agent/approvals.py`），流出
 `approval_request` 事件，并把「此操作需用户批准，已提交审批 #id」作为
@@ -451,6 +589,15 @@ skill?)` 元工具（read 级、无副作用，注册进每个 skill 子集，�
 `session_title_enabled`（默认 true）、`task_max_steps`（M6 后台任务跳数预算，
 默认 32）。
 
+### 旧版聊天与 Web 确认边界
+
+`SOURCE_TOOLS` 保留三个同步工具；异步 `probe_web_source` 只在 AgentLoop 中注册。
+旧 `/api/chat`、流式回退及 CLI chat 的 `SourceToolDispatcher` 拒绝创建、启停 Web
+recipe，并引导到支持确认卡的新版聊一聊或设置页，防止从无审批入口绕过用户确认。
+其他平台原有同步行为保持兼容。Web probe 根据当前 `agent.tool_result_max_chars`
+预算返回一个完整候选；长样例先整体省略，创建计划本身超预算则明确失败，不向模型发送
+截断的 JSON 或残缺的创建参数。
+
 ### 公开网页与笔记操作边界
 
 `search_web` 使用固定 Exa 公开 MCP 端点 `https://mcp.exa.ai/mcp`，复用现有
@@ -467,3 +614,13 @@ HTTP 客户端和流式响应共用一个异步上下文，按响应、客户端
 三端继续使用现有工具过程、Markdown 来源链接及审批卡；CLI `chat` 和 OpenClaw
 legacy 对话不切换到 AgentLoop，不在本次新增工具覆盖范围。后台任务保持 read-only，
 可查询公开网页，但不会直接写/删记忆。
+
+## 来源工具的原话约束
+
+`tool_user_message: ContextVar[str]` 仅在 `AgentLoop` 的单次 `ToolRegistry.dispatch`
+期间绑定，`finally` 恢复，避免并发会话串值。来源 prepare 从该上下文提取明确的
+条数／页数，与模型 `intent` 中的约束取较小值，以内部 `request_limits` 参数传入
+`WorkflowService.prepare()`；模型不能自行填写此参数。只持久化数字 `scope_limits`，
+不因这项机制额外保存完整原话。试采、重新编制和后台修复保留约束；启用摘要及工具
+有界结果显示已编译的 `max_items/max_pages`，不以展示的两个样例代替实际预算。
+本机制识别常见中英文显式数字上限，不声称处理任意自然语言或跨轮指代；历史版本不回写。

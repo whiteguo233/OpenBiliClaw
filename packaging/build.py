@@ -35,6 +35,21 @@ MACOS_INSTALLER_COMMAND_NAME = "安装并启动 Install OpenBiliClaw.command"
 MACOS_INSTALLER_COMMAND_SOURCE = PROJECT_ROOT / "packaging" / "install_macos.command"
 
 
+def validate_macos_crypto_linkage() -> None:
+    """Reject a crypto binding that would collide with Python's bundled OpenSSL."""
+    if platform.system() != "Darwin":
+        return
+    binding = importlib.util.find_spec("cryptography.hazmat.bindings._rust")
+    if binding is None or not binding.origin:
+        raise RuntimeError("Install cryptography before building the macOS application")
+    dependencies = subprocess.check_output(["otool", "-L", binding.origin], text=True)
+    if any("libssl." in line or "libcrypto." in line for line in dependencies.splitlines()[1:]):
+        raise RuntimeError(
+            "macOS packaging requires statically linked cryptography: rebuild it with "
+            "OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography"
+        )
+
+
 def ensure_pyinstaller() -> None:
     """Ensure PyInstaller is installed."""
     try:
@@ -151,6 +166,15 @@ def build_x_extra_install_command(*, pip_available: bool | None = None) -> list[
     if uv:
         return [uv, "pip", "install", target]
     return [sys.executable, "-m", "pip", "install", target]
+
+
+def ensure_browser_dependency() -> None:
+    """Bundle Playwright's matching Node driver; users install Chromium on first use."""
+
+    if importlib.util.find_spec("playwright") is not None:
+        return
+    target = str(PROJECT_ROOT)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", target])
 
 
 def project_dependency_spec(package_name: str) -> str:
@@ -860,6 +884,11 @@ def repair_macos_ad_hoc_signature(app_bundle: Path) -> None:
     if codesign is None:
         raise RuntimeError("codesign is required to finalize macOS app bundles")
 
+    if (app_bundle / "Contents/Resources/sponsored").exists():
+        # --deep would mutate the already signed SDK and invalidate its manifest.
+        sign_macos_app(app_bundle, "-")
+        return
+
     print("[build] Re-sealing macOS .app with an ad-hoc signature ...")
     subprocess.check_call([codesign, "--force", "--deep", "--sign", "-", str(app_bundle)])
     subprocess.check_call(
@@ -908,7 +937,16 @@ def sign_macos_app(app_bundle: Path, identity: str) -> None:
         b"\xbf\xba\xfe\xca",
     }
     targets: list[Path] = []
+    sponsored_dir = app_bundle / "Contents/Resources/sponsored"
+    if sponsored_dir.exists():
+        from openbiliclaw.runtime.sponsored_bundle import verify_bundle
+
+        verify_bundle(sponsored_dir)
+        subprocess.check_call(["codesign", "--verify", "--strict", str(sponsored_dir / "obc-sponsored-runtime")])
     for path in app_bundle.rglob("*"):
+        if sponsored_dir in path.parents:
+            # Already signed, then covered by the private release manifest. Do not change bytes.
+            continue
         if path.is_symlink():
             continue
         if path.is_dir():
@@ -931,13 +969,13 @@ def sign_macos_app(app_bundle: Path, identity: str) -> None:
                 "--force",
                 "--sign",
                 identity,
-                "--timestamp",
-                "--options",
-                "runtime",
+                *([] if identity == "-" else ["--timestamp", "--options", "runtime"]),
                 str(path),
             ]
         )
     subprocess.check_call(["codesign", "--verify", "--deep", "--strict", str(app_bundle)])
+    if sponsored_dir.exists():
+        verify_bundle(sponsored_dir)
 
 
 def notarize_macos_artifact(
@@ -1114,7 +1152,9 @@ def build(
 ) -> None:
     """Run PyInstaller, optionally signing and notarizing macOS artifacts."""
     validate_macos_signing(macos_signing_identity, macos_notary_profile, macos_notary_keychain)
+    validate_macos_crypto_linkage()
     ensure_pyinstaller()
+    ensure_browser_dependency()
     version_label = archive_version or read_project_version()
     bundle_version = (
         make_macos_bundle_version(version_label)
@@ -1165,6 +1205,13 @@ def build(
             raise FileNotFoundError("Signed macOS builds require dist/OpenBiliClaw.app")
 
     packaged_root = find_packaged_root(DIST_DIR)
+    from openbiliclaw.runtime.sponsored_bundle import stage_runtime_bundle
+
+    sponsored_target = (
+        DIST_DIR / "OpenBiliClaw.app/Contents/Resources/sponsored"
+        if platform.system() == "Darwin" else packaged_root / "sponsored"
+    )
+    stage_runtime_bundle(sponsored_target)
     output = DIST_DIR / "OpenBiliClaw"
     if output.exists():
         # Copy config.example.toml into the output directory

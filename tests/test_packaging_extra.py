@@ -75,3 +75,9 @@ def test_x_extra_pins_twitter_cli() -> None:
     assert any(">=" in r for r in twitter_reqs), (
         f"twitter-cli requirement must pin a minimum version, got {twitter_reqs!r}"
     )
+
+
+def test_default_install_includes_browser_driver_and_extra_is_compatible() -> None:
+    requirement = "playwright>=1.48"
+    assert requirement in _runtime_dependencies()
+    assert requirement in _optional_dependencies()["browser"]

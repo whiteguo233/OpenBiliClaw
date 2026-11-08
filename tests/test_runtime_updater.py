@@ -2012,3 +2012,41 @@ async def test_docker_install_polls_check_only(
     assert result["updated"] is False
     assert result["reason"] == "docker_install_mode"
     assert applied == []
+
+
+@pytest.mark.parametrize("component_exit", [0, 1])
+async def test_free_component_is_reconciled_before_restart_and_failure_blocks_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, component_exit: int
+) -> None:
+    from openbiliclaw import sponsored_runtime_state
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        sponsored_runtime_state,
+        "current_sponsored_settings",
+        lambda: sponsored_runtime_state.SponsoredRuntimeSettings(enabled=True),
+    )
+    service = updater.AutoUpdateService(enabled=False)
+    calls: list[list[str]] = []
+    restarted = []
+
+    async def run(
+        command: list[str], _root: Path, *, timeout: float = 30
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        code = component_exit if "openbiliclaw.runtime.sponsored_bundle" in command else 0
+        return subprocess.CompletedProcess(command, code, "", "")
+
+    monkeypatch.setattr(service, "_run_command", run)
+    monkeypatch.setattr(service, "_detect_install_command", lambda _root: ["install-dependencies"])
+    monkeypatch.setattr(service, "_restart_process", lambda: restarted.append(True))
+    await service._apply_update_to_tag("backend-v0.3.233")
+    install_index = calls.index(["install-dependencies"])
+    component_index = next(
+        i for i, c in enumerate(calls) if "openbiliclaw.runtime.sponsored_bundle" in c
+    )
+    assert component_index > install_index
+    assert bool(restarted) is (component_exit == 0)
+    if component_exit:
+        assert service._reason == "sponsored_runtime_update_failed"
+        assert "原组件已保留" in service._update_error

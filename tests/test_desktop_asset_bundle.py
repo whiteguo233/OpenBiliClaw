@@ -21,7 +21,9 @@ def assets(tmp_path: Path) -> DesktopAssets:
     styles = (
         "/web/assets/css/app.css",
         "/web/assets/css/classic.css",
+        "/shared/custom-sources.css",
         "/shared/jev-settings.css",
+        "/shared/sponsored-settings.css",
     )
     for index, url in enumerate((*DESKTOP_SCRIPTS, *styles)):
         relative = url.replace("/web/", "desktop/", 1).removeprefix("/")
@@ -50,6 +52,7 @@ def test_desktop_serves_one_ordered_bootstrap_script() -> None:
     assert "window.OBCMobileQr" in bundle.text
     assert "createPendingActionCoordinator" in bundle.text
     assert "startDesktopBackendSession" in bundle.text
+    assert "OpenBiliClawCustomSources" in bundle.text
     assert client.get("/web/index.html").text == response.text
     assert client.get("/web").text == response.text
     assert client.get("/shared/i18n.js").status_code == 200
@@ -88,6 +91,10 @@ def test_bundle_keeps_dependency_order_and_only_compresses_each_build_once(
         "/web/assets/js/fish-settings.js",
         "/shared/jev-settings.js",
         "/shared/jev-settings.css",
+        "/shared/custom-sources.js",
+        "/shared/custom-sources.css",
+        "/shared/sponsored-settings.js",
+        "/shared/sponsored-settings.css",
     ],
 )
 def test_every_previously_unversioned_input_invalidates_the_build(

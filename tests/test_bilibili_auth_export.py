@@ -95,13 +95,13 @@ def test_bilibili_credential_routes_reject_remote_when_gate_off(
     app, _ = _make_app(monkeypatch, tmp_path, cookie=cookie)
     with _remote(app) as client:
         export = client.post("/api/bilibili/auth/export", json={})
-        assert export.status_code == 403
-        assert export.json()["error"] == "local_only"
+        assert export.status_code == 401
+        assert export.json()["error"] == "auth_setup_required"
         assert "secret" not in export.text
 
         delete = client.delete("/api/bilibili/auth/session")
-        assert delete.status_code == 403
-        assert delete.json()["error"] == "local_only"
+        assert delete.status_code == 401
+        assert delete.json()["error"] == "auth_setup_required"
 
         # Import must be rejected before any credential write is attempted:
         # the stored cookie survives untouched.
@@ -109,8 +109,8 @@ def test_bilibili_credential_routes_reject_remote_when_gate_off(
             "/api/bilibili/auth/import",
             json={"cookies": {"SESSDATA": "attacker"}},
         )
-        assert importer.status_code == 403
-        assert importer.json()["error"] == "local_only"
+        assert importer.status_code == 401
+        assert importer.json()["error"] == "auth_setup_required"
 
     with _local(app) as client:
         # the attacker's cookie never landed; the victim's cookie is intact

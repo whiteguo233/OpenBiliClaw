@@ -218,7 +218,7 @@ async def test_profile_builder_raises_when_portrait_is_too_short() -> None:
         )
     )
 
-    with pytest.raises(SoulProfileBuildError, match="expected 120-500 chars"):
+    with pytest.raises(SoulProfileBuildError, match="expected 30-500 chars"):
         await ProfileBuilder(service).build(
             history=[{"title": "AI 视频"}],
             preference={},
@@ -533,7 +533,8 @@ def test_summarize_history_recent_contexts_split_matches_recent_titles() -> None
     from openbiliclaw.soul.profile_builder import ProfileBuilder
 
     history: list[dict[str, object]] = [
-        {"title": f"视频{i}", "author_name": f"UP{i}"} for i in range(20)
+        {"title": f"视频{i}", "author_name": f"UP{i}", "view_at": 1_700_000_000 + i * 86400}
+        for i in range(20)
     ]
     summary = ProfileBuilder._summarize_history(history)  # type: ignore[arg-type]
 

@@ -770,6 +770,8 @@ class LLMRegistry:
     _RATE_LIMIT_MAX_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
+        # Published to long-task orchestration; factories overwrite with config.
+        self.request_timeout_seconds = 1200.0
         self._providers: dict[str, LLMProvider] = {}
         self._provider_types: dict[str, str] = {}
         self._default: str = ""

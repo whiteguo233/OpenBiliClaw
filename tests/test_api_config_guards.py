@@ -109,6 +109,63 @@ def test_put_config_ignores_empty_chat_provider_model(monkeypatch, tmp_path) -> 
     assert load_config_from_path(config_path).llm.openai.model == "gpt-4o-mini"
 
 
+def test_put_config_persists_bounded_public_web_transport_settings(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={
+            "sources": {
+                "web": {
+                    "enabled": False,
+                    "request_timeout_seconds": 12,
+                    "max_response_bytes": 1_500_000,
+                    "max_redirects": 3,
+                    "lease_seconds": 600,
+                    "recommendation_date_preset": "last_7_days",
+                    "recommendation_date_weight": 1.0,
+                }
+            }
+        },
+    )
+
+    assert response.status_code == 202
+    saved = load_config_from_path(config_path).sources.web
+    assert saved.enabled is False
+    assert saved.request_timeout_seconds == 12
+    assert saved.max_response_bytes == 1_500_000
+    assert saved.max_redirects == 3
+    assert saved.lease_seconds == 600
+    assert saved.recommendation_date_preset == "last_7_days"
+    assert saved.recommendation_date_weight == 1.0
+    exposed = client.get("/api/config").json()["sources"]["web"]
+    assert exposed["recommendation_date_preset"] == "last_7_days"
+    assert exposed["recommendation_date_weight"] == 1.0
+
+
+def test_put_config_rejects_invalid_web_date_preferences(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+    before = config_path.read_bytes()
+    response = client.put(
+        "/api/config", json={"sources": {"web": {"recommendation_date_preset": "invalid"}}}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "invalid_web_recommendation_date"
+    assert config_path.read_bytes() == before
+
+
+def test_put_config_rejects_unbounded_public_web_transport_settings(monkeypatch, tmp_path) -> None:
+    client, _cfg, _config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"web": {"max_response_bytes": 5_000_001}}},
+    )
+
+    assert response.status_code == 400
+    assert "65536..5000000" in response.json()["detail"]
+
+
 def test_put_config_writes_real_new_chat_provider_model(monkeypatch, tmp_path) -> None:
     client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
 
@@ -955,8 +1012,8 @@ def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_p
             "bilibili": {"browser_executable": "/tmp/obc_backdoor"},
         },
     )
-    assert tamper.status_code == 403
-    assert tamper.json()["error"] == "local_only"
+    assert tamper.status_code == 401
+    assert tamper.json()["error"] == "auth_setup_required"
     assert config_path.read_text(encoding="utf-8") == before
 
     probe = remote.post(
@@ -966,8 +1023,8 @@ def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_p
             "config": {"llm": {"openai": {"base_url": "http://attacker.example/v1"}}},
         },
     )
-    assert probe.status_code == 403
-    assert probe.json()["error"] == "local_only"
+    assert probe.status_code == 401
+    assert probe.json()["error"] == "auth_setup_required"
 
     discover = remote.post(
         "/api/config/discover-models",
@@ -976,8 +1033,8 @@ def test_remote_config_write_and_probe_rejected_when_gate_off(monkeypatch, tmp_p
             "config": {"llm": {"openai": {"base_url": "http://attacker.example/v1"}}},
         },
     )
-    assert discover.status_code == 403
-    assert discover.json()["error"] == "local_only"
+    assert discover.status_code == 401
+    assert discover.json()["error"] == "auth_setup_required"
 
 
 def _auth_config() -> Config:

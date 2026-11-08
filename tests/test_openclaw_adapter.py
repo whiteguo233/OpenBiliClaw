@@ -1037,6 +1037,8 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
     created_databases: list[object] = []
     created_memories: list[object] = []
     registered_strategies: list[str] = []
+    registered_adapters: list[object] = []
+    enabled_recipes: list[dict[str, object]] = []
     created_strategy_kwargs: list[dict[str, object]] = []
     producer_kwargs: list[dict[str, object]] = []
     startup_events: list[str] = []
@@ -1056,6 +1058,9 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
 
         def count_discovery_candidates_by_status(self) -> dict[str, int]:
             return {"pending_eval": 500, "evaluating": 60, "evaluated": 3}
+
+        def get_enabled_recipes(self, *, source_type: str) -> list[dict[str, object]]:
+            return list(enabled_recipes) if source_type == "web" else []
 
     class FakeMemoryManager:
         def __init__(self, data_path: str, database=None) -> None:
@@ -1139,6 +1144,9 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
         def register_strategy(self, strategy: object) -> None:
             registered_strategies.append(str(getattr(strategy, "name", "")))
 
+        def register_adapter(self, adapter: object) -> None:
+            registered_adapters.append(adapter)
+
     class FakeStrategy:
         def __init__(self, *args, **kwargs) -> None:
             self.args = args
@@ -1184,6 +1192,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
             xiaohongshu=SimpleNamespace(enabled=False),
             douyin=SimpleNamespace(enabled=True, mode="direct"),
             youtube=SimpleNamespace(enabled=True),
+            web=SimpleNamespace(enabled=True),
         ),
         discovery=SimpleNamespace(
             admission_min_score=0.60,
@@ -1271,6 +1280,28 @@ def test_build_openclaw_adapter_services_reuses_shared_database(
     assert created_memories[0].initialized == 1
     assert created_memories[0].database is created_databases[0]
     assert services.database is created_databases[0]
+    web_producer = services.runtime_controller.kwargs["web_producer"]
+    assert web_producer.database is services.database
+    assert web_producer.adapter is registered_adapters[0]
+    assert (
+        web_producer.candidate_pipeline
+        is services.runtime_controller.kwargs["discovery_candidate_pipeline"]
+    )
+    assert web_producer.candidate_evaluation_owned_by_coordinator is False
+    shares_provider = services.runtime_controller.kwargs["pool_source_shares_provider"]
+    assert "web" not in shares_provider()
+    from openbiliclaw.sources.web_recipe import build_web_recipe
+
+    enabled_recipes.append(
+        build_web_recipe(
+            {
+                "name": "Example",
+                "strategy": "feed",
+                "config": {"entry_url": "https://example.com/feed"},
+            }
+        )
+    )
+    assert shares_provider()["web"] == 1
     assert services.memory_manager is created_memories[0]
     assert [kwargs.get("database") for kwargs in created_strategy_kwargs] == [
         created_databases[0],
@@ -1748,6 +1779,9 @@ async def test_openclaw_bootstrap_one_shot_keeps_partial_copy_durable_without_sp
         def register_strategy(self, _strategy: object) -> None:
             pass
 
+        def register_adapter(self, _adapter: object) -> None:
+            pass
+
         async def evaluate_content_batch(
             self,
             contents: list[DiscoveredContent],
@@ -1876,7 +1910,7 @@ async def test_openclaw_bootstrap_one_shot_keeps_partial_copy_durable_without_sp
     monkeypatch.setattr(bootstrap_module, "ExploreStrategy", BootstrapStrategy)
     monkeypatch.setattr(bootstrap_module, "AccountSyncService", BootstrapAccountSync)
     monkeypatch.setattr(
-        bootstrap_module, "effective_pool_source_shares", lambda _config: {"douyin": 4}
+        bootstrap_module, "effective_pool_source_shares", lambda _config, **_kwargs: {"douyin": 4}
     )
     monkeypatch.setattr(
         bootstrap_module, "build_youtube_discovery_producer", lambda **_kwargs: None

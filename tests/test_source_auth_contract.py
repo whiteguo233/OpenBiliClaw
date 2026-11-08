@@ -63,6 +63,7 @@ from openbiliclaw.runtime.init_prereqs import InitPrereqs
 from openbiliclaw.sources.douyin_auth import DouyinCookieManager
 from openbiliclaw.sources.douyin_direct import DouyinDirectError
 from openbiliclaw.sources.linuxdo_tasks import LinuxdoTaskQueue
+from openbiliclaw.sources.web_recipe import build_web_recipe
 from openbiliclaw.sources.x_auth import XCookieManager
 from openbiliclaw.sources.x_client import XAuthError, XClient
 from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
@@ -620,6 +621,33 @@ def _v2ex_token_disabled(env: _Env) -> None:
     env.cfg.sources.v2ex.access_token = _V2EX_TOKEN
 
 
+def _web_enabled_no_recipe(env: _Env) -> None:
+    env.cfg.sources.web.enabled = True
+
+
+def _web_disabled_no_recipe(env: _Env) -> None:
+    env.cfg.sources.web.enabled = False
+
+
+def _web_enabled_never_run(env: _Env) -> None:
+    env.cfg.sources.web.enabled = True
+    env.db.save_source_recipe(
+        build_web_recipe(
+            {
+                "name": "Contract Web",
+                "strategy": "feed",
+                "config": {
+                    "entry_url": "https://example.com/feed.xml",
+                    "allowed_origins": ["https://example.com"],
+                },
+                "enabled": True,
+            },
+            recipe_id="contract-web",
+            created_by="contract-test",
+        )
+    )
+
+
 # ── the frozen contract ──────────────────────────────────────────────
 
 _CASES: dict[str, _Case] = {
@@ -1131,6 +1159,33 @@ _CASES: dict[str, _Case] = {
         detail="已保存 V2EX 个人令牌，尚未联网确认；可点「测试连接」验证。",
         enabled=False,
     ),
+    # web — anonymous auth plus an independent recipe/run-health axis.
+    "web-enabled-no-recipe": _Case(
+        "web",
+        _web_enabled_no_recipe,
+        "no_auth",
+        True,
+        detail="Web 公开发现已启用，但没有启用的 recipe。",
+        enabled=True,
+    ),
+    "web-disabled-no-recipe": _Case(
+        "web",
+        _web_disabled_no_recipe,
+        "no_auth",
+        True,
+        detail="Web 公开发现全局开关未启用；已配置的 recipe 不会运行。",
+        enabled=False,
+    ),
+    "web-enabled-never-run": _Case(
+        "web",
+        _web_enabled_never_run,
+        "no_auth",
+        True,
+        detail=(
+            "Web 公开发现：1 个启用 recipe；健康 0，待首次运行 1，部分异常 0，失败 0，限流 0。"
+        ),
+        enabled=True,
+    ),
 }
 
 
@@ -1422,6 +1477,7 @@ def test_contract_covers_every_platform_with_at_least_three_preconditions() -> N
         "github",
         "linuxdo",
         "v2ex",
+        "web",
         "weibo",
     }
     thin = {platform: n for platform, n in per_platform.items() if n < 3}
@@ -1597,6 +1653,7 @@ _EXPECTED_VERIFY_METHODS = {
     # V2EX is anonymous by default; its optional PAT only becomes probeable
     # after the caller supplies a token.
     "v2ex": "none",
+    "web": "none",
 }
 
 

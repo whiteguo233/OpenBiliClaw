@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
 logger = logging.getLogger(__name__)
+
+# Set only around one dispatch, never supplied through model arguments. Context
+# isolation keeps simultaneous chat turns from borrowing each other's scope.
+tool_user_message: ContextVar[str] = ContextVar("tool_user_message", default="")
 
 PermissionLevel = Literal["read", "soft_write", "hard_write"]
 
@@ -38,7 +43,9 @@ class Tool:
     chat-agent-loop design: ``read`` (L0), ``soft_write`` (L1), ``hard_write``
     (L2, approval-gated upstream). ``impact_hint`` is a short user-facing
     note of what a hard_write call will change, surfaced on the approval
-    card (M7).
+    card (M7). ``approval_summary`` optionally resolves that card's summary
+    from trusted application state after argument validation; it must not
+    execute the action and an exception prevents approval submission.
     """
 
     name: str
@@ -47,6 +54,7 @@ class Tool:
     parameters: dict[str, Any] = field(default_factory=dict)
     permission_level: PermissionLevel = "read"
     impact_hint: str = ""
+    approval_summary: Callable[[dict[str, Any]], str] | None = None
 
 
 @dataclass(frozen=True)

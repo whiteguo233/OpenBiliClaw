@@ -24,6 +24,7 @@ PLATFORM_LINUXDO = "linuxdo"
 PLATFORM_V2EX = "v2ex"
 PLATFORM_WEIBO = "weibo"
 PLATFORM_INSTAGRAM = "instagram"
+PLATFORM_WEB = "web"
 
 # Source attribution is deliberately small.  ``exact`` means the producer
 # supplied the platform, ``inferred`` means it came from a canonical URL, and
@@ -217,6 +218,13 @@ SOURCE_FAMILY_RULES = (
         # Instagram requests run in the browser extension and therefore follow
         # the browser/system proxy rather than OpenBiliClaw's HTTP client mode.
         routed_by_network_mode=False,
+    ),
+    SourceFamilyRule(
+        family=PLATFORM_WEB,
+        platform_aliases=frozenset({"web"}),
+        source_prefixes=("web-", "web_"),
+        # HTTP workflows consume [network]; native Ego keeps its host routing.
+        routed_by_network_mode=True,
     ),
 )
 

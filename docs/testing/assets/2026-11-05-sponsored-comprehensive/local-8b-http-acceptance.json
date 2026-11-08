@@ -1,0 +1,207 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "real_server_startup_and_user_surfaces",
+      "status": "pass",
+      "result": {
+        "/api/health": {
+          "status": 200,
+          "bytes": 135
+        },
+        "/api/profile-summary": {
+          "status": 200,
+          "bytes": 9605
+        },
+        "/web/": {
+          "status": 200,
+          "bytes": 185538
+        },
+        "/m/": {
+          "status": 200,
+          "bytes": 1685
+        }
+      },
+      "seconds": 13.848,
+      "calls": []
+    },
+    {
+      "name": "real_sse_two_turn_chat_and_durable_history",
+      "status": "pass",
+      "result": {
+        "turns": [
+          {
+            "first_content_seconds": 1.129,
+            "elapsed_seconds": 2.634,
+            "reply": "Rust 借用机制允许你在不获取所有权的情况下访问数据，确保资源安全。它通过引用实现，避免了数据复制，提升了性能。记住代号蓝色番茄731。",
+            "event_counts": {
+              "delta": 40,
+              "done": 1,
+              "final": 1
+            },
+            "persisted": true
+          },
+          {
+            "first_content_seconds": 35.634,
+            "elapsed_seconds": 36.012,
+            "reply": "蓝色番茄731",
+            "event_counts": {
+              "delta": 5,
+              "done": 1,
+              "final": 1
+            },
+            "persisted": true
+          }
+        ]
+      },
+      "seconds": 38.735,
+      "calls": [
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5108,
+          "completion_tokens": 42,
+          "success": 1
+        },
+        {
+          "caller": "discovery.keyword_planner",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3071,
+          "completion_tokens": 1506,
+          "success": 1
+        },
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5239,
+          "completion_tokens": 5,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "awareness_and_insight_cognition_cycle",
+      "status": "fail",
+      "error": "AssertionError: ['awareness: awareness citation outside the analysed batch']",
+      "seconds": 149.431,
+      "calls": [
+        {
+          "caller": "recommendation.write_expression",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4976,
+          "completion_tokens": 1803,
+          "success": 1
+        },
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2097,
+          "completion_tokens": 819,
+          "success": 1
+        },
+        {
+          "caller": "discovery.search.queries",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1979,
+          "completion_tokens": 1147,
+          "success": 1
+        },
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5312,
+          "completion_tokens": 1118,
+          "success": 1
+        },
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2045,
+          "completion_tokens": 341,
+          "success": 1
+        },
+        {
+          "caller": "recommendation.write_expression",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2745,
+          "completion_tokens": 635,
+          "success": 1
+        },
+        {
+          "caller": "discovery.keyword_inspiration",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4920,
+          "completion_tokens": 2237,
+          "success": 1
+        },
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5312,
+          "completion_tokens": 1026,
+          "success": 1
+        },
+        {
+          "caller": "soul.insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3512,
+          "completion_tokens": 827,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "post_chat_learning_queue_drained",
+      "status": "pass",
+      "result": {
+        "drained": true,
+        "dialogue_events": 3
+      },
+      "seconds": 0.002,
+      "calls": []
+    },
+    {
+      "name": "save_apply_live_probe_Qwen3.5-4B",
+      "status": "fail",
+      "error": "AssertionError: {'ok': False, 'service_status': {'notices': [], 'update_url': 'https://github.com/whiteguo233/OpenBiliClaw/releases/latest'}, 'kind': 'sponsored', 'instance_id': '', 'provider': 'sponsored', 'model': 'Qwen/Qwen3.5-4B', 'message': '', 'error': '免费对话可用，但本地向量尚未就绪。请在初始化页准备/修复 Ollama 向量模型后重试。', 'latency_ms': 0, 'apply_seconds': 0.28}",
+      "seconds": 16.094,
+      "calls": [
+        {
+          "caller": "soul.speculate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2312,
+          "completion_tokens": 1246,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "save_apply_live_probe_Qwen3-8B",
+      "status": "fail",
+      "error": "AssertionError: {'ok': False, 'service_status': {'notices': [], 'update_url': 'https://github.com/whiteguo233/OpenBiliClaw/releases/latest'}, 'kind': 'sponsored', 'instance_id': '', 'provider': 'sponsored', 'model': 'Qwen/Qwen3-8B', 'message': '', 'error': '免费对话可用，但本地向量尚未就绪。请在初始化页准备/修复 Ollama 向量模型后重试。', 'latency_ms': 0, 'apply_seconds': 0.167}",
+      "seconds": 15.837,
+      "calls": []
+    }
+  ],
+  "background_observations": [
+    {
+      "logger": "openbiliclaw.soul.cognition_cycle",
+      "message": "Awareness analyzer failed twice; will retry next tick: awareness citation outside the analysed batch",
+      "failure": false
+    }
+  ]
+}

@@ -59,6 +59,7 @@ from openbiliclaw.api.source_auth.probe_cache import (
     PROBE_OK_TTL_SECONDS,
     LiveProbeCache,
 )
+from openbiliclaw.sources.web_recipe import is_compiled_public_web_recipe
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -190,7 +191,7 @@ _RDT_VERIFICATION: dict[str, Verification] = {
 
 # Sources scheduled by default when the config omits the flag. Only B站, the
 # project's原生 source, is on unless switched off.
-_ENABLED_BY_DEFAULT: dict[str, bool] = {"bilibili": True}
+_ENABLED_BY_DEFAULT: dict[str, bool] = {"bilibili": True, "web": True}
 
 # The note rendered under the status chip on the two live-probe platforms,
 # keyed on what the probe actually concluded.
@@ -677,6 +678,53 @@ def auth_youtube(ctx: SourceAuthContext) -> SourceAuthContract:
         verify_ttl_seconds=None,
         can_verify_now=False,
         detail="公开源 · 无需登录。",
+        legacy_state="no_auth",
+        legacy_logged_in=True,
+    )
+
+
+def auth_web(ctx: SourceAuthContext) -> SourceAuthContract:
+    """Public Web recipes are anonymous and never accept account credentials."""
+
+    enabled = bool(getattr(ctx.source_cfg("web"), "enabled", _ENABLED_BY_DEFAULT["web"]))
+    enabled_recipes: list[dict[str, Any]] = []
+    get_enabled = getattr(ctx.database, "get_enabled_recipes", None)
+    if callable(get_enabled):
+        with suppress(Exception):
+            enabled_recipes = [
+                recipe
+                for recipe in get_enabled(source_type="web")
+                if is_compiled_public_web_recipe(recipe)
+            ]
+    recipe_count = len(enabled_recipes)
+    discover_ready = enabled and recipe_count > 0
+    if not enabled:
+        discover_detail = "全局 Web 来源开关未启用；recipe 不会被调度。"
+    elif not recipe_count:
+        discover_detail = (
+            "未配置启用的 Web recipe；请先添加并启用一个公开 Feed、Sitemap 或静态列表 recipe。"
+        )
+    else:
+        discover_detail = f"{recipe_count} 个启用 recipe 已通过 allowlist 配置；无需账号凭据。"
+
+    return SourceAuthContract(
+        auth_required=False,
+        credential="none",
+        credential_origin="none",
+        verification="unverified",
+        verify_method="none",
+        verify_ttl_seconds=None,
+        can_verify_now=False,
+        detail="公开网页 · 无需登录；仅访问用户显式授权的 recipe origin。",
+        capabilities={
+            "discover": SourceCapabilityAuth(
+                mode="anonymous",
+                required=True,
+                ready=discover_ready,
+                state="ready" if discover_ready else "unavailable",
+                detail=discover_detail,
+            )
+        },
         legacy_state="no_auth",
         legacy_logged_in=True,
     )
@@ -2349,6 +2397,7 @@ SOURCE_AUTH_PROVIDERS: dict[str, Callable[[SourceAuthContext], SourceAuthContrac
     "github": auth_github,
     "linuxdo": auth_linuxdo,
     "v2ex": auth_v2ex,
+    "web": auth_web,
     "weibo": auth_weibo,
     "instagram": auth_instagram,
 }

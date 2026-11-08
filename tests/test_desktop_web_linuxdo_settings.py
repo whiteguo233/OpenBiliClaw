@@ -1,5 +1,6 @@
 """Static regressions for desktop Linux.do source settings and cards."""
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,28 +57,34 @@ def test_desktop_linuxdo_uses_shared_status_contract_without_cookie_input() -> N
 
 
 def test_desktop_source_cards_are_siblings_not_nested() -> None:
-    """Keep the Linux.do/V2EX cards from becoming a malformed nested DOM."""
+    """Keep the Linux.do/V2EX/Web cards from becoming a malformed nested DOM."""
     html = (ROOT / "src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
 
-    linuxdo_attr = html.index('data-source-status="linuxdo"')
-    linuxdo_start = html.rfind("<article", 0, linuxdo_attr)
-    v2ex_start = html.index('data-source-status="v2ex"')
-    # Later source cards may follow V2EX; keep this assertion scoped to the
-    # adjacent pair whose accidental nesting originally caused the bug.
-    source_list_end = html.index("</article>", v2ex_start) + len("</article>")
-    source_list = html[linuxdo_start:source_list_end]
+    starts = [
+        match.start()
+        for match in re.finditer('<article class="source-status-row source-card"', html)
+    ]
+    for previous, current in zip(starts, starts[1:], strict=False):
+        assert html.index("</article>", previous) < current
 
-    assert source_list.count('<article class="source-status-row source-card"') == 2
-    assert source_list.count('data-source-status="linuxdo"') == 1
-    assert source_list.count('data-source-status="v2ex"') == 1
-    assert source_list.index('data-source-status="linuxdo"') < source_list.index(
-        'data-source-status="v2ex"'
-    )
-    assert source_list.index("</article>") < source_list.index(
-        '<article class="source-status-row source-card" data-source-status="v2ex"'
-    )
-    assert 'id="shareLinuxdo"' in source_list
-    assert 'id="shareV2EX"' in source_list
+    previous_end = -1
+    for source, share_input in (
+        ("linuxdo", "shareLinuxdo"),
+        ("v2ex", "shareV2EX"),
+        ("web", "shareWeb"),
+    ):
+        start = html.index(
+            f'<article class="source-status-row source-card" data-source-status="{source}"'
+        )
+        end = html.index("</article>", start) + len("</article>")
+        card = html[start:end]
+        # Main may insert other platform cards between these sources. Assert
+        # structure and each source's own input without freezing the roster.
+        assert start > previous_end
+        assert card.count("<article") == 1
+        assert card.count(f'data-source-status="{source}"') == 1
+        assert f'id="{share_input}"' in card
+        previous_end = end
 
 
 def test_desktop_linuxdo_recommendations_have_label_text_card_and_canonical_url() -> None:
@@ -88,6 +95,13 @@ def test_desktop_linuxdo_recommendations_have_label_text_card_and_canonical_url(
     assert 'urlHostMatches(url, ["linux.do"])' in js
     assert "https://linux.do/t/${encodeURIComponent(topicId)}" in js
     assert '"post"' in js
+
+
+def test_desktop_web_recipe_manager_hides_legacy_browser_extract_rows() -> None:
+    js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    assert '["feed", "sitemap", "listing"].includes' in js
+    assert "item?.config?.plan_version" in js
 
 
 def test_linuxdo_saved_sync_uses_the_public_platform_label() -> None:

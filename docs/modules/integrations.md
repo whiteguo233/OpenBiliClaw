@@ -31,6 +31,7 @@ OpenClaw bootstrap 与 API/CLI production composition 使用同一组近期供�
 |------|------|------|
 | OpenClaw bootstrap | ✅ | `build_openclaw_adapter_services()` 初始化 database/memory 后立刻用 canonical available 配置共享 LLM gate，再构造任何可调用 provider 的 service；构造 `SoulEngine` 时与 API runtime 一样透传 canonical `database`、`[soul.preference].satisfaction_filter_enabled`，以及 task-scoped `preference_prompt_view / awareness_prompt_view / insight_prompt_view`（默认 `legacy / compact-v1 / legacy`）；其中 Awareness 值只控制 `soul.awareness_confusions`，普通 `soul.awareness` 固定 `legacy`，避免 integration 面使用分裂的持久化、满意度过滤或 cognition rollout 语义；暴露 adapter 前同步调用 controller 的幂等 `run_startup_maintenance()`。OpenClaw direct adapter 不启动 daemon `run_forever()`，因此不 attach `CandidateEvalCoordinator` 或 `ExpressionCopyCoordinator`、不把 producer 标为 coordinator-owned；`recommend(refresh_if_needed=True)` 专用 controller 把首轮 source supply 与 inline claim 固定限制为 4（fetch oversample=1、min eval batch=4、inline evaluator=1），后续调用再继续补货。每次 durable admission 会在同一请求内 await `RecommendationEngine.drain_pending_expression_copy(profile, limit=4, max_extra_requests=0)`：首 batch 的有效 subset 立刻成为 canonical available，未完成行保持 pending 由下一请求续补，避免在 45 秒交互窗口内递归拆分；若该 subset 非空且推荐历史为空，`recommend(refresh_if_needed=True)` 会直接 serve 已复制 pool。若首 batch 全部无效，本次仍可能返回空池并由后续请求重试。该首批限制是 bootstrap 内部策略，不新增 `config.toml` 字段，API daemon 的 coordinator、每轮 60 条 copy drain 与 4× supply oversample 保持不变。 |
 | OpenClaw 近期供给接线 | ✅ | bootstrap 构造 `SearchStrategy` 时显式注入共享 `RECENT_SUPPLY_LANE_QUERIES=1` 与 `RECENT_SUPPLY_LANE_PAGE_SIZE=5`；与 API/CLI 使用同一有界 `pubdate` lane，避免 direct adapter 因 composition 漏接而失去近期供给。 |
+| OpenClaw 外部检索配置 | ✅ | 构造灵感供给时使用 `InspirationGroundingKeys.from_discovery_config()` 统一传递当前检索凭据，保持与 API/CLI 的参数协议一致；不增加宿主参数或公开凭据。 |
 | OpenClaw 视觉预热配置 | ✅ | bootstrap 构造 `RecommendationEngine` 时透传视觉画像、关键帧 / 弹幕开关、采样帧数、两个 fetch limit、摘要长度和共享 `BilibiliAPIClient`；默认关闭路径保持 no-op，配置模型切换后的 provenance 重建仍由引擎负责 |
 | Agent Bridge adapter operations | ✅ | 已提供 `sync_account / get_profile / recommend / reshuffle / append_recommendations / submit_feedback / get_delight / respond_delight / get_runtime_status / get_activity_feed / get_platform_availability / chat / get_chat_history / profile edit / probe feedback / saved-list operations`；chat 仍显式固定为 `legacy_direct`，但新增 durable `turn_id`，不提交 API runtime 的 queue、也不持有 worker guard permit。失败转为携带安全 LLM 分类文案的 `AdapterOperationError`，不暴露原始上游细节。 |
 | 推荐消费后的 durable inventory 同步 | ✅ | API 与 OpenClaw composition 都给真实 `RecommendationEngine` 注入 post-commit callback；独立 serve DB worker 把 recommendation + shown 在同一短事务提交成功后，callback 直接携带 `pool_counts_after` 更新共享 gate，不再同步重读共享连接。写失败不触发 callback，callback 失败也不改写 durable 提交结果；API 另在响应关键路径外读取精确 canonical snapshot 收敛广播。 |
@@ -69,6 +70,9 @@ local-first 顺序，并用独立 task/item ledger 持久化每次请求结果�
 变更，必须等待明确授权或测试账号。
 
 ### 构建 adapter
+
+`build_openclaw_adapter_services()` 内部使用统一的 `InspirationGroundingKeys` 配置对象构造
+灵感供给。宿主继续使用原有构建接口，无需传递或迁移独立的搜索 Key 参数。
 
 ```python
 from openbiliclaw.integrations.openclaw import build_openclaw_adapter

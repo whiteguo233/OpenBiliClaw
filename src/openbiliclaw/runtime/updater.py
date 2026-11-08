@@ -1286,6 +1286,25 @@ class AutoUpdateService:
                 )
                 return
 
+            from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
+
+            if (
+                current_sponsored_settings().enabled
+                and not current_sponsored_settings().runtime_path
+                and not current_sponsored_settings().relay_url
+            ):
+                reconcile = await self._run_command(
+                    [sys.executable, "-m", "openbiliclaw.runtime.sponsored_bundle"],
+                    root,
+                    timeout=300,
+                )
+                if reconcile.returncode != 0:
+                    await self._mark_apply_failed(
+                        "sponsored_runtime_update_failed",
+                        detail="免费模型组件更新失败，原组件已保留；请重试更新",
+                    )
+                    return
+
             self._state = "restart_pending"
             self._reason = "none"
             self._update_error = ""

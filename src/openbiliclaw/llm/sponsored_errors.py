@@ -1,0 +1,188 @@
+"""Stable error taxonomy for the Sponsored Runtime boundary.
+
+The runtime returns machine-readable ``error.code`` values. Keeping the
+mapping in one place lets the provider decide whether a failure may fall back
+to the user's own provider (BYOK / Ollama) without pattern-matching strings.
+
+Client-side contract mistakes (``CONTRACT_MISMATCH``) must never fall back:
+they mean the shipped prompt and the signed policy disagree, and silently
+spending the user's own model budget would hide a release bug.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+class SponsoredError(Exception):
+    """Base class for every Sponsored Runtime failure."""
+
+    code = "SPONSORED_ERROR"
+    fallback_allowed = True
+
+    def __init__(self, message: str = "", *, task_id: str = "") -> None:
+        super().__init__(message or self.code)
+        self.task_id = task_id
+        self.actual_code = self.code
+
+
+class SponsoredUnavailableError(SponsoredError):
+    """Runtime binary missing, crashed, timed out, or protocol-incompatible."""
+
+    code = "UNAVAILABLE"
+
+
+class SponsoredStartupBusyError(SponsoredUnavailableError):
+    """A legacy runtime exited before handshake because its ledger was locked."""
+
+
+class SponsoredUnsupportedTaskError(SponsoredError):
+    """The task/version is not present in the signed policy."""
+
+    code = "UNSUPPORTED_TASK"
+
+
+class SponsoredContractMismatchError(SponsoredError):
+    """Prompt hash, topology, or version disagrees with the signed policy.
+
+    Deliberately not fallback-allowed: this is a shipped-core bug, not an
+    availability problem.
+    """
+
+    code = "CONTRACT_MISMATCH"
+    fallback_allowed = False
+
+
+class SponsoredRequestTooLargeError(SponsoredError):
+    """The serialized request exceeds the contract's local size budget."""
+
+    code = "REQUEST_TOO_LARGE"
+
+
+class SponsoredQuotaExceededError(SponsoredError):
+    """Local per-install budget (or account balance) is exhausted."""
+
+    code = "QUOTA_EXCEEDED"
+
+
+class SponsoredRateLimitedError(SponsoredError):
+    """Local sliding-window limit or upstream HTTP 429."""
+
+    code = "RATE_LIMITED"
+
+    @property
+    def is_local(self) -> bool:
+        """Only Rust's pre-upstream sliding-window rejection is safe to wait for."""
+        return str(self) == "local rate limit reached"
+
+
+class SponsoredAuthError(SponsoredError):
+    """Sponsored key invalid, deleted, or account locked."""
+
+    code = "AUTH_FAILED"
+
+
+class SponsoredBalanceLowError(SponsoredError):
+    """Account balance is below the policy floor."""
+
+    code = "BALANCE_LOW"
+
+
+class SponsoredLedgerTamperedError(SponsoredError):
+    """Local quota ledger failed integrity checks."""
+
+    code = "LEDGER_TAMPERED"
+
+
+class SponsoredPolicyInvalidError(SponsoredError):
+    """Signed policy is invalid or expired; sponsor must stop."""
+
+    code = "POLICY_INVALID"
+
+
+class SponsoredUpstreamError(SponsoredError):
+    """SiliconFlow transport/5xx/failure after bounded retries."""
+
+    code = "UPSTREAM_ERROR"
+
+
+class SponsoredProtocolError(SponsoredError):
+    """Malformed IPC frame or unexpected runtime response."""
+
+    code = "PROTOCOL_ERROR"
+
+
+_ERROR_TYPES: dict[str, type[SponsoredError]] = {
+    cls.code: cls
+    for cls in (
+        SponsoredUnavailableError,
+        SponsoredUnsupportedTaskError,
+        SponsoredContractMismatchError,
+        SponsoredRequestTooLargeError,
+        SponsoredQuotaExceededError,
+        SponsoredRateLimitedError,
+        SponsoredAuthError,
+        SponsoredBalanceLowError,
+        SponsoredLedgerTamperedError,
+        SponsoredUpstreamError,
+        SponsoredProtocolError,
+        SponsoredPolicyInvalidError,
+    )
+}
+
+
+def error_from_payload(payload: Mapping[str, Any], *, task_id: str = "") -> SponsoredError:
+    """Build the typed exception for a runtime ``error`` object."""
+
+    code = str(payload.get("code") or SponsoredUpstreamError.code).strip().upper()
+    message = str(payload.get("message") or "").strip()
+    from openbiliclaw.sponsored_status import GUIDANCE
+
+    if code in GUIDANCE:
+        message = GUIDANCE[code][1]
+    error_type = _ERROR_TYPES.get(code)
+    if error_type is None:
+        error = SponsoredUpstreamError(message or f"upstream error ({code})", task_id=task_id)
+        error.actual_code = code
+        return error
+    return error_type(message, task_id=task_id)
+
+
+def find_sponsored_error(error: BaseException) -> SponsoredError | None:
+    """Recover a typed runtime cause through adapter/registry/service wrappers."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, SponsoredError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def is_fallback_allowed(error: BaseException) -> bool:
+    """Whether this failure may be retried on the user's own provider."""
+
+    return isinstance(error, SponsoredError) and error.fallback_allowed
+
+
+def is_free_model_fallback_allowed(error: SponsoredError) -> bool:
+    """A shared credential/policy/ledger failure cannot heal on another model.
+
+    Keep this separate from explicit BYOK fallback: the user's own credential
+    may still work when the shared sponsored credential has expired.
+    """
+    if isinstance(error, SponsoredRateLimitedError) and error.is_local:
+        # Both free models share this installation's window. Transport already
+        # waited once; changing model or retrying immediately cannot restore it.
+        return False
+    return is_fallback_allowed(error) and error.code not in {
+        "AUTH_FAILED",
+        "BALANCE_LOW",
+        "QUOTA_EXCEEDED",
+        "LEDGER_TAMPERED",
+        "POLICY_INVALID",
+    }

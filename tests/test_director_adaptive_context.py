@@ -245,7 +245,7 @@ async def test_runtime_uses_full_catalog_and_binds_capacity_not_candidate_projec
         assert len(first.session.fast_profile_context["interests"]) < len(tags)
         assert first.session.fast_profile_context["disliked_topics"] == ["未看完作品不要剧透"]
         assert runtime.context_budget.model == "private-g5"
-        assert runtime.context_budget.max_state_question_bytes == 9000
+        assert runtime.context_budget.max_state_question_bytes == 12000
         assert "on-demand-profile-catalog" not in first.model_dump_json()
     finally:
         await runtime.aclose()
@@ -448,7 +448,7 @@ async def test_runtime_accounts_for_complete_envelope_before_loading_optional_pr
         minimal_bytes = runtime.context_budget.measure(
             probe.state, probe.questions
         ).max_state_question_bytes
-        tokens = ((minimal_bytes + spare_bytes) * 4 + 2) // 3
+        tokens = minimal_bytes + spare_bytes
         config.decision.providers.jev.context_limits = {
             "jev-1.13.0": JevContextLimits(tokens * 2, tokens)
         }

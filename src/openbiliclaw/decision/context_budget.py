@@ -2,9 +2,11 @@
 
 The published Jev 1.13.0 limits are 64k tokens across state and questions,
 and 32k tokens for state plus one question (docs.typesafe.ai/models). We
-interpret k as decimal and reserve 25% engineering headroom while counting
-UTF-8 wire bytes, including the envelope. This is intentionally conservative,
-not a measured bytes-per-token ratio or a guarantee from a native tokenizer.
+interpret k as decimal and bound UTF-8 wire bytes (including the envelope) by
+the configured token-capacity integers, without the old extra 25% reservation.
+This 1:1 ceiling is an engineering byte budget, NOT a measured bytes-per-token
+ratio or a guarantee from a native tokenizer. It remains intentionally more
+restrictive than normal prose tokenization; no automatic overflow probes.
 """
 
 from __future__ import annotations
@@ -85,7 +87,7 @@ class JevContextBudget:
     @property
     def fingerprint(self) -> str:
         """Include capacity/source/guard policy in request and cache identities."""
-        payload = {"policy": "jev-wire-bytes-headroom-v1", **asdict(self)}
+        payload = {"policy": "jev-wire-bytes-ceiling-v2", **asdict(self)}
         return hashlib.sha256(_wire(payload)).hexdigest()
 
     def measure(
@@ -166,6 +168,6 @@ def resolve_jev_context(
         source=source,
         max_request_tokens=limits.max_request_tokens,
         max_state_question_tokens=limits.max_state_question_tokens,
-        max_request_bytes=limits.max_request_tokens * 3 // 4,
-        max_state_question_bytes=limits.max_state_question_tokens * 3 // 4,
+        max_request_bytes=limits.max_request_tokens,
+        max_state_question_bytes=limits.max_state_question_tokens,
     )

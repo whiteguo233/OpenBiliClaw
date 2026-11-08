@@ -116,6 +116,7 @@ export async function requestJson(path, options = {}) {
       error.details = details;
       throw error;
     }
+    if (response.status === 204) return null;
     return await awaitWithAbort(response.json(), timeout.signal);
   } finally {
     timeout.cleanup();
@@ -432,6 +433,44 @@ export async function fetchXSourceStatus() {
 
 export async function fetchSourcesStatus() {
   return requestJson("/sources/status", { method: "GET" });
+}
+
+export async function fetchSourceRecipes() {
+  return requestJson("/sources", { method: "GET", timeoutMs: 12_000 });
+}
+
+export async function probeWebSource(url) {
+  return requestJson("/sources/web/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: String(url || "").trim() }),
+    timeoutMs: 65_000,
+  });
+}
+
+export async function createWebSourceRecipe(recipe) {
+  return requestJson("/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...recipe, source_type: "web" }),
+    timeoutMs: 15_000,
+  });
+}
+
+export async function updateWebSourceRecipe(recipeId, changes) {
+  return requestJson(`/sources/${encodeURIComponent(String(recipeId || ""))}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+    timeoutMs: 15_000,
+  });
+}
+
+export async function deleteWebSourceRecipe(recipeId) {
+  return requestJson(`/sources/${encodeURIComponent(String(recipeId || ""))}`, {
+    method: "DELETE",
+    timeoutMs: 15_000,
+  });
 }
 
 export async function fetchV2exIdentity() {
@@ -1049,6 +1088,7 @@ export async function streamAgentChatTurn({
     if (name === "error") {
       const error = new Error(String(data?.error || "对话失败了，请稍后重试。"));
       error.agentStreamError = true;
+      error.agentRetrying = data?.retrying === true;
       onEvent?.(name, data);
       throw error;
     }
@@ -1251,10 +1291,9 @@ export async function fetchSourceShareSuggestion(overrides = null) {
 export async function probeConfigService(kind, config, instanceId = "") {
   return requestJson("/config/probe-service", {
     method: "POST",
-    // Keep the popup alive beyond the backend's bounded 120s LLM cold-start
-    // probe window; otherwise the browser aborts a request the backend still
-    // legitimately owns.
-    timeoutMs: 125_000,
+    // Outlive the backend's 120s LLM and 180s free embedding probe budgets,
+    // including one local RPM recovery window.
+    timeoutMs: kind === "sponsored" ? 370_000 : kind === "embedding" ? 190_000 : 125_000,
     headers: {
       "Content-Type": "application/json",
     },
@@ -1264,6 +1303,10 @@ export async function probeConfigService(kind, config, instanceId = "") {
       ...(instanceId ? { instance_id: instanceId } : {}),
     }),
   });
+}
+
+export async function prepareSponsoredRuntime() {
+  return requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125_000 });
 }
 
 export async function discoverConfigModels(config, instanceId) {

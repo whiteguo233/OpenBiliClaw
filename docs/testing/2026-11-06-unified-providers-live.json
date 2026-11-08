@@ -1,0 +1,132 @@
+{
+  "sdk_release": "sponsored-runtime-2026-11-06.2",
+  "scope": "synthetic inputs through normal instance routes; not a model-quality benchmark",
+  "results": [
+    {
+      "instance": "free8",
+      "configured_model": "Qwen/Qwen3-8B",
+      "case": "text_stream",
+      "first_delta_seconds": 0.789,
+      "delta_count": 18,
+      "content": "建议从《Rust 核心语言特性》入手，重点理解所有权和生命周期。",
+      "tool_calls": null,
+      "ok": true,
+      "actual_instance": "free8",
+      "actual_model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "usage": {
+        "prompt_tokens": 39,
+        "completion_tokens": 19,
+        "total_tokens": 58
+      },
+      "seconds": 1.599
+    },
+    {
+      "instance": "free8",
+      "configured_model": "Qwen/Qwen3-8B",
+      "case": "tool_stream",
+      "delta_count": 0,
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "sim-16f479a4",
+          "name": "get_profile",
+          "arguments": {},
+          "arguments_raw": ""
+        }
+      ],
+      "ok": true,
+      "actual_instance": "free8",
+      "actual_model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "usage": {
+        "prompt_tokens": 247,
+        "completion_tokens": 16,
+        "total_tokens": 263
+      },
+      "seconds": 1.544
+    },
+    {
+      "instance": "free8",
+      "configured_model": "Qwen/Qwen3-8B",
+      "case": "signed_consolidation",
+      "content": "{\n\n}",
+      "ok": true,
+      "actual_instance": "free8",
+      "actual_model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "usage": {
+        "prompt_tokens": 1018,
+        "completion_tokens": 390,
+        "total_tokens": 1408
+      },
+      "seconds": 13.769
+    },
+    {
+      "instance": "free4",
+      "configured_model": "Qwen/Qwen3.5-4B",
+      "case": "text_stream",
+      "first_delta_seconds": 5.722,
+      "delta_count": 13,
+      "content": "先学语法，再深入理解借用检查器与生命周期。",
+      "tool_calls": null,
+      "ok": true,
+      "actual_instance": "free4",
+      "actual_model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "usage": {
+        "prompt_tokens": 36,
+        "completion_tokens": 13,
+        "total_tokens": 49
+      },
+      "seconds": 6.159
+    },
+    {
+      "instance": "free4",
+      "configured_model": "Qwen/Qwen3.5-4B",
+      "case": "tool_stream",
+      "delta_count": 0,
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "sim-1ffdd2a1",
+          "name": "get_profile",
+          "arguments": {},
+          "arguments_raw": ""
+        }
+      ],
+      "ok": true,
+      "actual_instance": "free4",
+      "actual_model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "usage": {
+        "prompt_tokens": 242,
+        "completion_tokens": 17,
+        "total_tokens": 259
+      },
+      "seconds": 6.418
+    },
+    {
+      "instance": "free4",
+      "configured_model": "Qwen/Qwen3.5-4B",
+      "case": "signed_consolidation",
+      "content": "{\n  \"likes\": [],\n  \"dislikes\": []\n}",
+      "ok": true,
+      "actual_instance": "free4",
+      "actual_model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "usage": {
+        "prompt_tokens": 1001,
+        "completion_tokens": 16,
+        "total_tokens": 1017
+      },
+      "seconds": 8.03
+    },
+    {
+      "case": "embedding_without_chat_route",
+      "ok": true,
+      "dimensions": 1024,
+      "seconds": 0.494
+    }
+  ]
+}

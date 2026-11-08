@@ -1,8 +1,6 @@
-# Multi-arch image: python:3.11-slim is published on Docker Hub for
-# linux/amd64, linux/arm64, linux/arm/v7, linux/386 and others, so this
-# Dockerfile builds the OpenBiliClaw backend on Intel Macs, Apple Silicon
-# (M1/M2/M3), x86_64 Linux, ARM Linux (Raspberry Pi 4/5), and Windows
-# with Docker Desktop (which runs linux containers via WSL2 by default).
+# Browser-capable image supports linux/amd64 and linux/arm64.
+# Playwright Chromium does not provide the arm/v7 or 386 runtime required
+# by dynamic browser sources; these 32-bit targets are not advertised.
 FROM python:3.11-slim
 
 # Link the GHCR package to this repository and make `docker inspect`
@@ -16,7 +14,8 @@ LABEL org.opencontainers.image.source="https://github.com/whiteguo233/OpenBiliCl
 # containerd/Kubernetes, so the marker is baked into the image itself.
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    OPENBILICLAW_IN_CONTAINER=1
+    OPENBILICLAW_IN_CONTAINER=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/openbiliclaw-browsers
 
 WORKDIR /app
 
@@ -25,9 +24,11 @@ WORKDIR /app
 # Copying src/ before installing dependencies would invalidate the layer
 # on every source edit and force a full multi-minute reinstall.
 COPY pyproject.toml ./
-RUN python -c "import tomllib, pathlib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps) + '\n')" \
+RUN python -c "import tomllib, pathlib; project = tomllib.load(open('pyproject.toml', 'rb'))['project']; deps = project['dependencies']; pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps) + '\n')" \
     && pip install -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+    && rm /tmp/requirements.txt \
+    && python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY README.md config.example.toml ./
 COPY src ./src
@@ -36,6 +37,10 @@ COPY src ./src
 # installs the openbiliclaw package itself, so rebuilds after source
 # changes finish in seconds.
 RUN pip install --no-deps .
+
+# Native multi-arch build resolves only the matching Core-pinned signed SDK.
+RUN python -m openbiliclaw.runtime.sponsored_bundle --stage /opt/openbiliclaw-sponsored
+ENV OPENBILICLAW_SPONSORED_BUNDLE=/opt/openbiliclaw-sponsored
 
 EXPOSE 8420
 

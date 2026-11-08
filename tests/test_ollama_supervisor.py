@@ -8,6 +8,23 @@ import pytest
 from openbiliclaw.config import Config
 
 
+@pytest.mark.parametrize(
+    ("fallback", "chat_model", "required"),
+    [(False, "qwen2.5:7b", False), (True, "qwen2.5:7b", True), (True, "", False)],
+)
+def test_free_routing_only_prepares_opted_in_local_chat_fallback(
+    fallback: bool, chat_model: str, required: bool
+) -> None:
+    from openbiliclaw.runtime.ollama_supervisor import ollama_required
+    from openbiliclaw.sponsored_runtime_state import SponsoredRuntimeSettings
+
+    cfg = Config()
+    cfg.llm.embedding.provider = "ollama"
+    cfg.llm.ollama.model = chat_model
+    cfg.llm.sponsored = SponsoredRuntimeSettings(enabled=True, fallback_to_user_provider=fallback)
+    assert ollama_required(cfg) is required
+
+
 def test_ollama_required_detects_chat_and_embedding_routes() -> None:
     from openbiliclaw.runtime.ollama_supervisor import ollama_required
 

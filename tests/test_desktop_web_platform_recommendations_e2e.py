@@ -126,16 +126,15 @@ def _build_platform_app(config_failures: int = 0) -> Iterator[tuple[str, Platfor
             if path.startswith("/web/assets/"):
                 rel = path.removeprefix("/web/assets/")
                 return self._serve_file(ROOT / "src/openbiliclaw/web/desktop/assets" / rel)
-            if path == "/shared/source-status.js":
-                return self._serve_file(
-                    ROOT / "src/openbiliclaw/web/shared/source-status.js",
-                    "application/javascript",
-                )
-            if path == "/shared/dialogue-confirmation.js":
-                return self._serve_file(
-                    ROOT / "src/openbiliclaw/web/shared/dialogue-confirmation.js",
-                    "application/javascript",
-                )
+            if path.startswith("/shared/"):
+                # Serve the same shared settings modules as the real app. A
+                # missing module throws during config hydration and prevents
+                # the recovered platform snapshot from reaching the filters.
+                shared_root = ROOT / "src/openbiliclaw/web/shared"
+                asset = (shared_root / path.removeprefix("/shared/")).resolve()
+                if not asset.is_relative_to(shared_root):
+                    return _json_response(self, {"error": "not_found"}, 404)
+                return self._serve_file(asset)
             if path == "/api/ping":
                 return _json_response(self, {"ok": True})
             if path == "/api/health":
@@ -440,6 +439,8 @@ def test_enabled_zero_stock_platform_survives_config_snapshot_retry(
     且计数显示 0 —— 而不是被永久藏起来。
     """
     base_url, stub = flaky_config_server
+    page_errors: list[str] = []
+    chromium_page.on("pageerror", lambda error: page_errors.append(str(error)))
     chromium_page.goto(f"{base_url}/web/")
     expect(chromium_page.locator("#videoGrid .video-card:not(.is-skeleton)")).to_have_count(
         5, timeout=8000
@@ -456,6 +457,7 @@ def test_enabled_zero_stock_platform_survives_config_snapshot_retry(
     assert stub.config_failures_remaining == 0
     counts = {chip["filter"]: chip["count"] for chip in _chips(chromium_page)}
     assert counts.get("Reddit") == "0"
+    assert not page_errors
 
 
 def test_platform_tabs_keyboard_focus_selection_and_no_horizontal_overflow(

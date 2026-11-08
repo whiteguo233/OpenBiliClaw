@@ -42,8 +42,13 @@ from openbiliclaw.runtime.account_sync import AccountSyncService
 from openbiliclaw.runtime.event_ingress import EventIngressService
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
-from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+from openbiliclaw.runtime.source_policy import (
+    effective_pool_source_shares,
+    enabled_source_recipe_available,
+)
+from openbiliclaw.runtime.web_producer import WebDiscoveryProducer
 from openbiliclaw.soul.engine import SoulEngine
+from openbiliclaw.sources.web_adapter import WebSourceAdapter
 from openbiliclaw.storage.database import Database
 
 from .operations import OpenClawAdapter
@@ -348,6 +353,15 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     discovery_engine.register_strategy(related_strategy)
     discovery_engine.register_strategy(explore_strategy)
 
+    web_cfg = getattr(getattr(config, "sources", None), "web", None)
+    web_adapter = WebSourceAdapter(
+        llm_service=llm_service,
+        request_timeout_seconds=float(getattr(web_cfg, "request_timeout_seconds", 15)),
+        max_response_bytes=int(getattr(web_cfg, "max_response_bytes", 2_097_152)),
+        max_redirects=int(getattr(web_cfg, "max_redirects", 5)),
+    )
+    discovery_engine.register_adapter(web_adapter)
+
     discovery_cfg = getattr(config, "discovery", None)
     admission_min_score = float(getattr(discovery_cfg, "admission_min_score", 0.60) or 0.60)
     set_admission_min_score = getattr(database, "set_admission_min_score", None)
@@ -391,6 +405,77 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         concurrency=concurrency,
         candidate_pipeline=candidate_pipeline,
     )
+    web_producer = WebDiscoveryProducer(
+        database=database,
+        adapter=web_adapter,
+        candidate_pipeline=candidate_pipeline,
+        enabled=bool(getattr(web_cfg, "enabled", True)),
+        lease_seconds=int(getattr(web_cfg, "lease_seconds", 300)),
+        request_timeout_seconds=int(getattr(web_cfg, "request_timeout_seconds", 15)),
+        soul_engine=soul_engine,
+    )
+
+    def _source_shares() -> dict[str, int]:
+        return effective_pool_source_shares(
+            config,
+            database=database,
+            enabled_recipe_available=lambda source: enabled_source_recipe_available(
+                database, source
+            ),
+        )
+
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.runtime.keyword_planner import KeywordPlanner
+
+    keyword_fetch = KeywordFetchCoordinator(database=database, discovery_config=config.discovery)
+    inspiration_provider = None
+    if bool(getattr(discovery_cfg, "inspiration_search_enabled", False)):
+        from openbiliclaw.config import derive_inspiration_breadth_params
+        from openbiliclaw.discovery.inspiration_provider import (
+            InspirationGroundingKeys,
+            build_inspiration_search_provider,
+            build_platform_source_backends,
+        )
+
+        inspiration_params = derive_inspiration_breadth_params(
+            getattr(discovery_cfg, "inspiration_breadth", "medium")
+        )
+        inspiration_provider = build_inspiration_search_provider(
+            getattr(discovery_cfg, "inspiration_search_backends", None),
+            database=database,
+            grounding_keys=InspirationGroundingKeys.from_discovery_config(discovery_cfg),
+            platform_backends=build_platform_source_backends(
+                config,
+                database=database,
+                bilibili_client=bilibili_client,
+            ),
+            platforms_per_probe=int(inspiration_params.platforms_per_probe),
+            riskcontrolled_probe_budget=int(inspiration_params.riskcontrolled_probe_budget),
+            pages_per_probe=int(inspiration_params.search_pages_per_probe),
+        )
+    keyword_planner = KeywordPlanner(
+        llm_service=llm_service,
+        database=database,
+        config=config,
+        soul_engine=soul_engine,
+        pool_target_count=config.scheduler.pool_target_count,
+        embedding_service=embedding_service,
+        inspiration_provider=inspiration_provider,
+    )
+
+    def _custom_source_producer(source_id: str) -> Any:
+        from openbiliclaw.runtime.custom_workflow_producer import CustomWorkflowProducer
+
+        return CustomWorkflowProducer(
+            database=database,
+            source_id=source_id,
+            candidate_pipeline=candidate_pipeline,
+            soul_engine=soul_engine,
+            config=config,
+            llm_service=llm_service,
+            keyword_fetch_coordinator=keyword_fetch,
+        )
+
     tiktok_producer = build_tiktok_discovery_producer(
         config=config,
         database=database,
@@ -455,7 +540,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         recommendation_engine=recommendation_engine,
         discovery_candidate_pipeline=candidate_pipeline,
         pool_target_count=config.scheduler.pool_target_count,
-        pool_source_shares=effective_pool_source_shares(config),
+        pool_source_shares=_source_shares(),
+        pool_source_shares_provider=_source_shares,
         signal_event_threshold=int(getattr(config.scheduler, "signal_event_threshold", 6)),
         trending_refresh_minutes=int(getattr(config.scheduler, "trending_refresh_minutes", 3)),
         explore_refresh_minutes=int(getattr(config.scheduler, "explore_refresh_minutes", 3)),
@@ -466,6 +552,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         discovery_limit=int(getattr(config.scheduler, "discovery_limit", 30)),
         douyin_producer=douyin_producer,
         youtube_producer=youtube_producer,
+        web_producer=web_producer,
+        custom_source_producer_provider=_custom_source_producer,
+        keyword_fetch=keyword_fetch,
+        keyword_planner=keyword_planner,
         tiktok_producer=tiktok_producer,
         scheduler_config=config.scheduler,
         presence=presence,
@@ -478,6 +568,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     # above; unlike a notify-only coordinator this leaves no dormant owner or
     # background copy task behind.
     candidate_pipeline.on_candidates_admitted = _copy_after_inline_admission
+    keyword_planner.bind_deficit_source(runtime_controller)
+    source_targets = getattr(runtime_controller, "_source_target_counts", None)
+    if callable(source_targets):
+        candidate_pipeline.source_share_targets = source_targets
     set_pool_commit_callback = getattr(
         recommendation_engine,
         "set_pool_inventory_commit_callback",

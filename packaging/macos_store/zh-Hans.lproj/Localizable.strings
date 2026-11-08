@@ -7,6 +7,7 @@
 "Show backend" = "显示后端窗口";
 "Quit OpenBiliClaw" = "退出 OpenBiliClaw";
 "Starting backend…" = "正在启动后端…";
+"Application signature verification failed." = "应用签名校验失败。";
 "Stop backend" = "停止后端";
 "Start backend" = "启动后端";
 "Backend stopped" = "后端已停止";

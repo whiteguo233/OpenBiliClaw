@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
+from copy import deepcopy
 
 ROW_WIRE_V1_HEADER = "ROW-WIRE-V1"
 
@@ -34,7 +35,15 @@ ROW_WIRE_V1_COLUMNS: tuple[str, ...] = (
     "related_interests",
     "cover_image_ref",
 )
-_CANONICAL_ITEM_FIELDS = frozenset((*ROW_WIRE_V1_COLUMNS, "published_at"))
+_SPARSE_ONLY_FIELDS = (
+    "published_at",
+    "published_label",
+    "reply_count",
+    "retweet_count",
+    "bookmark_count",
+    "source_metadata",
+)
+_CANONICAL_ITEM_FIELDS = frozenset((*ROW_WIRE_V1_COLUMNS, *_SPARSE_ONLY_FIELDS))
 
 _ENVELOPE_FIELDS = frozenset({"defaults", "items"})
 _DEFAULT_FIELDS = frozenset({"source_platform", "content_type", "mode"})
@@ -50,6 +59,7 @@ _STRING_ITEM_FIELDS = frozenset(
         "body_text",
         "description",
         "published_at",
+        "published_label",
         "cover_image_ref",
     }
 )
@@ -63,6 +73,9 @@ _POSITIVE_INTEGER_ITEM_FIELDS = frozenset(
         "comment_count",
         "share_count",
         "danmaku_count",
+        "reply_count",
+        "retweet_count",
+        "bookmark_count",
         "rating_count",
         "source_rank",
     }
@@ -73,6 +86,51 @@ _LIST_ITEM_FIELDS = frozenset({"tags", "related_interests"})
 
 class EvaluationWireError(ValueError):
     """Raised when a canonical envelope or row-wire payload is invalid."""
+
+
+def project_evaluation_source_metadata(
+    source_platform: str,
+    metadata: object,
+) -> dict[str, object]:
+    """Copy only bounded, semantic source fields; exclude IDs and raw responses.
+
+    Explicit false flags and observed zero counts carry meaning. Missing fields
+    remain missing; repository push/update time never replaces publication time.
+    """
+    if source_platform != "github" or not isinstance(metadata, Mapping):
+        return {}
+
+    def clean(value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        return "".join(
+            char
+            for char in value[:256]
+            if ord(char) >= 0x20 and ord(char) != 0x7F and not 0xD800 <= ord(char) <= 0xDFFF
+        ).strip()
+
+    result: dict[str, object] = {}
+    for field in ("created_at", "updated_at", "pushed_at", "language", "visibility"):
+        if value := clean(metadata.get(field)):
+            result[field] = value
+    for field in ("forks_count", "open_issues_count", "watchers_count"):
+        count = metadata.get(field)
+        if type(count) is int and 0 <= count <= 2**63 - 1:
+            result[field] = count
+    for field in ("fork", "archived", "disabled"):
+        flag = metadata.get(field)
+        if isinstance(flag, bool):
+            result[field] = flag
+    license_data = metadata.get("license")
+    if isinstance(license_data, Mapping):
+        license_fields = {
+            field: value
+            for field in ("key", "name", "spdx_id")
+            if (value := clean(license_data.get(field)))
+        }
+        if license_fields:
+            result["license"] = license_fields
+    return result
 
 
 def _is_finite_positive_number(value: object) -> bool:
@@ -172,7 +230,7 @@ def _validated_envelope(
             raise EvaluationWireError(f"evaluation item {item_index} lacks a required field")
 
         item: dict[str, object] = {}
-        for field in (*ROW_WIRE_V1_COLUMNS, "published_at"):
+        for field in (*ROW_WIRE_V1_COLUMNS, *_SPARSE_ONLY_FIELDS):
             if field not in raw_item:
                 continue
             value = raw_item[field]
@@ -216,6 +274,14 @@ def _validated_envelope(
                             f"evaluation item {item_index} field {field} entry {entry_index}"
                         ),
                     )
+            elif field == "source_metadata":
+                platform = raw_item.get("source_platform", defaults.get("source_platform", ""))
+                projected = project_evaluation_source_metadata(str(platform), value)
+                if not projected or projected != value:
+                    raise EvaluationWireError(
+                        "source_metadata must contain only canonical source fields"
+                    )
+                value = projected
             else:  # pragma: no cover - guarded by the complete protocol field sets above
                 raise EvaluationWireError(f"unsupported row-wire field {field}")
             item[field] = value
@@ -258,13 +324,7 @@ def validate_canonical_evaluation_envelope(
     defaults, items = _validated_envelope(envelope)
     return {
         "defaults": dict(defaults),
-        "items": [
-            {
-                field: list(value) if isinstance(value, list) else value
-                for field, value in item.items()
-            }
-            for item in items
-        ],
+        "items": deepcopy(items),
     }
 
 
@@ -295,8 +355,9 @@ def encode_evaluation_row_wire(envelope: Mapping[str, object]) -> str:
     """Encode a canonical ``{defaults, items}`` envelope as row-wire-v1."""
 
     defaults, items = _validated_envelope(envelope)
-    if any("published_at" in item for item in items):
-        raise EvaluationWireError("row-wire-v1 does not support published_at")
+    for field in _SPARSE_ONLY_FIELDS:
+        if any(field in item for item in items):
+            raise EvaluationWireError(f"row-wire-v1 does not support {field}")
     default_cells = ["defaults"]
     for field in sorted(defaults):
         value = _escape_cell(defaults[field], location=f"evaluation default {field}")

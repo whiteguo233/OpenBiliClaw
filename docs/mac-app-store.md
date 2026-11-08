@@ -1,6 +1,6 @@
 # Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 于 2026-11-08 02:55（北京时间）提交后被 Apple 标记为「二进制文件无效」。Apple Silicon 的 `1.0.0 (4)` 已由 GitHub 构建并完成本机发行签名，待上传。原有 Developer ID / 公证 DMG 使用 `packaging/build.py`。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 在提交后被 Apple 标记为「二进制文件无效」。build 5 以主干 `8b760446` 为基础重新构建 Apple Silicon 包，取代已验签的 build 4 候选。
 
 安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
@@ -16,13 +16,14 @@ Mac App Store → Xcode 原生 App（App Sandbox、网络入站/出站）
   └─ lifetime pipe → 冻结 Python 后端（继承宿主沙盒）
        ├─ full / discovery / recommendation / image 子进程
        ├─ 包内 Ollama → 容器内模型；首次下载由设置页明确触发
+       ├─ 包内 Rust 组件 → 用户选择的硅基流动免费模型
        └─ 包内 userspace Tailnet → 容器内节点状态
      HTTP 0.0.0.0 → Web / 插件 / 手机网页版 / 原生手机 App
 ```
 
 - macOS 14 及以上；Xcode 原生编译宿主，PyInstaller 冻结同架构 Python 依赖。本机实测 Intel，独立 CI 已完成 Apple Silicon 的沙盒归档与真实 HTTP 验证；两个单架构包都不能称为 Universal。
 - 配置、数据、模型及日志位于容器的 `Library/Application Support/OpenBiliClaw`；不自动读取或搬动 `~/OpenBiliClaw`、浏览器 Cookie 数据库或旧 DMG 的数据。迁移使用现有 Web 导出/上传导入流程。不要在路径设置中指定容器外目录。
-- Python、Ollama、Tailnet 均在 App 内，不在运行时安装 pip、Homebrew、Tailscale 或其他程序。模型权重是数据；商店版不运行首次启动的自动模型拉取，用户在 Web 设置中决定是否下载。
+- Python、Ollama、Tailnet 和免费模型 Rust 组件都随 App 签名。宿主启动前检查 App 和嵌套代码的签名，后端另验模型策略的签名。用户在设置中选择是否使用云模型或下载本地模型权重。商店版关闭托管 Ego Lite 的下载安装入口，公开 RSS 仍直接处理。
 - 关闭窗口保留菜单栏服务；「停止后端」或退出 App 会请求后端停止，并清理其拥有的 workers、Ollama 与 Tailnet。宿主意外结束也会关闭 lifetime pipe。不会终止用户另行启动的 Ollama。
 - 对话模型切换到另一 Ollama 地址后，重启仍优先启动容器内的本地 embedding 服务；原生窗口按实际监听地址探测就绪，支持显式 IPv6 绑定。
 - 局域网二维码仍从真实接口地址生成；系统 Tailscale 与内置 Tailnet、公网 URL 继续走同一 `/api/qr-info` 契约。联网、macOS 本地网络授权、远端实际可达性仍是扫码成功的前提。

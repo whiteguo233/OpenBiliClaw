@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from functools import wraps
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,6 +13,43 @@ from openbiliclaw.bilibili.api import BilibiliAPIClient
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any
+
+
+@pytest.fixture(autouse=True)
+def _default_test_client_is_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model the local app origin; security tests pass an explicit peer/origin.
+
+    Starlette's synthetic 'testclient' peer and 'testserver' Host are not
+    trusted network addresses. Private API tests must exercise the same
+    loopback boundary as the installed app, without disabling authentication.
+    """
+    from starlette.testclient import TestClient
+
+    original = TestClient.__init__
+
+    @wraps(original)
+    def local_init(self: TestClient, *args: Any, **kwargs: Any) -> None:
+        if "client" not in kwargs:
+            kwargs["client"] = ("127.0.0.1", 50000)
+            if len(args) < 2 and "base_url" not in kwargs:
+                kwargs["base_url"] = "http://127.0.0.1:8420"
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "__init__", local_init)
+
+    original_websocket = TestClient.websocket_connect
+
+    @wraps(original_websocket)
+    def websocket_at_client_origin(self: TestClient, url: str, *args: Any, **kwargs: Any) -> Any:
+        # Starlette hardcodes ws://testserver for relative URLs, ignoring
+        # base_url. Use the actual test origin for HTTP and WebSocket alike.
+        if url.startswith("/"):
+            scheme = "wss" if self.base_url.scheme == "https" else "ws"
+            url = str(self.base_url.copy_with(scheme=scheme)).rstrip("/") + url
+        return original_websocket(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "websocket_connect", websocket_at_client_origin)
 
 
 @pytest.fixture(autouse=True)

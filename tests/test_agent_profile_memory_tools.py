@@ -90,6 +90,15 @@ class TestGetProfile:
 
 
 class TestReadMemory:
+    async def test_field_path_in_note_key_reports_wrong_argument(self, tmp_path: Path) -> None:
+        memory = MemoryManager(tmp_path)
+        memory.initialize()
+        ctx = AgentToolContext(memory_manager=memory)
+        result = await _registry(build_memory_tools, ctx=ctx).dispatch(
+            "read_memory", {"layer": "event", "key": "records/record_0731"}
+        )
+        assert not result.ok and "json_pointer" in result.content
+
     async def test_core_layer(self) -> None:
         ctx = AgentToolContext(memory_manager=_FakeMemoryManager())
         result = await _registry(build_memory_tools, ctx=ctx).dispatch("read_memory", {})
@@ -232,3 +241,36 @@ class TestSearchHistory:
         )
         assert not result.ok
         assert result.error == "handler_error"
+
+
+async def test_exact_memory_path_reads_middle_record_without_serializing_whole_layer():
+    import json
+
+    memory = _FakeMemoryManager()
+    records = {f"record_{i:04d}": f"普通记录{i:04d}" for i in range(1200)}
+    records["record_0731"] = "翠竹59427"
+    memory.layers["event"].update("records", records)
+    registry = _registry(build_memory_tools, ctx=AgentToolContext(memory_manager=memory))
+    result = await registry.dispatch(
+        "read_memory", {"layer": "event", "json_pointer": "/records/record_0731"}
+    )
+    assert result.ok, result.content
+    data = json.loads(result.content)
+    assert data == {"layer": "event", "json_pointer": "/records/record_0731", "value": "翠竹59427"}
+    assert len(result.content) < 200
+
+
+async def test_exact_memory_path_escaping_missing_keys_and_oversize_values():
+    import json
+
+    memory = _FakeMemoryManager()
+    memory.layers["event"].update("a/b", {"~field": ["literal value", "x" * 9000]})
+    registry = _registry(build_memory_tools, ctx=AgentToolContext(memory_manager=memory))
+    result = await registry.dispatch(
+        "read_memory", {"layer": "event", "json_pointer": "/a~1b/~0field/0"}
+    )
+    assert result.ok and json.loads(result.content)["value"] == "literal value"
+    for path in ("/missing", "/a~2b", "/a~1b/~0field/01", "/a~1b/~0field/1"):
+        result = await registry.dispatch("read_memory", {"layer": "event", "json_pointer": path})
+        assert not result.ok
+    assert "截断" not in result.content

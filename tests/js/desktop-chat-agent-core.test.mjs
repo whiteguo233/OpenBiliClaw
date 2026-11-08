@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import "../../src/openbiliclaw/web/shared/agent-chat.js";
 import core from "../../src/openbiliclaw/web/desktop/assets/js/chat-agent-core.js";
 
 const {
@@ -28,6 +29,17 @@ const {
   taskSummaryCardMarkup,
   turnAgentEvents,
 } = core;
+
+test("desktop discovery progress shares readable tool labels and preserves source approval evidence", () => {
+  const model = buildAgentProcess([
+    { type: "tool_call", step: 1, tool_name: "prepare_discovery_source", arguments: {}, summary: "prepare_discovery_source()" },
+    { type: "approval_request", step: 2, tool_name: "activate_discovery_source", approval_id: "ap_web", arguments: { draft_id: "opaque" }, summary: "启用 Research · https://example.com · 论文更新 · 3 份 / 30 分钟" },
+  ]);
+  const markup = agentProcessMarkup(model);
+  assert.match(markup, /准备内容来源/);
+  assert.match(markup, /Research · https:\/\/example.com · 论文更新 · 3 份 \/ 30 分钟/);
+  assert.match(markup, /data-approval-action="approve"/);
+});
 
 // ── SSE 解析 ──────────────────────────────────────────────────
 
@@ -70,23 +82,29 @@ test("SSE parser flushes a trailing event without blank line on end()", () => {
 
 // ── SSE 读看门狗 ──────────────────────────────────────────────
 
-test("SSE read watchdog aborts after a silent window", async () => {
+test("SSE read watchdog aborts after a silent window", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const watchdog = createSseReadWatchdog({ timeoutMs: 20 });
-  const aborted = new Promise((resolve) => watchdog.signal.addEventListener("abort", resolve));
   watchdog.reset();
-  await aborted;
+  t.mock.timers.tick(19);
+  assert.equal(watchdog.signal.aborted, false);
+  t.mock.timers.tick(1);
   assert.equal(watchdog.signal.aborted, true);
 });
 
-test("SSE read watchdog reset postpones and cancel disarms", async () => {
+test("SSE read watchdog reset postpones and cancel disarms", (t) => {
+  // Advance elapsed time explicitly. A real 25 ms sleep can wake after the
+  // 40 ms deadline under parallel CI/browser load, correctly aborting a live
+  // watchdog before this test has had a chance to deliver its heartbeat.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const watchdog = createSseReadWatchdog({ timeoutMs: 40 });
   watchdog.reset();
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  t.mock.timers.tick(25);
   watchdog.reset(); // 心跳/字节到达 → 重新计时
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  t.mock.timers.tick(25);
   assert.equal(watchdog.signal.aborted, false);
   watchdog.cancel();
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  t.mock.timers.tick(60);
   assert.equal(watchdog.signal.aborted, false);
 });
 

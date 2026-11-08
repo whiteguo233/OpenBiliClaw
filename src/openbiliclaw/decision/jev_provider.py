@@ -54,6 +54,22 @@ def validate_jev_endpoint_url(value: object) -> str:
         ) from None
 
 
+def jev_endpoint_from_base_url(value: object) -> str:
+    """Resolve an explicitly selected SDK base URL to the native endpoint.
+
+    Accept a service root, a proxy prefix (OpenRouter uses ``/api``), or a
+    versioned base ending in ``/v1``. Full/custom endpoints use endpoint_url
+    instead. Validation never echoes the supplied URL or embedded credentials.
+    """
+    if not isinstance(value, str):
+        raise ValueError("Jev Base URL 必须是文本。")
+    base = value.rstrip("/")
+    if base.endswith("/systemone") or base.endswith("/decisions"):
+        raise ValueError("请在完整接口地址模式填写 Jev endpoint，不要作为 Base URL。")
+    suffix = "/systemone" if base.endswith("/v1") else "/v1/systemone"
+    return validate_jev_endpoint_url(base + suffix)
+
+
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:

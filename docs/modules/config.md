@@ -6,6 +6,10 @@ Instagram 与其它平台共用 `recommendation_date_preset/start/end/weight`，
 
 > `config.toml` 所有配置段落详解。
 
+## LLM 超时（2026-11-08，待发布）
+
+原生免费与自有 Key 的 LLM 实例统一继承 `[llm].timeout`（秒，默认 1200，现有校验范围 10..1200）。`[llm.sponsored].request_timeout_seconds` 的兼容默认同步为 1200，供直接 SDK / 中继使用；原生免费 LLM 实例以全局值为准，不修改持久化的旧字段。Embedding 请求独立限制为最多 180 秒。旧 Rust SDK 仍受自身 180 秒限制，需更新随包 SDK。
+
 ## 快速开始
 
 ```bash
@@ -14,6 +18,14 @@ cp config.example.toml config.toml
 ```
 
 ## 配置文件位置与恢复
+
+托管 Ego 的显式域名直连偏好保存于实际数据库旁 `ego-managed/network.json`，不属于
+`[network].mode/proxy` 的海外后端客户端配置。默认 `direct_hosts=[]`，所有网站沿用
+浏览器系统代理。`GET/PUT /api/custom-sources/executors/ego/network` 可读写精确域名列表；
+它仅影响本应用的托管 Ego，升级／宿主回收后保留，清空列表恢复原生系统路由。
+API 保存只会停止无活跃租约的自有宿主，下次工作自动启动；活跃会话／安装准备中返回
+409，不要求重启后端。手动系统代理在每次冷启动时读取；PAC/WPAD 等无法安全合并的
+配置会报告不支持，不扩大直连范围。详情见[浏览器工作流](browser-workflows.md)。
 
 后台子进程由父入口自动携带内部环境变量 `OPENBILICLAW_RUNTIME_DATA_DIR`，将热重启后的 `load_config()` 固定在父进程已经持有 migration lock 的目录；不需要用户配置。磁盘新保存的 `general.data_dir` 仍只在完整退出并重新启动后生效，`load_config(..., consult_environment=False)` 继续返回磁盘目标值，供回滚与 restart-required 判断使用。模型与 scheduler 设置成功应用后，父进程自动重启读取配置快照的后台服务，避免 API 配置已更新而补池 evaluator 留在旧配置。
 
@@ -124,11 +136,11 @@ Tailnet 的完整字段级优先级是：`OPENBILICLAW_TAILNET_ENABLED` /
 
 ### `[api.auth]`
 
-局域网 / 远程访问的**可选密码门禁**（`ApiAuthConfig`）。仅当 `enabled=true` 且请求非可信本机时生效；本机（loopback 且无转发头）默认免登录。远程浏览器扩展必须另行启用设备密钥认证。详见 [`docs/modules/api-auth.md`](api-auth.md)。
+局域网 / 远程访问的**必需认证门禁**（`ApiAuthConfig`）。`enabled=false` 时私有 API 只允许可信本机，远程 HTTP 返回 `401 auth_setup_required`、WebSocket 返回 `4401`；`enabled=true` 后远程必须登录。可信本机默认免登录。远程浏览器扩展必须另行启用设备密钥认证。详见 [`docs/modules/api-auth.md`](api-auth.md)。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `enabled` | bool | `false` | 是否为局域网 / 远程访问开启密码门禁。`true` 且 `password_hash` 为空时按配置错误处理（blocking） |
+| `enabled` | bool | `false` | 是否允许经过密码认证的局域网 / 远程访问；关闭时仅可信本机可访问私有 API。`true` 且 `password_hash` 为空时按配置错误处理（blocking） |
 | `password_hash` | string | `""` | scrypt 密码哈希。**请勿手填明文**；用 `openbiliclaw set-password` / `init` / 环境变量设置 |
 | `session_secret` | string | `""` | 登录态 HMAC 签名密钥。首次启用为空时自动生成并写回 config；请勿外泄 |
 | `session_ttl_hours` | int | `0` | 登录态有效期（小时）。`0` = 永不过期（默认，「记住登录」）；`>0` = 限时登录 |
@@ -259,8 +271,10 @@ max_attempts = 2
 `config-show` 和配置 API 显示容量来源、token 限制与工程字节护栏，
 不请求 `/models` 或付费接口，不下载 tokenizer，不自动升级模型。
 
-共享预算采用 token 限制 × 3/4 的 UTF-8 字节工程护栏，逐请求计算 native JSON 包装、state
-及全部问题和最长单题；这不是字符/token 比率估计或保证，服务端仍可能拒绝。
+共享预算以所配 token 容量整数作为 UTF-8 字节上限，不再额外扣除 25%：标准窗口对应
+64,000 / 32,000 bytes。逐请求计算 native JSON 包装、state 及全部问题和最长单题；
+这仍是工程字节上限，不是精确 tokenizer、等比例 token 估算或保证，服务端仍可能拒绝。
+旧的显式 48,000 / 24,000（或更小）字节设置仍保留；设为 0 才采用新自动预算。
 不将所有 422/429 都误认作上下文溢出。官方依据：[模型文档](https://docs.typesafe.ai/models)、
 [OpenAPI](https://api.typesafe.ai/openapi.json)（2026-10-04 核实）。
 
@@ -277,6 +291,15 @@ CLI `config-show` 展示开关、URL、模型、变量名、是否保存 Token �
 明确清除，不能同时替换；URL 变化必须重新填写 Token，避免旧凭据误发。
 `context_limits` 是完整替换表，空对象恢复自动容量；三端共享表单保留其它模型条目，
 切换模型 ID 不继承上一模型的手动容量。配置校验不做付费探测，启用路由后的正常评估可能计费。
+
+设置页可选择 **Base URL / 完整接口地址**，不限制官方域名。Base URL 经
+`jev_endpoint_from_base_url()` 解析：服务根或代理前缀追加 `/v1/systemone`，以 `/v1`
+结尾只追加 `/systemone`，忽略末尾斜杠；OpenRouter 示例为 `https://openrouter.ai/api`。
+API 部分更新接受 `base_url` 作为 `endpoint_url` 的互斥输入别名；TOML 仍只保存完整
+`endpoint_url`，不是新增第二个持久字段。自定义 `/api/alpha/decisions` 等原生接口选择完整地址，
+不自动猜路径、不使用 Chat Completions。旧自定义路径保持原样。地址变化仍须重新填写 Token；
+仅切换等价 Base/完整表示不需要换 Token。未知网关模型仍须登记精确模型 ID 的双上下文容量，
+返回的实际模型必须与所选固定版本一致，不自动改模型或追随浮动别名。
 
 一个 runtime 的完整评估、发现过滤与逐对编排共享有界 client：默认最多 2 个 adapter 调用并发、
 32 个已接纳请求（包含运行和等待），排队计入请求的绝对 deadline；连续 5 次真实
@@ -299,16 +322,21 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 | `franchise_labels` | `[]` | 受控 IP / 系列 / 品牌名称；未配词表时无法识别新 IP |
 | `max_state_question_bytes` | `0` | 0=按选定模型自动；非零是 state 加最长题的额外 UTF-8 护栏，不得超过该模型工程预算 |
 | `max_request_bytes` | `0` | 0=按选定模型自动；非零是完整原生请求的额外 UTF-8 护栏，不得超过该模型工程预算 |
-| `max_candidates_per_request` | `4` | 每批完整候选上限，1–64；初始工程上限，需中文实测校准 |
-| `max_questions_per_request` | `0` | 0=仅受容量限制；非零为 10–640。原生无独立题数上限，不能把候选的 10 题拆开 |
+| `max_candidates_per_request` | `64` | 有界打包搜索上限，1–64；实际批量由双预算决定，不再默认停在 4 条；原有手动小上限保留 |
+| `max_questions_per_request` | `0` | 0=仅受容量限制；非零为 8–640。原生无独立题数上限，不能把候选的 8 题拆开 |
 | `max_question_bytes` | `0` | 0=仅受组合窗口限制；非零为单题 canonical JSON 字节护栏，至少 256 |
 | `max_calls` | `32` | 一次 evaluator 调用的子批调用数上限 |
 | `budget_seconds` | `30.0` | 一次 evaluator 共用的总预算，不是每个子批各一份 |
 
+8 题使用联合时效结论，硬过期字段不再独立组合。已有非零题数上限保持原值；
+端点进入证据缓存／停放恢复身份，Token 不进入。
+
 预算与词表严格验证；词表预留 unknown 选项，不能静默截断。固定模型版本进入缓存
 身份；旧配置显式 24000/48000 会保留为更严的人工护栏，想随更大模型扩大需改为 0。
-按需画像保留必需约束，再加载相关事实；批次超限先减少候选数。单条仍超限时使用带
-源位置/摘要/覆盖标记的完整原文摘录；不能放下必需内容则待评估，不切模型或隐式调 LLM。
+按需画像保留必需约束，再加载相关事实；所有已开批次可接受后续能装下的完整候选，
+不因一条大候选关闭前批空位；到达 max_calls 后仍可填已有空位，不增加 HTTP 调用。
+单条仍超限时使用带
+源位置/摘要/覆盖标记的完整原文摘录；不能放下必需内容则预算停放，不切模型或隐式调 LLM。
 三个新增打包字段可由 TOML 或配置 API 更新，API 重建 evaluator 后的新任务生效，
 在飞任务使用旧快照。官方标准容量只可收紧，不能通过配置扩大；实验扩窗 header 默认不发送。
 模型容量、选择策略也进入缓存
@@ -318,13 +346,18 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 同时开启会报错。它原生仅文本，未识别类别如实保留；不会隐式改成混合 LLM 模式。
 沿用的入池阈值尚未做 Jev 中文标定。该切换影响后续评估，不批量迁移历史结果。
 
+三端连接区的“测试连接与评估”使用当前填写草稿（不是必须先保存），向当前固定模型发送
+1 条合成内容完整 8 题；一次 HTTP 尝试，可能少量计费。不读取真实画像、不写配置，
+成功仅代表本次完整探测通过。修改配置后旧提示失效，保存仍是独立操作。
+
 ### `[director]`
 
 推荐导演的业务路由，类型为 `Config.director → DirectorConfig`。`mode` 是灰度开关，
 `strategy` 才是用户选择的三种编排方式，两者不能混用。默认关闭，保留既有推荐路径。
 
-`[director]`、`[discovery.semantic_filter]` 和 `[decision.providers.jev]` 当前是
-TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口。修改后必须完整停止并
+`[director]` 和 `[discovery.semantic_filter]` 当前是
+TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口；`[decision.providers.jev]`
+已可由共用连接表单配置。手动修改 TOML 后必须完整停止并
 重新启动后端，使 API、推荐与发现子进程一起读取新配置；仅刷新页面或重建 API
 进程内 runtime 不会同步其他子进程。桌面安装需退出后重新启动整个应用。
 内核重建时的 epoch / 取消机制保证旧请求不跨配置提交，但不是跨进程配置分发。
@@ -636,7 +669,7 @@ Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、rec
 | `output_dimensionality` | int | `1024` | embedding 目标向量维度。默认 1024，与本地 Ollama `bge-m3` 对齐；Gemini 会传 `output_dimensionality`，`provider = "openai"` 且模型为 `text-embedding-3-*` 时会传 `dimensions`。Ollama / OpenRouter / 泛 OpenAI-compatible 等未确认支持的后端不传参数，也不会把 cache 标成伪维度。设为 `0` 表示使用 provider 原生默认维度 |
 | `similarity_threshold` | float | `0.82` | 余弦相似度阈值，超过即视为"同主题" |
 | `fallback_enabled` | bool | `false` | 旧兼容开关；允许备选类型借用第一个同类型、已启用聊天实例的凭据 |
-| `fallback_provider` | string | `""` | 第二个 embedding 备选 Provider。留空 = 不 fallback；可填 `openai` / `gemini` / `ollama` / `openai_compatible`，不会再自动走 `ollama → gemini → openai` 链 |
+| `fallback_provider` | string | `""` | 构建服务时的第二个 embedding 备选 Provider。留空 = 不 fallback；可填 `openai` / `gemini` / `ollama` / `openai_compatible`。当前不是实例调用链，请求失败后不会自动切换到备选，也不会自动走 `ollama → gemini → openai` 链 |
 | `multimodal_enabled` | bool | `false` | 是否启用**封面图单独** embedding（image-only 向量，与文本同一模型空间），供 recommendation `precompute_delight_scores` 的封面视觉加成消费。默认关闭。开启后仍需当前 `model` 支持图像（如 `gemini-embedding-2`，或 `dashscope` + `qwen3-vl-embedding`）；本地 `ollama` + `bge-m3` 等纯文本模型会自动跳过，不报错。与 `[discovery].multimodal_evaluation_enabled`（vision LLM 评估）相互独立。**插件设置页与桌面 Web 设置的 Embedding 段均可直接勾选**（`dashscope` 也已加入 provider 下拉），无需手改 TOML |
 | `cache_max_bytes` | int | `0` | L2 持久化缓存（`data/embedding_cache.db`）磁盘预算，单位字节；`0` = 不设上限（默认）。向量本身已按紧凑 float32 二进制存储（4096 维约 16 KiB/行），此上限进一步约束长跑 discovery/warmup 的磁盘增长：占用超过 `cache_max_bytes × cache_high_watermark` 时开始淘汰（先删失效 namespace / 旧 legacy 行，再按最近访问时间淘汰 active namespace 最旧行），直到降到 `cache_max_bytes × cache_low_watermark`。缓存可重建，淘汰只影响冷数据。建议值 `536870912`（512 MiB） |
 | `cache_high_watermark` | float | `0.9` | 容量淘汰触发水位（占用 / 预算 的比例，0..1），需 `>= cache_low_watermark` |
@@ -840,8 +873,11 @@ daemon，保留当前 v2 文件和自动备份，再由操作者显式把导出�
 ### `[sources.<name>]` 发布日期偏好
 
 所有来源（`bilibili` / `xiaohongshu` / `douyin` / `youtube` / `tiktok` / `twitter` / `zhihu` /
-`reddit` / `bangumi` / `github` / `linuxdo` / `v2ex` / `weibo`）都支持以下四个字段，默认
+`reddit` / `bangumi` / `github` / `linuxdo` / `v2ex` / `weibo` / `instagram` / `web`）都支持以下四个字段，默认
 `"all"` = 不按发布日期过滤：
+
+`web` 的四个字段经 TOML 与配置 API 往返，统一作用于旧 Web recipe 与动态网站/Feed 的候选准入；
+本轮自定义来源卡片只管理份额和频率，未添加每个动态实例的日期编辑器。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -889,7 +925,7 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 ### `[network]` (v0.3.164+，v0.3.165 路由模式补强，v0.3.166 国内网关豁免)
 
-海外网络路由。仅作用于**海外客户端**：OpenAI / Claude / Gemini / OpenRouter / openai_compatible 的 chat + embedding SDK、YouTube（yt-dlp、scrapetube、InnerTube / 页面 fallback）、X 的服务端 `twitter-cli`、Reddit 的 `rdt-cli` / OpenCLI 命令后端、Bangumi（`api.bgm.tv` 与封面 CDN `lain.bgm.tv` 均为海外 Cloudflare，实测 2026-07-18 国内网络直连超时、走代理正常）、GitHub 内容来源（`api.github.com`）与自动更新、封面图片代理的境外 CDN（`i.ytimg.com` / `ggpht.com`；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=true` 在 `custom` 模式下拿不到代理、国内直连超时致 YouTube 封面全裂）、Codex OAuth 令牌刷新、discovery 灵感搜索的海外后端（Exa `api.exa.ai` / You.com `api.ydc-index.io` / Serply `api.serply.io` 的直连 HTTP 客户端与 mcporter 子进程；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=false` 在 custom 模式下拿不到代理，实测 api.exa.ai 国内直连超时；Bing RSS 属国内可达服务保持恒直连）与可选 `keenable` 后端的 Keenable `api.keenable.ai` 直连 HTTP 客户端（匿名免费端点 `/v1/search/public`，无 API Key、无 mcporter 兜底，同样读取本节策略）。X / Reddit 回落到浏览器扩展任务时，请求由浏览器发出并沿用浏览器自己的网络设置；GitHub 始终由后端 client 发出，不使用浏览器 Cookie 或插件代理；微博的项目自有 `httpx` client 固定 `trust_env=false` 国内直连，也不读取本段。**注意**：`openai_compatible` / `openai` 若指向的是国内网关或本机地址，则按下方「国内网关豁免」强制直连，不受本节代理影响。
+海外网络路由。也供动态订阅／公开 HTTP Web recipe 使用（逐跳显式代理、DoH 与公共 IP 固定，无 Cookie）；其他既有**海外客户端**：OpenAI / Claude / Gemini / OpenRouter / openai_compatible 的 chat + embedding SDK、YouTube（yt-dlp、scrapetube、InnerTube / 页面 fallback）、X 的服务端 `twitter-cli`、Reddit 的 `rdt-cli` / OpenCLI 命令后端、Bangumi（`api.bgm.tv` 与封面 CDN `lain.bgm.tv` 均为海外 Cloudflare，实测 2026-07-18 国内网络直连超时、走代理正常）、GitHub 内容来源（`api.github.com`）与自动更新、封面图片代理的境外 CDN（`i.ytimg.com` / `ggpht.com`；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=true` 在 `custom` 模式下拿不到代理、国内直连超时致 YouTube 封面全裂）、Codex OAuth 令牌刷新、discovery 灵感搜索的海外后端（Exa `api.exa.ai` / You.com `api.ydc-index.io` / Serply `api.serply.io` 的直连 HTTP 客户端与 mcporter 子进程；v0.3.209 起跟随本节策略，此前硬编码 `trust_env=false` 在 custom 模式下拿不到代理，实测 api.exa.ai 国内直连超时；Bing RSS 属国内可达服务保持恒直连）与可选 `keenable` 后端的 Keenable `api.keenable.ai` 直连 HTTP 客户端（匿名免费端点 `/v1/search/public`，无 API Key、无 mcporter 兜底，同样读取本节策略）。X / Reddit 回落到浏览器扩展任务时，请求由浏览器发出并沿用浏览器自己的网络设置；GitHub 始终由后端 client 发出，不使用浏览器 Cookie 或插件代理；微博的项目自有 `httpx` client 固定 `trust_env=false` 国内直连，也不读取本段。**注意**：`openai_compatible` / `openai` 若指向的是国内网关或本机地址，则按下方「国内网关豁免」强制直连，不受本节代理影响。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -912,18 +948,71 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 >
 > 旧配置只有非空 `proxy` 而没有 `mode` 时自动迁移为 `custom`；空旧配置取默认值 `system`。**API 侧同一套判定**：`PUT /api/config` 与 `POST /api/config/probe-service` 收到只带 `proxy`、不带 `mode` 的 payload（旧版 UI、第三方客户端）时，与磁盘上缺 `mode` 键走同一条路——非空 `proxy` 仍是 `custom`，清空 `proxy` 则落到 `system` 而不是 `direct`；显式送了 `mode` 的一律照送的值处理。保存时校验模式、协议与主机，`custom` 缺地址或非法值经 `PUT /api/config` 返回 400、不落盘。桌面 Web 与扩展 popup 都提供模式选择、地址输入和按当前模式真实探测；CLI `config-show` 分别显示模式与地址；移动 Web 无设置页。
 
+### 动态网站来源策略（数据库）
+
+网站、RSS、Atom、JSON Feed 均由聊一聊建立并试跑，确认启用后在三端设置的“自定义来源”
+管理名称、推荐比例（1–20）、间隔（5–10080 分钟）、启停与归档。类型从已固化流程推导，
+无需用户选择 HTTP 或浏览器。保存某一来源或刷新列表保留其他卡片未保存的字段；
+主动关闭/离开设置不保存这些临时编辑。关闭自动调度后，显式“换一批”仍可补充启用来源，
+但会尊重失败/限流冷却；配置策略不影响已有浏览器会话引用。
+
+聊天中确认的新网站以 `custom_<uuid>` 注册在应用数据库，不向 `[sources]` 增加任意 TOML 平台键。每个来源独立拥有 `target_share`（1–20，默认 1）、`interval_minutes`（5–10080，默认 30）和启停状态；同一网站可以有多个流程，也可拆成不同来源共享一个适用登录引用。名称、比例、周期与开关可直接修改；入口、目标和账号变化走新试跑/确认。
+
+配置读取策略 `effective_pool_source_shares(config, database=...)` 合并这些实例和内置平台份额；动态来源不聚合到旧 `[sources.web]` 的 `web` 份额，未知 custom ID 也不能通过手写 scheduler keys 预留配额。归档来源从列表与调度中移除，历史内容保留。浏览器凭据由执行宿主的 session profile 保存；注册表只保存不透明引用。新网页通过 Ego Lite 的任务空间执行，不使用下面历史实验的 CDP 设置。Ego profile 内的登录状态由宿主保存；任务空间隔离页面，不等于不同 Cookie profile。
+
+### Ego Lite 执行宿主
+
+新网页的 `auto` 和 `ego` 使用官方 Ego Lite；只有实际识别成功的 RSS/Atom/JSON Feed 自动使用 HTTP。更新已有流程时 `auto` 保留该流程执行器，避免悄然迁移。新建不接受 Playwright，已有旧流程仍按原执行器运行。
+
+默认在部署阶段准备托管宿主，无需新增 `config.toml` 开关。macOS 本机源码安装在依赖
+安装后、`--skip-start` 返回前自动准备；桌面包在安装后首次启动、CLI `start` / `serve-api`
+在实际服务启动时，于后台补齐未完成的环境，不等待聊天且不阻塞 HTTP/UI。
+准备会下载并验证官方应用，在**当前 SQLite 数据库所在目录的 `ego-managed`** 下安装、
+初始化私有 profile 和 named host，再验证原生连接；使用迁移和配置重读后的实际数据根。
+API、桌面和 CLI 服务启动检查在 `ready` 且已安装时跳过，即使宿主已退出也不重下或启动。
+源码安装重跑仍调用显式 `sources prepare-ego` 验证握手，必要时启动宿主。同进程失败不循环重试，
+下次服务启动会重试；设置页「准备 Ego Lite」或 `openbiliclaw sources prepare-ego` 也可重试。
+聊天网页准备仍可补救未完成环境，安装不占用页面观察预算。实际网页任务按需启动已准备
+宿主；只读状态查询不下载、不启动应用、不打开首次设置。
+自动初始化跳过个人浏览数据导入，不设默认浏览器、不添加 Dock、不启用崩溃报告。
+当前托管与原生执行只支持 macOS；Linux/Docker 和 Windows 不因安装 Python 依赖而获得此能力。
+
+启动后端时显式提供以下**任一非空环境变量**即退出托管（`managed=false`）。它们仅用于
+操作者自行管理的外部宿主；不接受网页或模型指定可执行文件，不会自动安装、初始化或
+重启该外部宿主。未配置任一变量时，默认并不是日常浏览器或 PATH 中的其他 Ego：
+
+| 环境变量 | 外部宿主用途 |
+| --- | --- |
+| `OPENBILICLAW_EGO_BROWSER` | 官方 `ego-browser` 的可执行文件路径；外部模式下未指定此项时从 PATH 查找 |
+| `OPENBILICLAW_EGO_SERVER_NAME` | 官方 named host 服务名；未指定时使用官方默认宿主 |
+| `OPENBILICLAW_EGO_PROFILE` | 本应用任务空间使用的 Ego profile ID；未指定时为 `Default` |
+
+来源/API 只保存不透明会话引用，私有会话目录保存本应用拥有的任务空间映射；网站凭据
+留在所选 Ego profile，不复制到配置或模型。默认托管 profile 与日常浏览数据隔离，
+但其中的多个任务空间仍可能共享同一 profile 的登录状态；页面隔离不等于各来源 Cookie 隔离。
+网站登录始终由用户在接管页完成。
+
+`installed`、`setup_state` 与 `available` 分别表示应用存在、准备阶段与当前原生连接。
+`setup_state=ready,available=false` 可以是已准备宿主暂时退出，下次实际工作再启动。
+外部连接 `connection_state=unverified` 则需实际试跑验证，不能从安装成功推断网页可用。
+状态 GET 没有这些启动副作用；准备失败不会触发 Playwright 回退，HTTP Feed 仍可用。
+
 ### `[sources.browser]`
 
-通用 Web / 自定义网页源使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
+历史 `web_extract` / 自定义网页实验使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
 
-> 当前小红书和抖音稳定链路都走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。这里的 CDP 配置主要用于没有专用插件 / API adapter 的网页源。
+> 动态网站与旧匿名 Web recipe 都不读取本段。新网页流程使用 Ego Lite 宿主任务空间；
+> 旧 `feed / sitemap / listing` recipe 保持匿名 HTTP，不使用 CDP、登录 Cookie 或 JavaScript。
+> 小红书和抖音稳定链路也走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `cdp_url` | string | `""` | 预启动 Chrome 的 CDP 端点，例如 `"http://localhost:9222"`。设置后优先走 Playwright `connect_over_cdp` 复用你手动登录的会话；留空则回退到 agent-browser（无登录态） |
 | `headed` | bool | `false` | agent-browser 回退路径是否显示窗口 |
 
-> **仅在通用 Web / 自定义网页源需要登录态时使用 CDP。** 普通 B 站 / 小红书 / 抖音使用路径不需要配置这里。
+> **仅在显式调用历史 `web_extract` 兼容实验时使用 CDP。** typed Web recipe API 不接受
+> `web_extract`，正式 producer 也不会把 CDP 当作失败 fallback。普通 B 站 / 小红书 / 抖音
+> 使用路径同样不需要配置这里。
 >
 > 启动步骤：
 > 1. 安装 Playwright：`pip install 'openbiliclaw[browser]'`
@@ -1233,6 +1322,26 @@ Instagram 首版为 `init-only`，没有 `instagram_incremental_hours` 配置，
 
 平台特例：抖音只要本地 Cookie 存在即显示 `unverified`，必须由实际抖音任务确认；小红书 / 知乎优先使用插件上报的 `logged_in + updated_at`，知乎仅在从未收到浏览器心跳时回落最近任务历史；Reddit `backend="rdt"` 只读取本地 credential 文件。Bangumi 不探测登录，状态由本地开关与最近 producer run ledger 计算。Linux.do 的公开发现始终匿名可用，扩展 `_t` 布尔心跳只决定个人 bookmarks / likes / read-history 是否可尝试；V2EX 匿名时为 `no_auth`，配置 PAT 后由 live probe 区分验证结论，不会把 PAT 状态误写成浏览器登录态。GitHub 匿名时同样为 `no_auth`，PAT 的 live probe 只提高凭据验证强度；当前 PAT 的正式 discovery 401 会让 profile / bootstrap 轴显示 unavailable，但指纹不匹配的旧标记在令牌轮换后失效，且任何 PAT 失败都不得把独立匿名 discovery 误报为不可用。`xsec_token` 只是小红书内容 URL 的访问令牌，不会据此判断账号已登录。
 
+### `[sources.web]`
+
+正式通用 Web 来源只跟随显式保存的公开 `feed / sitemap / listing` recipe。`[sources.web]`
+只保存全局 kill switch 和 transport/runtime ceiling；入口 URL、exact origin allowlist、间隔、
+item/page/detail 预算及 listing selector 属于 `/api/sources` recipe，不写在本段。
+
+| 键 | 类型 | 默认值 | 允许范围 | 说明 |
+|----|------|--------|----------|------|
+| `enabled` | bool | `true` | — | Web 全局紧急开关；没有 enabled Web recipe 时仍不预留 pool quota |
+| `request_timeout_seconds` | int | `15` | `1..60` | 单个资源的全流程 deadline（含 DNS、robots、redirect 与 body 读取）；不是整轮 recipe 的无限等待预算 |
+| `max_response_bytes` | int | `2097152` | `65536..5000000` | 普通响应解码后的字节上限；robots 另有更小的内部上限 |
+| `max_redirects` | int | `5` | `0..10` | 每个资源的 redirect 上限；每一跳仍须命中 recipe origin 并重新通过 DNS/robots 校验 |
+| `lease_seconds` | int | `300` | `30..3600` | recipe 初始 runtime lease；producer 会按有界请求预算续租，过期 worker 不能提交结果 |
+
+`GET /api/config` / `PUT /api/config` 与 TOML loader 使用同一字段和边界。创建 recipe 是实际
+opt-in：`enabled=true` 本身不会自动探测任何 URL。公开 HTTP transport 按 `[network].mode`
+选择直连、系统或自定义代理，内部显式冻结每跳代理并保持 `trust_env=false`。代理路径通过
+有界 DoH 解析并固定公共 IP；`[sources.browser]` 不改变它的出口，任何模式均不继承账号凭据。完整 recipe、
+robots fail-closed、socket DNS pin 与状态语义见 [通用 Web 来源文档](web.md)。
+
 ### `[scheduler]`
 
 TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为真实布尔值。`enabled`、`pause_on_extension_disconnect`、`profile_consolidation_enabled`、`profile_consolidation_archive_enabled`、`auto_update_enabled`、`auto_update_allow_prerelease` 接受常见 `true/false/1/0`；空字符串或无法识别的值回到各字段默认值，绝不会把字符串 `""` 留到 API 响应后再触发类型校验错误。
@@ -1300,7 +1409,9 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub、Instagram 等其余十三个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub、Instagram、Web 等其余 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+
+Web 仅在全局开关开启且至少存在一个 enabled recipe 时参与有效份额；它不参与画像初始化。Web typed recipe 由 `/api/sources` 或经写确认的 `create_source` 保存，不进入 `/api/config` payload。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1316,12 +1427,13 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `bangumi` | int | `1` | Bangumi 平台族占比；`bangumi-search` / `bangumi-ranked` / `bangumi-latest` 统一计入该族 |
 | `linuxdo` | int | `1` | Linux.do 平台族占比；`linuxdo-search` / `linuxdo-hot` / `linuxdo-feed` / `linuxdo-creator` / `linuxdo-related` 统一计入该族 |
 | `v2ex` | int | `1` | V2EX 平台族占比；`v2ex-search` / `v2ex-node` / `v2ex-tab` / `v2ex-hot` / `v2ex-latest` 统一计入该族 |
+| `web` | int | `1` | 通用 Web 平台族占比；`web-feed` / `web-sitemap` / `web-listing` 统一计入该族，仅在全局开关和 enabled recipe 同时存在时生效 |
 | `weibo` | int | `1` | 微博平台族占比；`weibo-search` / `weibo-hot` / `weibo-creator` 统一计入该族 |
 | `instagram` | int | `1` | Instagram 平台族占比；`instagram-topic` / `instagram-creator` 统一计入该族，仅在来源启用时生效 |
 
 运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音、YouTube、X、知乎与 Reddit 分别由既有正式 producer 补 raw candidates；GitHub 低于目标且 `[sources.github].enabled=true` 时，`GitHubDiscoveryProducer` 通过官方 REST API 执行 `search / ranked / latest`，按 canonical 去重与最终保留数扣预算，并遵守持久 cooldown。Bangumi 继续直连官方匿名 API；Linux.do 继续入队同源扩展任务。所有来源都只把 raw candidates 交给共享 evaluator/admission。
 
-`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十四平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
+`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出候选池比例建议，并动态计入存在有效 enabled recipe 的 Web discovery 来源；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
 
 ### `[discovery]`
 
@@ -1531,7 +1643,7 @@ Awareness seam 固定为 `legacy`。未发布的聚合字段
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：展示实例、全局调用链与四个模块链摘要，允许调整全局并发 / 超时、测试默认链，并跳转桌面 Web 完整编辑；插件保存其他字段时不会回写或压扁实例路由
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`，以及小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub 的来源配置
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十四个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十五个来源族的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 高级功能（桌面 Web 与插件设置页均有「认知循环预算」区块）：`soul.awareness_event_batch_size`、`soul.insight_note_batch_size`、`soul.cognition_max_tokens`（issue #169）
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 
@@ -1719,6 +1831,50 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 热词选择沿用既有 6 小时复用 TTL，现在从已入队 hot payload 恢复，客户端重建 / 进程重启
 也不会清空。它与失败冷却的 6 小时上限是两项独立规则，没有新增配置项或更改成功间隔。
 
+### 硅基流动作为普通 Provider
+
+| 已实现配置 | 语义 |
+| --- | --- |
+| `llm.instances.<id>.provider_type="siliconflow_free"` | 与其他实例同层，固定两个模型实例 `Qwen/Qwen3-8B`、`Qwen/Qwen3.5-4B`；名称、启用状态、模型及所有端点字段不可修改，不允许复制或删除。 |
+| `llm.default_chain` / `llm.routes.*.chain` | 唯一聊天选择与备用顺序。可选择两个固定免费实例，也可显式把自有实例加入链；模块自定义链不会被免费服务截获。 |
+| `llm.embedding.provider="siliconflow_free"` | 独立选择云端 `BAAI/bge-m3`，1024维、文本；可与任何 LLM 组合，也可改用原有 Ollama / 其他 Embedding Provider。 |
+| `llm.builtin_providers_version=2` | 固定保留两个模型实例。旧版本按模型归并重复项并重写链引用，保留已有首个 ID / 模型与自有凭据；缺少的模型自动补入但不加入链。 |
+| `[llm.sponsored]` | 仅承载受保护传输的超时、通知、本机 runtime 路径和可选 HTTPS 中继地址；不是第二套模型路由。旧启用/模型/互备/向量模式字段仅供迁移。 |
+
+```toml
+[llm]
+routing_version = 2
+builtin_providers_version = 2
+default_chain = ["siliconflow-free"]
+
+[llm.instances.siliconflow-free]
+name = "硅基流动 · Qwen3-8B（免费）"
+provider_type = "siliconflow_free"
+enabled = true
+model = "Qwen/Qwen3-8B"
+
+[llm.embedding]
+provider = "siliconflow_free"
+model = "BAAI/bge-m3"
+output_dimensionality = 1024
+```
+
+公开 API：`builtin_siliconflow_instance(model)` 构造固定目录项（供内部使用）；`migrate_sponsored_provider_config(llm, seed_preset=False)` 将旧全局开关转换为明确的主实例和可选备用实例，保留自有凭据及模块链，不隐式追加付费渠道；`uses_siliconflow_free(llm, include_embedding=True)` 按实际路由判断组件需求与通知。`load_config_with_diagnostics()` 读取时归一化，`save_config()` 在序列化前完成迁移。
+
+旧 `embedding_mode=cloud` 迁移为上述独立配置；旧 `local` 保留已有 Ollama 模型和地址。云端/本地采用不同缓存 provenance，聊天切换不改变向量空间。旧免费独占时未使用且缺少凭据的模板保留为停用草稿。新客户端通过普通实例/Embedding API 修改，避免继续写旧全局开关。
+
+仅改变默认调用链时，`RuntimeContext.try_apply_llm_instance_config()` 切换已有实例的顺序，已开始请求保留选定对象，新请求用新顺序；任何实例字段或模块链变更仍走既有修订队列与完整安全重建。SDK 每个模型保留交互首段预算和有界同模型重试，跨实例备用由正常链控制。
+
+组件固定信任根与打包方式不变；`runtime_path` 不允许通过 Web 修改，`relay_url` 仅接受 HTTPS origin。见 [Runtime](runtime.md#免费模型组件安装与更新)。
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| config | `[llm.sponsored].relay_url` 为可选 HTTPS origin；禁止用户信息、路径、查询、fragment 和 HTTP。留空沿用 `runtime/relay_release.py` 的官方默认（目前尚未部署，默认仍空）。保存重载、registry、设置探测、初始化和更新器共用同一路由。设备私钥仅存于当前数据目录 `runtime/relay-device.key`，不通过配置 API 返回。 |
+
 ## Mac App Store distribution
+
+Store builds resolve the bundled free-model executable themselves and ignore a custom `llm.sponsored.runtime_path`. Free models can be selected in setup or settings.
 
 No new TOML fields. Store builds keep configuration/data/models/logs in their App Sandbox container and do not automatically import the source/DMG profile. `[autostart].enabled` is not a store login-item instruction: the native window offers explicit SMAppService control. `[scheduler].auto_update_enabled` cannot enable source updates in store builds. Fresh store profiles use a private loopback Ollama port and container-local model storage; model download remains an explicit setup action. See [store build and limits](../mac-app-store.md).

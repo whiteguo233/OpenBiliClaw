@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example engineering</title>
+    <link>https://news.example.com/</link>
+    <description>Fixture feed</description>
+    <item>
+      <guid isPermaLink="false">entry-one</guid>
+      <title>Alpha &amp; Omega</title>
+      <link>/posts/alpha?utm_source=rss&amp;b=2&amp;a=1</link>
+      <description><![CDATA[<p>A compact <strong>summary</strong>.</p>]]></description>
+      <dc:creator>Alice</dc:creator>
+      <pubDate>Mon, 10 Aug 2026 09:00:49 GMT</pubDate>
+    </item>
+    <item>
+      <guid>https://outside.example/posts/ignored</guid>
+      <title>Outside the recipe origin</title>
+      <link>https://outside.example/posts/ignored</link>
+    </item>
+  </channel>
+</rss>

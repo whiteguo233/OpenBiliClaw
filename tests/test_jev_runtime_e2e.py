@@ -113,10 +113,13 @@ def real_jev_app(tmp_path: Path) -> Iterator[tuple[str, Path, subprocess.Popen]]
                 process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("address_mode", ["base", "endpoint"])
 def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
-    real_jev_app: tuple[str, Path, subprocess.Popen], chromium_page: Page
+    real_jev_app: tuple[str, Path, subprocess.Popen], chromium_page: Page, address_mode: str
 ) -> None:
     """The actual config transaction changes the running evaluator, not just TOML."""
+    from playwright.sync_api import expect
+
     url, directory, _ = real_jev_app
     page = chromium_page
     with FakeJevBackend(model="jev-1.14.0", max_state_question_bytes=12_000) as backend:
@@ -124,16 +127,20 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.get_by_role("button", name="设置", exact=True).click()
         page.get_by_role("tab", name="高级功能").click()
         form = page.locator("#jevConnectionSettings")
-        form.get_by_label("启用 Jev 服务连接", exact=True).check()
-        form.get_by_label("API URL（完整接口地址）", exact=True).fill(backend.url)
+        form.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
+        form.get_by_label("接口地址类型", exact=True).select_option(address_mode)
+        form.locator('[data-jev="endpoint_url"]').fill(
+            backend.url.removesuffix("/v1/systemone") if address_mode == "base" else backend.url
+        )
         form.get_by_label("固定模型 ID", exact=True).fill("jev-1.14.0")
         form.get_by_label("Token", exact=True).fill("synthetic-test-key")
         page.locator("#evalScorer").select_option("jev")
-        # Tighten an official model's standard window through the actual form.
-        form.locator("summary").click()
+        # Match the fixture's 12KB ceiling explicitly through the actual form;
+        # do not rely on the removed implicit 25% byte-budget reservation.
+        form.get_by_text("上下文与请求预算", exact=True).click()
         form.get_by_label("手动设置所选模型的上下文上限", exact=True).check()
         form.get_by_label("总请求 token 上限", exact=True).fill("64000")
-        form.get_by_label("state＋单题 token 上限", exact=True).fill("16000")
+        form.get_by_label("state＋单题 token 上限", exact=True).fill("12000")
         form.get_by_label("传输最大尝试次数", exact=True).fill("1")
         with page.expect_response(
             lambda response: (
@@ -156,6 +163,12 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
             read = client.get("/api/config?reveal_keys=true")
             assert "synthetic-test-key" not in read.text
             assert read.json()["discovery"]["eval_scorer"] == "jev"
+            assert (
+                read.json()["discovery"]["jev_provider"]["context_budget"][
+                    "max_state_question_bytes"
+                ]
+                == 12_000
+            )
             saved = load_config(directory / "config.toml", consult_environment=False)
             assert saved.decision.providers.jev.endpoint_url == backend.url
             assert saved.decision.providers.jev.model == "jev-1.14.0"
@@ -220,7 +233,7 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
             assert request["model"] == "jev-1.14.0"
             assert NEGATIVE in str(request["state"])
             candidates = request["state"]["untrusted_candidates"]
-            assert len(request["questions"]) == 10 * len(candidates)
+            assert len(request["questions"]) == 8 * len(candidates)
             for candidate in candidates:
                 content = candidate["content"]
                 seen.append(content["content_id"])
@@ -234,8 +247,11 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
         page.reload()
         page.get_by_role("button", name="设置", exact=True).click()
         page.get_by_role("tab", name="高级功能").click()
-        assert page.locator("#evalScorer").input_value() == "jev"
-        assert form.get_by_label("Token", exact=True).input_value() == ""
+        # Reload hydrates settings asynchronously; wait for the persisted value
+        # instead of reading the initial HTML default before /api/config returns.
+        form.get_by_text("本机已保存 Token。", exact=False).wait_for()
+        expect(page.locator("#evalScorer")).to_have_value("jev")
+        expect(form.get_by_label("Token", exact=True)).to_have_value("")
         artifacts = ROOT / "output/playwright"
         artifacts.mkdir(parents=True, exist_ok=True)
         form.screenshot(path=str(artifacts / "jev-runtime-settings.png"))
@@ -261,7 +277,7 @@ def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
     url, directory, first_process = real_jev_app
     model = "synthetic-restart-v1"
     with FakeJevBackend(
-        model=model, max_request_bytes=30_000, max_state_question_bytes=15_000
+        model=model, max_request_bytes=40_000, max_state_question_bytes=20_000
     ) as backend:
         with httpx.Client(base_url=url, trust_env=False, timeout=5) as client:
             response = client.put(
@@ -335,7 +351,7 @@ def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
                     status = read.json()["discovery"]["jev_provider"]
                     assert status["model"] == model
                     assert status["endpoint_url"] == backend.url
-                    assert status["context_budget"]["max_state_question_bytes"] == 15_000
+                    assert status["context_budget"]["max_state_question_bytes"] == 20_000
                     response = client.post(
                         "/api/sources/xhs/observed-urls",
                         json={
@@ -365,7 +381,7 @@ def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
                         db.close()
                     assert len(backend.requests) == 1
                     assert backend.requests[0]["model"] == model
-                    assert len(backend.requests[0]["questions"]) == 10
+                    assert len(backend.requests[0]["questions"]) == 8
             finally:
                 restarted.terminate()
                 try:

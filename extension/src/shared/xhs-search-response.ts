@@ -12,6 +12,8 @@ export interface XhsSearchResponseNote {
   title: string;
   author: string;
   cover_url: string;
+  description?: string;
+  tags?: string[];
   view_count?: number;
   like_count?: number;
   collect_count?: number;
@@ -151,6 +153,17 @@ function normalizeCandidate(raw: Record<string, unknown>): XhsSearchResponseNote
   ]);
   const commentCount = firstCount(metricRecords, ["comment_count", "commentCount"]);
   const publishedAt = firstPublishedAt(records);
+  // Only public fields of this note; never forward arbitrary response objects.
+  const description = firstString([card], ["desc", "description"]).slice(0, 8000);
+  if (description) note.description = description;
+  const rawTags = card.tag_list ?? card.tagList;
+  if (Array.isArray(rawTags)) {
+    const tags = [...new Set(rawTags.slice(0, 32)
+      .filter(isRecord)
+      .map((tag) => firstString([tag], ["name"]).slice(0, 128))
+      .filter(Boolean))];
+    if (tags.length) note.tags = tags;
+  }
   if (viewCount !== undefined) note.view_count = viewCount;
   if (likeCount !== undefined) note.like_count = likeCount;
   if (collectCount !== undefined) note.collect_count = collectCount;

@@ -716,12 +716,13 @@
   }
 
   function contextErrorCode(error) {
-    return text(error?.details?.detail?.code || error?.details?.code).toLowerCase();
+    return text(error?.details?.detail?.code || error?.details?.code || error?.details?.error).toLowerCase();
   }
 
   function contextErrorMessage(error) {
     const code = contextErrorCode(error);
-    const serverMessage = text(error?.details?.detail?.message || error?.details?.message);
+    const detail = error?.details?.detail;
+    const serverMessage = text(typeof detail === "string" ? detail : detail?.message || error?.details?.message);
     const localizedMessage = {
       reply_target_not_found: "这条卡片已经不在了，请重新打开一条待聊内容。",
       reply_target_inactive: "这条上下文已经失效，请重新打开后再发。",

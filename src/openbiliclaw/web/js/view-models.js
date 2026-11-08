@@ -175,6 +175,13 @@ const SOURCE_ALIAS_MAP = {
   v2ex: "v2ex",
   ig: "instagram",
   instagram: "instagram",
+  web: "web",
+};
+
+const WEB_SOURCE_STRATEGY_LABEL_MAP = {
+  "web-feed": "网页订阅（RSS/Atom/JSON Feed）",
+  "web-sitemap": "网页站点地图（Sitemap）",
+  "web-listing": "网页列表页",
 };
 
 const RUNTIME_TOPIC_LABEL_MAP = {
@@ -321,10 +328,20 @@ export function getSourceLabel(source) {
   return SOURCE_LABEL_MAP[source] || source || "Web";
 }
 
+export function getRecommendationSourceLabel(item) {
+  return normalizeText(item?.source_name) || getSourceLabel(normalizeSourcePlatform(item));
+}
+
+export function getSourceStrategyLabel(value) {
+  const text = normalizeText(value);
+  return WEB_SOURCE_STRATEGY_LABEL_MAP[text.toLowerCase()] || text;
+}
+
 function formatRuntimeTopicLabel(value) {
   const text = normalizeText(value);
   if (!text) return "";
   const key = text.toLowerCase();
+  if (WEB_SOURCE_STRATEGY_LABEL_MAP[key]) return WEB_SOURCE_STRATEGY_LABEL_MAP[key];
   if (RUNTIME_TOPIC_LABEL_MAP[key]) return RUNTIME_TOPIC_LABEL_MAP[key];
   if (key.startsWith("xhs-extension-")) return "小红书";
   if (key.startsWith("dy-plugin-") || key.startsWith("douyin-")) return "抖音";
@@ -400,6 +417,7 @@ export function buildContentUrl(item) {
     || platform === "reddit"
     || platform === "weibo"
     || platform === "instagram"
+    || platform === "web"
   ) return "";
   return buildVideoUrl(vid);
 }
@@ -414,7 +432,7 @@ export function buildRecommendationClickPayload(item, contentUrl = "") {
     source_platform: normalizeSourcePlatform(item),
     title: normalizeText(item?.title),
     recommendation_id: typeof item?.id === "number" ? item.id : null,
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     up_name: normalizeText(item?.up_name),
   };
 }
@@ -438,7 +456,7 @@ export function normalizeRecommendation(item) {
         : DEFAULT_CREATOR_NAME),
     cover_url: normalizeCoverUrl(item?.cover_url),
     expression: normalizeText(item?.expression),
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
     ...(normalizeText(item?.batch_ref) ? {
@@ -448,6 +466,8 @@ export function normalizeRecommendation(item) {
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     content_type: normalizeText(item?.content_type)
       || (sourcePlatform === "bilibili" && contentId ? "video" : ""),
     body_text: normalizeText(item?.body_text),
@@ -528,6 +548,7 @@ export function formatCountCn(n) {
 // Build the "▶ … · 👍 … · 💬 … · ⭐ … · 弹幕 …" stats line. Only counts
 // > 0 appear; when nothing qualifies the result is "" (render nothing).
 export function recommendationStats(item) {
+  if (normalizeSourcePlatform(item) === "web") return "";
   const segments = [];
   const sourceRank = Math.trunc(Number(item?.source_rank) || 0);
   if (item?.view_count > 0) segments.push(`▶ ${formatCountCn(item.view_count)}`);
@@ -616,6 +637,8 @@ export function normalizeDelightCandidate(item) {
     cover_url: normalizeCoverUrl(item?.cover_url),
     content_url: normalizeText(item?.content_url),
     source_platform: normalizeSourcePlatform(item),
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     published_at: normalizeText(item?.published_at),
     published_label: String(item?.published_label ?? "").replace(/\s+/g, " ").trim().slice(0, 64),
     content_type: normalizeText(item?.content_type),
@@ -776,6 +799,7 @@ export function normalizePoolStatus(status) {
 
 export function normalizeRuntimeStatus(status) {
   return {
+    sponsored_status: status?.sponsored_status || {},
     initialized: Boolean(status?.initialized),
     recommendation_count: Number(status?.recommendation_count ?? 0),
     pending_signal_events: Number(status?.pending_signal_events ?? 0),

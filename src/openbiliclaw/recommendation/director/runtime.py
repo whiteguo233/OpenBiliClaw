@@ -118,6 +118,7 @@ class DirectorRuntime:
                 self.provider,
                 model=config.decision.providers.jev.model,
                 config=config.discovery.jev_evaluation,
+                provider_identity=config.decision.providers.jev.endpoint_url,
                 context_budget=self.context_budget,
             )
             if config.discovery.eval_scorer == "jev" and self.provider is not None

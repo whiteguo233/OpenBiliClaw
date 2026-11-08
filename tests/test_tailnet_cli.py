@@ -210,7 +210,7 @@ def test_run_api_server_stops_tailnet_helper_after_uvicorn_returns(
     # Keep this unit test free of the default four-process worker children.
     monkeypatch.setenv("OPENBILICLAW_WORKER", "0")
 
-    monkeypatch.setattr(api_app_module, "create_app", lambda: app)
+    monkeypatch.setattr(api_app_module, "create_app", lambda **_kwargs: app)
     monkeypatch.setattr(config_module, "load_config", Config)
     monkeypatch.setattr(
         cli_module,

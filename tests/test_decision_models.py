@@ -73,6 +73,73 @@ def test_native_typed_evidence_round_trip() -> None:
     assert DecisionRequest.model_validate_json(request.model_dump_json()) == request
 
 
+def test_known_gateway_metadata_is_accepted_but_not_part_of_decision_evidence() -> None:
+    payload = _payload()
+    payload.update(id="synthetic-request", provider="TypeSafe")
+    payload["usage"]["cost"] = 0.000591486
+    _, answers, usage = parse_jev_response(payload, _request())
+    assert answers["fit"].score == 1.5
+    assert usage.model_dump() == {"input_tokens": 100, "output_tokens": 12}
+    payload["unrecognized"] = True
+    with pytest.raises(ValueError):
+        parse_jev_response(payload, _request())
+
+
+@pytest.mark.parametrize(
+    ("score", "probabilities"),
+    [
+        # Numeric regression from real OpenRouter Jev 1.14 responses, 2026-10-27.
+        (7.48, [0, 0, 0, 0.01, 0.01, 0.04, 0.11, 0.25, 0.38, 0.20]),
+        (3.31, [0.06, 0.02, 0.02, 0.33, 0.56]),
+    ],
+)
+def test_wire_rounding_keeps_original_score_and_distribution(
+    score: float, probabilities: list[float]
+) -> None:
+    rubric = tuple(f"level {i}" for i in range(len(probabilities)))
+    request = _request(questions={"fit": ScoreQuestion(instructions="Rate", criteria=rubric)})
+    payload = _payload()
+    payload["answers"] = {
+        "fit": {
+            "type": "score",
+            "score": score,
+            "confidence": 0.6,
+            "legend": {str(i): label for i, label in enumerate(rubric)},
+            "probabilities": {str(i): p for i, p in enumerate(probabilities)},
+        }
+    }
+    _, answers, _ = parse_jev_response(payload, request)
+    assert answers["fit"].score == score
+    assert list(answers["fit"].probabilities.values()) == probabilities
+
+
+@pytest.mark.parametrize(
+    ("score", "probabilities"),
+    [
+        (3.9, [0.06, 0.02, 0.02, 0.33, 0.56]),  # no possible rounded distribution yields this score
+        (3.31, [0.06, 0.02, 0.02, 0.33, 0.50]),  # too much missing probability mass
+        (3.31, [0.06, 0.02, 0.02, 0.33, 0.561]),  # not the observed 2dp wire format
+    ],
+)
+def test_rounding_does_not_accept_inconsistent_or_arbitrary_precision_evidence(
+    score: float, probabilities: list[float]
+) -> None:
+    rubric = tuple(f"level {i}" for i in range(len(probabilities)))
+    request = _request(questions={"fit": ScoreQuestion(instructions="Rate", criteria=rubric)})
+    payload = _payload()
+    payload["answers"] = {
+        "fit": {
+            "type": "score",
+            "score": score,
+            "confidence": 0.6,
+            "legend": {str(i): label for i, label in enumerate(rubric)},
+            "probabilities": {str(i): p for i, p in enumerate(probabilities)},
+        }
+    }
+    with pytest.raises(ValueError):
+        parse_jev_response(payload, request)
+
+
 def test_digest_binds_semantics_not_map_order_request_id_or_deadline() -> None:
     request = _request()
     fields = request.model_dump(mode="json")

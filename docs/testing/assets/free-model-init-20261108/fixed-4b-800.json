@@ -1,0 +1,566 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "event_count": 800,
+  "calls": [
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 32.15
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 29.13
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 38.24
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.26
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.22
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.16
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.15
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.17
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.2
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.23
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.21
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.16
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.17
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.2
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.15
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.18
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.19
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.16
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.18
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.22
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.2
+    },
+    {
+      "caller": null,
+      "input_bytes": 18,
+      "max_tokens": null,
+      "effort": null,
+      "ok": true,
+      "seconds": 0.17
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33253,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 33.1
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 13.42
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 31.04
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 21.94
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33253,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 25.01
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 21.93
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 31.73
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 29.68
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33253,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 20.94
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 9.29
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 21.19
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 23.68
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33253,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 9.46
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 43.29
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 44.59
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 29.28
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33253,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 26.28
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 20.62
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 20.86
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 20.73
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33253,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 13.43
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 18.61
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33299,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 8.9
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33200,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 6.29
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33199,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 35.56
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 33246,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 24.89
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 24162,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 18.75
+    },
+    {
+      "caller": "soul.profile_build",
+      "input_bytes": 9648,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "seconds": 4.06
+    }
+  ],
+  "planned_batches": 30,
+  "progress": [
+    {
+      "done": 1,
+      "total": 30,
+      "seconds": 30.13
+    },
+    {
+      "done": 2,
+      "total": 30,
+      "seconds": 37.02
+    },
+    {
+      "done": 3,
+      "total": 30,
+      "seconds": 68.38
+    },
+    {
+      "done": 4,
+      "total": 30,
+      "seconds": 81.82
+    },
+    {
+      "done": 5,
+      "total": 30,
+      "seconds": 101.5
+    },
+    {
+      "done": 6,
+      "total": 30,
+      "seconds": 112.87
+    },
+    {
+      "done": 7,
+      "total": 30,
+      "seconds": 134.83
+    },
+    {
+      "done": 8,
+      "total": 30,
+      "seconds": 137.93
+    },
+    {
+      "done": 9,
+      "total": 30,
+      "seconds": 156.76
+    },
+    {
+      "done": 10,
+      "total": 30,
+      "seconds": 186.47
+    },
+    {
+      "done": 11,
+      "total": 30,
+      "seconds": 188.51
+    },
+    {
+      "done": 12,
+      "total": 30,
+      "seconds": 207.41
+    },
+    {
+      "done": 13,
+      "total": 30,
+      "seconds": 216.71
+    },
+    {
+      "done": 14,
+      "total": 30,
+      "seconds": 228.62
+    },
+    {
+      "done": 15,
+      "total": 30,
+      "seconds": 240.39
+    },
+    {
+      "done": 16,
+      "total": 30,
+      "seconds": 249.87
+    },
+    {
+      "done": 17,
+      "total": 30,
+      "seconds": 283.71
+    },
+    {
+      "done": 18,
+      "total": 30,
+      "seconds": 294.47
+    },
+    {
+      "done": 19,
+      "total": 30,
+      "seconds": 320.78
+    },
+    {
+      "done": 20,
+      "total": 30,
+      "seconds": 323.77
+    },
+    {
+      "done": 21,
+      "total": 30,
+      "seconds": 341.39
+    },
+    {
+      "done": 22,
+      "total": 30,
+      "seconds": 362.15
+    },
+    {
+      "done": 23,
+      "total": 30,
+      "seconds": 362.27
+    },
+    {
+      "done": 24,
+      "total": 30,
+      "seconds": 375.58
+    },
+    {
+      "done": 25,
+      "total": 30,
+      "seconds": 384.51
+    },
+    {
+      "done": 26,
+      "total": 30,
+      "seconds": 390.8
+    },
+    {
+      "done": 27,
+      "total": 30,
+      "seconds": 394.21
+    },
+    {
+      "done": 28,
+      "total": 30,
+      "seconds": 419.13
+    },
+    {
+      "done": 29,
+      "total": 30,
+      "seconds": 429.79
+    },
+    {
+      "done": 30,
+      "total": 30,
+      "seconds": 437.88
+    }
+  ],
+  "deadlines": {
+    "idle": 1500.0,
+    "absolute": 3300.0
+  },
+  "preference_seconds": 437.99,
+  "ok": true,
+  "total_seconds": 442.09
+}

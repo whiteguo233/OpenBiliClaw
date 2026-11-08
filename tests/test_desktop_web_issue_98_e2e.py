@@ -793,7 +793,7 @@ def test_recommendations_and_runtime_recover_without_leaving_init_gate(
     issue_98_server: tuple[str, Issue98Stub],
     chromium_page: Page,
 ) -> None:
-    base_url, _ = issue_98_server
+    base_url, stub = issue_98_server
     request_counts = {"recommendations": 0, "runtime": 0}
 
     def fail_first_recommendation(route: Any) -> None:
@@ -816,7 +816,10 @@ def test_recommendations_and_runtime_recover_without_leaving_init_gate(
 
     expect(chromium_page.locator("#videoGrid .video-card")).to_have_count(3, timeout=5000)
     expect(chromium_page.locator("#videoGrid .init-onboarding")).to_have_count(0)
-    expect(chromium_page.locator("#poolAvailable")).to_contain_text("30")
+    # The first successful snapshot has 30 items; reconciliation after delivery
+    # rereads the runtime and must render the remaining 27, not that old value.
+    assert stub.runtime_reread_received.wait(timeout=1.5)
+    expect(chromium_page.locator("#poolAvailable")).to_contain_text("27")
     assert request_counts["recommendations"] >= 2
     assert request_counts["runtime"] >= 3
 

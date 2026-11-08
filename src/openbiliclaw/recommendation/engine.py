@@ -39,6 +39,7 @@ from openbiliclaw.llm.json_utils import (
 )
 from openbiliclaw.llm.prompt_cache import PromptLayerRenderCache, profile_prompt_layers
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.recommendation.exclusion import phrase_dislike_terms
 from openbiliclaw.saved_sync.identity import content_storage_key
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 from openbiliclaw.sources.platforms import normalize_source_platform, source_family
@@ -820,8 +821,10 @@ class RecommendationEngine:
         another platform into the response, and letting the client filter it
         away would hide the drift instead of surfacing it.
 
-        Classification must use ``source_family`` — the same function storage
-        counts and selects with — not ``source_platform`` alone. Legacy rows
+        Public scopes use canonical content family; a Web tab includes custom
+        sources without changing their independent quota ownership. Internal
+        callers may still scope to a registered source ID. Classification uses
+        ``source_family``, not ``source_platform`` alone. Legacy rows
         carry their platform only in the ``source`` strategy prefix
         (``zhihu-hot``), and ``_rows_to_discovered`` defaults their blank
         ``source_platform`` to bilibili; judging by that column would discard
@@ -834,7 +837,7 @@ class RecommendationEngine:
         leaked: list[str] = []
         for item in candidates:
             family = source_family(item.source_strategy, item.source_platform)
-            if family == scope:
+            if scope == family or scope == item.source_id:
                 kept.append(item)
             else:
                 leaked.append(f"{item.bvid}@{family}")
@@ -5526,6 +5529,8 @@ class RecommendationEngine:
                 content_type=str(row.get("content_type", "") or "video"),
                 body_text=str(row.get("body_text", "") or ""),
                 source_metadata=self._parse_source_metadata(row.get("source_metadata", "{}")),
+                source_id=str(row.get("source_id") or ""),
+                source_name=str(row.get("source_name") or ""),
             )
             for row in rows
         ]
@@ -5827,7 +5832,10 @@ class RecommendationEngine:
             cls._normalize_dislike_match_text((item.body_text or "")[:800]),
             *[cls._normalize_dislike_match_text(tag) for tag in item.tags],
         ]
-        for term in disliked_terms:
+        # Scope parity with recommendation.exclusion: only phrase terms may
+        # substring-match prose; a bare category label ("科普" / "崩坏") is a
+        # structured-topic exclusion, never a site-wide title filter.
+        for term in phrase_dislike_terms(disliked_terms):
             if any(term in field for field in search_fields if field):
                 return True
         return False

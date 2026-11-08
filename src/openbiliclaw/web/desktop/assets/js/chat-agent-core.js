@@ -317,7 +317,8 @@
       : call.approval
         ? "is-pending"
         : "is-running";
-    return `<span class="agent-tool-dot ${dotClass}" aria-hidden="true"></span><span class="agent-tool-summary">${escapeHtml(call.summary)}</span>`;
+    const summary = global.OpenBiliClawAgentChat?.toolSummary(call.toolName, call.summary) || call.summary;
+    return `<span class="agent-tool-dot ${dotClass}" aria-hidden="true"></span><span class="agent-tool-summary">${escapeHtml(summary)}</span>`;
   }
 
   function approvalCardMarkup(approval, options = {}) {

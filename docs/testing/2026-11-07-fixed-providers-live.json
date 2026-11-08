@@ -1,0 +1,578 @@
+{
+  "date": "2026-11-07",
+  "code_commit": "f5eb53f4",
+  "platform": "macOS x86_64",
+  "runtime_version": "2026-11-06.2",
+  "core_version": "0.3.234",
+  "isolation": "Fresh temporary config/data, verified release SDK, no user keys or histories imported.",
+  "transport": "Production Uvicorn HTTP/SSE and signed Rust IPC with real SiliconFlow upstream.",
+  "extension_scope": "Real popup files and HTTP/provider calls; chrome.storage/runtime host APIs use a fixture shim.",
+  "primary_run": [
+    {
+      "case": "fresh_setup_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 7.848,
+      "first_instance": "siliconflow-free",
+      "default_chain": [
+        "siliconflow-free"
+      ],
+      "probes": [
+        {
+          "kind": "llm_instance",
+          "model": "Qwen/Qwen3-8B",
+          "provider": "siliconflow_free",
+          "ok": true,
+          "latency_ms": 1404
+        },
+        {
+          "kind": "embedding",
+          "model": "BAAI/bge-m3",
+          "provider": "siliconflow_free",
+          "ok": true,
+          "latency_ms": 537
+        }
+      ],
+      "runtime_override": false
+    },
+    {
+      "case": "default_chain_after_setup_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free",
+      "seconds": 0.741,
+      "error": ""
+    },
+    {
+      "case": "real_agent_tool_stream_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 15.712,
+      "first_delta_seconds": 14.866,
+      "delta_count": 7,
+      "tools": [
+        "read_memory",
+        "read_memory"
+      ],
+      "event_types": [
+        "tool_call",
+        "tool_result",
+        "delta",
+        "final",
+        "done"
+      ],
+      "reply": "目前尚未建立完整的兴趣信息。",
+      "errors": []
+    },
+    {
+      "case": "desktop_chain_switch_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "default_chain": [
+        "siliconflow-free-qwen35-4b",
+        "siliconflow-free"
+      ]
+    },
+    {
+      "case": "switched_chain_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free-qwen35-4b",
+      "seconds": 1.797,
+      "error": ""
+    },
+    {
+      "case": "embedding_after_switch_8b",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "instance_id": "",
+      "seconds": 0.649,
+      "error": ""
+    },
+    {
+      "case": "persisted_restart_8b",
+      "ok": true,
+      "first_model": "Qwen/Qwen3.5-4B",
+      "default_chain": [
+        "siliconflow-free-qwen35-4b",
+        "siliconflow-free"
+      ]
+    },
+    {
+      "case": "llm_after_restart_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free-qwen35-4b",
+      "seconds": 1.042,
+      "error": ""
+    },
+    {
+      "case": "embedding_after_restart_8b",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "instance_id": "",
+      "seconds": 0.714,
+      "error": ""
+    },
+    {
+      "case": "mobile_live_chat_8b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 7.221,
+      "delta_count": 21
+    },
+    {
+      "case": "embedding_concurrent_semantic_vectors",
+      "ok": true,
+      "requests": 3,
+      "dimensions": [
+        1024,
+        1024,
+        1024
+      ],
+      "seconds": 1.074,
+      "related_cosine": 0.9402,
+      "unrelated_cosine": 0.2948,
+      "empty_llm_chain": true
+    },
+    {
+      "case": "actual_usage_8b",
+      "ok": true,
+      "rows": [
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3-8B",
+          "agent.chat",
+          3,
+          16292
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3-8B",
+          "soul.dialogue_insight",
+          1,
+          1180
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3.5-4B",
+          "agent.chat",
+          1,
+          5073
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3.5-4B",
+          "soul.dialogue_insight",
+          1,
+          838
+        ]
+      ]
+    },
+    {
+      "case": "isolated_cleanup_8b",
+      "ok": true,
+      "keychain_status": 0
+    },
+    {
+      "case": "fresh_setup_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 3.869,
+      "first_instance": "siliconflow-free-qwen35-4b",
+      "default_chain": [
+        "siliconflow-free-qwen35-4b"
+      ],
+      "probes": [
+        {
+          "kind": "llm_instance",
+          "model": "Qwen/Qwen3.5-4B",
+          "provider": "siliconflow_free",
+          "ok": true,
+          "latency_ms": 1149
+        },
+        {
+          "kind": "embedding",
+          "model": "BAAI/bge-m3",
+          "provider": "siliconflow_free",
+          "ok": true,
+          "latency_ms": 531
+        }
+      ],
+      "runtime_override": false
+    },
+    {
+      "case": "default_chain_after_setup_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free-qwen35-4b",
+      "seconds": 0.967,
+      "error": ""
+    },
+    {
+      "case": "real_agent_tool_stream_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 4.404,
+      "first_delta_seconds": 2.32,
+      "delta_count": 16,
+      "tools": [
+        "read_memory"
+      ],
+      "event_types": [
+        "tool_call",
+        "tool_result",
+        "delta",
+        "final",
+        "done"
+      ],
+      "reply": "目前 core 层记忆尚未建立完整画像，兴趣信息不足。\n\n{\"tool_call\": {\"name\": \"get_profile\", \"arguments\": {}}}",
+      "errors": []
+    },
+    {
+      "case": "desktop_chain_switch_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "default_chain": [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b"
+      ]
+    },
+    {
+      "case": "switched_chain_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free",
+      "seconds": 0.583,
+      "error": ""
+    },
+    {
+      "case": "embedding_after_switch_4b",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "instance_id": "",
+      "seconds": 0.334,
+      "error": ""
+    },
+    {
+      "case": "persisted_restart_4b",
+      "ok": true,
+      "first_model": "Qwen/Qwen3-8B",
+      "default_chain": [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b"
+      ]
+    },
+    {
+      "case": "llm_after_restart_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free",
+      "seconds": 1.015,
+      "error": ""
+    },
+    {
+      "case": "embedding_after_restart_4b",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "instance_id": "",
+      "seconds": 0.728,
+      "error": ""
+    },
+    {
+      "case": "mobile_live_chat_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 2.537,
+      "delta_count": 23
+    },
+    {
+      "case": "actual_usage_4b",
+      "ok": true,
+      "rows": [
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3-8B",
+          "agent.chat",
+          1,
+          5257
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3.5-4B",
+          "agent.chat",
+          2,
+          10393
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3.5-4B",
+          "soul.dialogue_insight",
+          1,
+          852
+        ]
+      ]
+    },
+    {
+      "case": "isolated_cleanup_4b",
+      "ok": true,
+      "keychain_status": 0
+    }
+  ],
+  "followup_run": [
+    {
+      "case": "fresh_setup_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 22.014,
+      "first_instance": "siliconflow-free-qwen35-4b",
+      "default_chain": [
+        "siliconflow-free-qwen35-4b"
+      ],
+      "probes": [
+        {
+          "kind": "llm_instance",
+          "model": "Qwen/Qwen3.5-4B",
+          "provider": "siliconflow_free",
+          "ok": true,
+          "latency_ms": 14439
+        },
+        {
+          "kind": "embedding",
+          "model": "BAAI/bge-m3",
+          "provider": "siliconflow_free",
+          "ok": true,
+          "latency_ms": 597
+        }
+      ],
+      "runtime_override": false
+    },
+    {
+      "case": "default_chain_after_setup_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free-qwen35-4b",
+      "seconds": 0.938,
+      "error": ""
+    },
+    {
+      "case": "real_agent_tool_stream_4b_1",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 28.211,
+      "first_delta_seconds": 25.598,
+      "delta_count": 19,
+      "tools": [
+        "read_memory"
+      ],
+      "event_types": [
+        "tool_call",
+        "tool_result",
+        "delta",
+        "final",
+        "done"
+      ],
+      "reply": "目前 core 记忆层尚未建立完整画像，兴趣信息不足，无法给出针对性推荐。",
+      "errors": [],
+      "tool_result_ok": [
+        true
+      ],
+      "tool_json_in_reply": false
+    },
+    {
+      "case": "real_agent_tool_stream_4b_2",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 2.58,
+      "first_delta_seconds": 2.179,
+      "delta_count": 13,
+      "tools": [
+        "read_memory"
+      ],
+      "event_types": [
+        "tool_call",
+        "tool_result",
+        "delta",
+        "final",
+        "done"
+      ],
+      "reply": "core 记忆层尚未建立完整画像，兴趣信息不足。",
+      "errors": [],
+      "tool_result_ok": [
+        true
+      ],
+      "tool_json_in_reply": false
+    },
+    {
+      "case": "real_agent_tool_stream_4b_3",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 3.306,
+      "first_delta_seconds": 2.565,
+      "delta_count": 19,
+      "tools": [
+        "read_memory"
+      ],
+      "event_types": [
+        "tool_call",
+        "tool_result",
+        "delta",
+        "final",
+        "done"
+      ],
+      "reply": "目前 core 记忆层尚未建立完整画像，兴趣信息不足，无法给出针对性推荐。",
+      "errors": [],
+      "tool_result_ok": [
+        true
+      ],
+      "tool_json_in_reply": false
+    },
+    {
+      "case": "desktop_chain_switch_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "default_chain": [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b"
+      ]
+    },
+    {
+      "case": "switched_chain_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free",
+      "seconds": 0.696,
+      "error": ""
+    },
+    {
+      "case": "embedding_after_switch_4b",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "instance_id": "",
+      "seconds": 0.309,
+      "error": ""
+    },
+    {
+      "case": "persisted_restart_4b",
+      "ok": true,
+      "first_model": "Qwen/Qwen3-8B",
+      "default_chain": [
+        "siliconflow-free",
+        "siliconflow-free-qwen35-4b"
+      ]
+    },
+    {
+      "case": "llm_after_restart_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "provider": "siliconflow_free",
+      "instance_id": "siliconflow-free",
+      "seconds": 0.764,
+      "error": ""
+    },
+    {
+      "case": "embedding_after_restart_4b",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "instance_id": "",
+      "seconds": 0.482,
+      "error": ""
+    },
+    {
+      "case": "mobile_live_chat_4b",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 2.629,
+      "delta_count": 23
+    },
+    {
+      "case": "extension_instance_live_probe",
+      "ok": true,
+      "model": "Qwen/Qwen3-8B",
+      "seconds": 1.568,
+      "provider": "siliconflow_free",
+      "host_api_shim": true
+    },
+    {
+      "case": "extension_instance_live_probe",
+      "ok": true,
+      "model": "Qwen/Qwen3.5-4B",
+      "seconds": 1.006,
+      "provider": "siliconflow_free",
+      "host_api_shim": true
+    },
+    {
+      "case": "extension_embedding_live_probe",
+      "ok": true,
+      "model": "BAAI/bge-m3",
+      "provider": "siliconflow_free",
+      "host_api_shim": true
+    },
+    {
+      "case": "actual_usage_4b",
+      "ok": true,
+      "rows": [
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3-8B",
+          "agent.chat",
+          1,
+          5257
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3.5-4B",
+          "agent.chat",
+          6,
+          36985
+        ],
+        [
+          "siliconflow_free",
+          "Qwen/Qwen3.5-4B",
+          "soul.dialogue_insight",
+          3,
+          2518
+        ]
+      ]
+    },
+    {
+      "case": "isolated_cleanup_4b",
+      "ok": true,
+      "keychain_status": 0
+    }
+  ],
+  "quality_observations": [
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "case": "real_agent_tool_stream_4b",
+      "finding": "One of four tested read-memory dialogues appended an unexecuted tool_call JSON object to the final reply. Three unchanged follow-up trials had successful tool results and clean text. Transport ok does not imply output-quality pass."
+    },
+    {
+      "model": "Qwen/Qwen3.5-4B",
+      "finding": "Four read-memory dialogues completed in 4.404, 28.211, 2.580, and 3.306 seconds; observed timing is a sample, not a performance guarantee."
+    }
+  ],
+  "test_harness_notes": [
+    "Initial vector appendix attempted asyncio.run inside Playwright sync event loop. Repeated successfully in a separate thread; production code unchanged.",
+    "Browser disposal emitted Playwright Target closed warnings for pending response-finished futures after recorded checks; both final runner exits were 0 and own servers/temporary Keychain ledgers were cleaned."
+  ],
+  "regression": {
+    "command": "pytest tests/test_sponsored_runtime_e2e.py::test_setup_without_a_key_then_desktop_switch_and_restart -q",
+    "passed": 2,
+    "seconds": 181.28
+  }
+}

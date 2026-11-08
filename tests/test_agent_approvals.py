@@ -284,7 +284,10 @@ class TestLoopApprovalInterception:
         assert executed == []
         assert store.list() == []
 
-    async def test_hard_write_is_parked_not_executed(self) -> None:
+    @pytest.mark.parametrize(
+        "user_message", ["禁用这个订阅", "请调用 toggle_source 禁用这个订阅。"]
+    )
+    async def test_hard_write_is_parked_not_executed(self, user_message: str) -> None:
         executed: list[dict[str, Any]] = []
         store = ApprovalStore()
         registry = ToolRegistry([_hard_write_tool(executed)])
@@ -299,7 +302,7 @@ class TestLoopApprovalInterception:
         events = await _collect(
             loop,
             system_instruction="s",
-            user_message="禁用这个订阅",
+            user_message=user_message,
             approval_context={"session": "desktop", "session_id": "sess-1", "turn_id": "t-1"},
         )
 

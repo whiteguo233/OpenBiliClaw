@@ -95,9 +95,30 @@ def _embedding_wants_ollama(config: Config) -> bool:
     )
 
 
+def _routed_ollama(config: Config) -> Any:
+    """Return an enabled Ollama endpoint actually referenced by a chat chain."""
+    if not config.llm.instance_routing:
+        return config.llm.ollama if _ollama_is_chat_capable(config) else None
+    from openbiliclaw.config import effective_llm_default_chain, effective_llm_routes
+
+    chain = effective_llm_default_chain(config.llm)
+    for route in effective_llm_routes(config.llm).values():
+        if not route.inherit:
+            chain.extend(route.chain)
+    for key in chain:
+        instance = config.llm.instances.get(key)
+        if instance and instance.enabled and instance.provider_type == "ollama" and instance.model:
+            return instance
+    return None
+
+
 def ollama_required(config: Config) -> bool:
     """Return whether chat or embedding routing may call Ollama."""
-    return _ollama_is_chat_capable(config) or _embedding_wants_ollama(config)
+    if config.llm.sponsored.enabled:
+        return (
+            not config.llm.sponsored.uses_cloud_embedding and _embedding_wants_ollama(config)
+        ) or (config.llm.sponsored.fallback_to_user_provider and _ollama_is_chat_capable(config))
+    return _routed_ollama(config) is not None or _embedding_wants_ollama(config)
 
 
 def _strip_openai_v1_suffix(url: str) -> str:
@@ -119,8 +140,12 @@ def effective_ollama_endpoint(config: Config) -> str:
     Chat and embedding providers use OpenAI-compatible ``/v1`` URLs in config, but
     Ollama's health API lives at daemon root ``/api/version``.
     """
-    if _ollama_is_chat_capable(config):
-        base_url = config.llm.ollama.base_url.strip() or f"{_DEFAULT_OLLAMA_ENDPOINT}/v1"
+    chat_enabled = (
+        not config.llm.sponsored.enabled or config.llm.sponsored.fallback_to_user_provider
+    )
+    chat = _routed_ollama(config) if chat_enabled else None
+    if chat is not None:
+        base_url = chat.base_url.strip() or f"{_DEFAULT_OLLAMA_ENDPOINT}/v1"
     elif _embedding_wants_ollama(config):
         base_url = (
             config.llm.embedding.base_url.strip()

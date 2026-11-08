@@ -38,8 +38,10 @@ and unknown fields, rejects unknown schemas, and never fetches or invents profil
 ## Consumer surfaces
 
 Jev 完整评估先按候选选择不依赖同行的视图，再由具名
-`build_shared_evaluation_profiles()` 将相同负偏好/风格/场景因子化到共享 `profile`。
-各 `candidate_profiles.cN` 必须与共享块一起解释；不借用其它候选的正偏好。
+`build_shared_evaluation_profiles()` 将相同负偏好/风格/场景因子化到共享 `profile`；
+多候选时，每条候选都已选中且完全相同的整字段也可共享一次。
+共享块叠加目标 `candidate_profiles.cN` 精确还原其原始选择，字段缺失/不同则留在本候选，
+不借用其它候选的正偏好。逻辑视图不因合批改变，仅 wire 去重。
 
 | Surface | Trigger cadence | View / serializer | Fields (caps) | Portrait? | LLM? |
 | --- | --- | --- | --- | --- | --- |
@@ -47,7 +49,8 @@ Jev 完整评估先按候选选择不依赖同行的视图，再由具名
 | Director planning / pair decisions | Opt-in generation or rolling preplan | `build_profile_catalog` + `select_profile_context` by intent and shortlist; no core-memory injection | Budgeted slow/fast projections, explicit negatives uncut. Full source digest controls plan freshness; actual projections bind request identity. Latest 3 experienced screens + semantic actions/ACKs remain separate, not inferred interests | No | Yes (Agent and/or typed decision) |
 | Discovery evaluation | Per candidate batch | `_evaluation_profile_summary` = `compact_evaluation_profile_summary(build_profile_summary(...))` — `discovery/engine.py:1874`; applied `discovery/engine.py:823` | compact | No | Yes |
 | Jev discovery semantic filter | Opt-in candidate wave, independently of director strategy | `compact_content_prompt_profile_summary(build_profile_summary(...))` — `discovery/semantic_filter.py` | Same compact view; complete dislikes retained; oversize request fails open at the 24,000-byte engineering cap rather than truncating negative evidence | No | Yes (typed decision, not chat) |
-| Jev full candidate evaluator | Selected instead of full LLM evaluation; single, batch and legacy recovery | Local `build_profile_catalog` → per-candidate `select_profile_context`; `candidate_profiles.cN` | Selected-model dual byte guards reserve candidate/questions/negatives first; independent of batch peers; keep mandatory constraints, split candidates or return missing. Full source/policy/budget identities prevent stale cache | No | Yes (typed decision; no generative fallback) |
+| Jev full candidate evaluator | Selected instead of full LLM evaluation; single, batch and legacy recovery | Local `build_profile_catalog` → per-candidate `select_profile_context`; `candidate_profiles.cN` | Selected-model dual byte guards; mandatory baseline plus optional-interest allowance, borrowing actual room before reducing whole-source excerpts. Never silently erase all positive interests from a nonempty catalog. Independent of batch peers; irreducible input refusal is typed and parked until context changes, not transient missing. Full source/policy/budget identities prevent stale cache | No | Yes (typed decision; no generative fallback) |
+| Jev settings draft probe | Explicit user click only | `build_profile_catalog` of a fixed synthetic `SoulProfile` — `api/jev_probe.py` | One synthetic interest and candidate, full 8 questions, current selected-model dual guards. Does not load the real user profile, save settings or create pool records | No | Yes (one native HTTP attempt; no chat fallback) |
 | Discovery evaluation digest (cache key) | Per candidate batch | `_evaluation_profile_digest` — `discovery/engine.py:1862`; used `discovery/engine.py:1542`, `:2119` | digest over the compact prompt-visible slice | No | No (cache key) |
 | Search keyword generation | Per discovery cycle | `build_query_generation_profile_summary` — `discovery/strategies/search.py:547`, `:550` | query-trimmed | No | Yes |
 | Explore domain generation | Per discovery cycle | `build_query_generation_profile_summary` — `discovery/strategies/explore.py:428` | query-trimmed | No | Yes |

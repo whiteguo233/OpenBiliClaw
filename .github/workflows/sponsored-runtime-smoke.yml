@@ -1,0 +1,59 @@
+name: Sponsored runtime installation
+
+on:
+  pull_request:
+    paths:
+      - src/openbiliclaw/runtime/sponsored_release.json
+      - src/openbiliclaw/runtime/sponsored_bundle.py
+      - scripts/sponsored_install_smoke.py
+      - .github/workflows/sponsored-runtime-smoke.yml
+      - Dockerfile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native SDK (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Core
+        run: python -m pip install -e .
+      - name: Download, verify, activate, stage and reject a damaged update
+        run: python scripts/sponsored_install_smoke.py
+
+  docker:
+    name: Docker SDK (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the actual backend image with its verified SDK
+        run: docker build -t obc-sponsored-smoke .
+      - name: Verify the bundled runtime inside the container
+        run: |
+          docker run --rm --entrypoint python obc-sponsored-smoke -c '
+          import json, shlex, subprocess
+          from pathlib import Path
+          from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command, verify_bundle
+          command = installed_runtime_command()
+          assert command, "image is missing its free runtime"
+          binary = Path(shlex.split(command)[0])
+          manifest = verify_bundle(binary.parent)
+          subprocess.run([str(binary), "--policy", str(binary.parent / "sponsored-policy.json"), "--signature", str(binary.parent / "sponsored-policy.sig"), "--check-policy"], check=True)
+          print(json.dumps({"platform": manifest["platform"], "container_native_check": True, "model_api_calls": 0}))
+          '

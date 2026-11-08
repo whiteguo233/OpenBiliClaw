@@ -61,6 +61,8 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 封面：proxy 前台 + refresh 预取 → app-stable lane（总4/后台3、前台优先）
                                → cache-key singleflight → 公网 DNS（代理固定 DoH）→ 固定 IP / TLS → 原子缓存
 Instagram 手动补库 → 来源配额/任务锁 → 正式发现/评估/文案 → 可用库存或明确失败
+GitHub / Instagram 显式初始化 → 所选来源 producer → 同步评估 / 文案 → 首轮可用库存
+通用网页抽取 → 完整 URL 规范化身份 → 候选去重（原生平台 ID 不变）
 ```
 
 ```
@@ -186,6 +188,33 @@ main API ← validated response inventory / 2s active-client inventory watcher
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 ```
 
+## Web 来源的对话入口
+
+```text
+聊一聊 → prepare_discovery_source → 脱敏观察 / 自然语言固化 / 试跑
+       → activate_discovery_source 审批 → 独立 source_id / 份额 / 周期 / 版本化 workflow
+       → CustomWorkflowProducer → HTTP Feed 或 Ego Lite 原生任务空间
+       → 统一待评估池 → 真实评估与文案 → 来源名推荐卡
+设置页 → 来源配置 / 启停 / 频率 / 份额 / 运行历史
+源码安装 / 桌面首启 / 服务部署 → EgoSetupManager → 官方安装 / 专用首次设置 / 原生握手
+后续网页采集 → 已初始化宿主按需启动 → 原生 Ego 任务空间
+```
+
+macOS 部署自动准备专用 Ego Lite，普通网页按需启动宿主，真实 Feed 使用 HTTP；
+API 后台准备不阻塞界面，已准备环境不重复安装；准备失败不回退到 Playwright。
+原生桥当前连接本机 macOS 宿主，验收状态见[专门记录](testing/2026-10-22-ego-lite-discovery-e2e.md)。
+以下为旧匿名 HTTP recipe 的兼容链路：
+
+```text
+聊一聊（桌面 / 移动 / 插件） → probe_web_source(url, strategy?) → 只读草稿 / 样例
+                           → create_source hard-write 审批卡 → 批准后 typed compiler
+设置页显式添加 / API ────────────────────────────────────────┘
+                     → source_recipes → token-fenced WebDiscoveryProducer
+                     → exact origin / robots / public DNS + socket pin
+                     → feed / sitemap / static listing parser → 共享待评估池
+```
+
+Web 保持 discovery-only；上述旧 recipe 路径不使用登录态或 JavaScript，不代替新的 Ego 工作流。
 ### TikTok 公开发现
 
 ```text
@@ -213,3 +242,22 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 字节静态（人设 / 视频 / 评论 / 约束都在 user 消息）。鱼的反馈与用户的反馈是分开的：发布出去
 的评论只留在鱼自己的账本里，不会变成推荐反馈、不会触发 cognition，用户画像只由用户自己的
 行为驱动。
+
+
+## 免费模型路由与运行组件（正式发行待完成）
+
+```text
+Setup / popup / desktop / mobile / CLI → validated llm.sponsored config
+  → LLMService / Registry / eval → selected signed 8B or 4B task
+  → EmbeddingService → signed BGE-M3 text task (separate cache provenance)
+  → shared private Rust runtime → SiliconFlow SSE / embeddings
+  → Core schema / evidence validation → normal profile, discovery, recommendation, agent flows
+Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
+Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
+  → offline self-check → versioned bundle → atomic active pointer
+Optional image understanding: 4B; image embeddings: unavailable in the free profile
+```
+
+`llm/sponsored_profiles.py` 定义十个获批任务契约，选择模型只映射到已签名 task ID，不接收请求侧任意模型、URL 或 Key。业务 Prompt 保持由 Core 维护；文本/结构化任务走真实 SSE，JSON 数组不强制 `json_object`，工具由 Core 解析和执行。8B/4B 分别有 128K/256K 上下文上限，使用保守输入估计并为输出预留空间，超限不截断。已经发出内容的流失败不重放。
+
+`runtime/sponsored_bundle.py` 使用 Core 中固定的公钥与发行目录验证归档、manifest、策略、平台和 Core 版本，在运行组件前完成验签；安装和更新复用相同入口。macOS 应用签名保留组件已签名的字节，随后再次校验；桌面包或 Docker 可内置同一组件。新用户引导推荐免费方案，已有配置须显式选择；发行目录目前为空，所以不能声称已有可自动下载的正式组件。详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。

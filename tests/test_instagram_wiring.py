@@ -46,8 +46,9 @@ from openbiliclaw.sources.platforms import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-async def test_cli_instagram_init_reuses_source_aware_backfill(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("source", ["instagram", "github"])
+async def test_cli_source_init_reuses_source_aware_backfill(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
 ) -> None:
     from types import SimpleNamespace
 
@@ -56,7 +57,7 @@ async def test_cli_instagram_init_reuses_source_aware_backfill(
     from openbiliclaw.storage.database import Database
 
     config = Config()
-    config.sources.instagram.enabled = True
+    getattr(config.sources, source).enabled = True
     config.sources.bilibili.enabled = False
     config.scheduler.enabled = False
     db = Database(tmp_path / "cli-init.db")
@@ -74,9 +75,10 @@ async def test_cli_instagram_init_reuses_source_aware_backfill(
     monkeypatch.setattr(cli, "_build_discovery_candidate_pipeline", lambda **_: SimpleNamespace())
 
     async def backfill(self: Any, profile: Any, target: int, **kwargs: Any) -> int:
-        assert target == 7 and kwargs["sources"] == {"instagram"}
-        assert self.instagram_producer is not None
-        assert self.instagram_producer.candidate_evaluation_owned_by_coordinator is True
+        assert target == 7 and kwargs["sources"] == {source}
+        producer = getattr(self, f"{source}_producer")
+        assert producer is not None
+        assert producer.candidate_evaluation_owned_by_coordinator is True
         assert self.scheduler_config.enabled is False
         assert "bilibili" not in self.pool_source_shares
         return 3
@@ -84,7 +86,7 @@ async def test_cli_instagram_init_reuses_source_aware_backfill(
     monkeypatch.setattr(ContinuousRefreshController, "run_init_backfill", backfill)
     assert (
         await cli._run_init_discovery_backfill_async(
-            object(), target_pool_count=7, selected_sources={"instagram"}
+            object(), target_pool_count=7, selected_sources={source}
         )
         == 3
     )
@@ -303,12 +305,12 @@ def test_instagram_creator_only_config_is_normalized_to_seeded_modes(
 def test_instagram_source_policy_and_canonical_registry_are_exact() -> None:
     from openbiliclaw.runtime.refresh import _PLATFORM_SOURCE_ORDER
 
-    assert SOURCE_ORDER[-1] == "instagram"
+    assert SOURCE_ORDER[-2:] == ("instagram", "web")
     assert _PLATFORM_SOURCE_ORDER == SOURCE_ORDER
     assert SOURCE_ORDER.count("instagram") == 1
     assert DEFAULT_SOURCE_ENABLED["instagram"] is False
     assert DEFAULT_POOL_SOURCE_SHARES["instagram"] == 1
-    assert CANONICAL_SOURCE_FAMILIES[-1] == "instagram"
+    assert CANONICAL_SOURCE_FAMILIES[-2:] == ("instagram", "web")
     assert normalize_source_platform("instagram") == "instagram"
     assert normalize_source_platform("ig") == "instagram"
     assert normalize_source_platform("ins") == "ins"
@@ -1266,7 +1268,7 @@ def test_instagram_formal_discover_cli_dispatch(monkeypatch: pytest.MonkeyPatch)
     assert "def _run_instagram_discovery(" in cli_source
     assert "_run_instagram_discovery(limit=limit, force=force)" in cli_source
     assert 'kick=lambda: _kick_task_dispatcher("instagram")' in cli_source
-    assert "linuxdo、v2ex、weibo 或 instagram" in cli_source
+    assert "linuxdo、v2ex、weibo、instagram 或 web" in cli_source
 
 
 def test_instagram_formal_discover_producer_kicks_instagram_dispatcher(
@@ -2630,8 +2632,9 @@ def test_instagram_api_rosters_match_source_policy() -> None:
     app_path = ROOT / "src/openbiliclaw/api/app.py"
     share_roster = _literal_module_assignment(app_path, "_SOURCE_SHARE_ORDER")
     init_roster = _literal_module_assignment(app_path, "_INIT_SOURCE_ORDER")
-    assert share_roster[-1] == "instagram"
-    # TikTok joined guided init with its account bootstrap queue; the init
-    # roster now covers every pool-share source.
+    assert share_roster[-2:] == ("instagram", "web")
+    assert share_roster == SOURCE_ORDER
+    # TikTok and Instagram use account bootstrap. Public Web sources are
+    # explicitly authorized by their source workflow, outside guided init.
     assert "tiktok" in share_roster
-    assert init_roster == tuple(share_roster)
+    assert init_roster == tuple(share_roster[:-1])

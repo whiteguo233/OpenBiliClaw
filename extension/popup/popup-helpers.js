@@ -51,6 +51,7 @@ function normalizeSourcePlatform(value, url = "") {
     "linux.do": "linuxdo",
     v2: "v2ex",
     v2ex: "v2ex",
+    web: "web",
     ig: "instagram",
     instagram: "instagram",
   };
@@ -71,7 +72,7 @@ function normalizeSourcePlatform(value, url = "") {
   if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
   if (urlHostMatches(url, ["v2ex.com"])) return "v2ex";
   if (urlHostMatches(url, ["instagram.com"])) return "instagram";
-  return "";
+  return lowerUrl ? "web" : "";
 }
 
 export function normalizeProbeType(type) {
@@ -189,6 +190,7 @@ const PLATFORM_DISPLAY_NAMES = {
   "linux.do": "Linux.do",
   v2: "V2EX",
   v2ex: "V2EX",
+  web: "网页",
   ig: "Instagram",
   instagram: "Instagram",
 };
@@ -196,6 +198,21 @@ const PLATFORM_DISPLAY_NAMES = {
 export function platformDisplayName(value) {
   const key = normalizeText(value).toLowerCase();
   return PLATFORM_DISPLAY_NAMES[key] || normalizeText(value);
+}
+
+export function recommendationSourceName(item) {
+  return normalizeText(item?.source_name) || platformDisplayName(item?.source_platform || "bilibili");
+}
+
+const WEB_SOURCE_STRATEGY_LABELS = {
+  "web-feed": "网页订阅（RSS/Atom/JSON Feed）",
+  "web-sitemap": "网页站点地图（Sitemap）",
+  "web-listing": "网页列表页",
+};
+
+export function getSourceStrategyLabel(value) {
+  const text = normalizeText(value);
+  return WEB_SOURCE_STRATEGY_LABELS[text.toLowerCase()] || text;
 }
 
 /**
@@ -215,8 +232,12 @@ export function platformDisplayName(value) {
 export function formatRecommendationAuthorLine(item) {
   const name = normalizeText(item?.up_name) || normalizeText(item?.author_name);
   if (!name) return "";
-  const platform = normalizeSourcePlatform(item?.source_platform) || "bilibili";
+  const platform = normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili";
   return platform === "bilibili" ? `这位 UP：${name}` : name;
+}
+
+export function isPublicWebSource(item) {
+  return normalizeSourcePlatform(item?.source_platform, item?.content_url) === "web";
 }
 
 export function buildVideoUrl(bvid) {
@@ -247,6 +268,7 @@ export function buildContentUrl(item) {
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
   if (platform === "instagram") return "";
   if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
+  if (platform === "web") return "";
   return buildVideoUrl(vid);
 }
 
@@ -257,10 +279,11 @@ export function buildRecommendationClickPayload(item, contentUrl = "") {
     bvid,
     content_id: contentId,
     content_url: normalizeText(contentUrl) || normalizeText(item?.content_url),
-    source_platform: normalizeText(item?.source_platform) || "bilibili",
+    source_platform:
+      normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili",
     title: normalizeText(item?.title),
     recommendation_id: typeof item?.id === "number" ? item.id : null,
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     up_name: normalizeText(item?.up_name),
   };
 }
@@ -354,7 +377,7 @@ export function normalizeRecommendation(item) {
         : DEFAULT_CREATOR_NAME),
     cover_url: normalizeCoverUrl(item?.cover_url),
     expression: normalizeText(item?.expression),
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
     ...(normalizeText(item?.batch_ref) ? {
@@ -364,6 +387,8 @@ export function normalizeRecommendation(item) {
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     content_type: normalizeText(item?.content_type)
       || (sourcePlatform === "bilibili" && contentId ? "video" : ""),
     body_text: normalizeText(item?.body_text),
@@ -477,6 +502,8 @@ export function normalizeDelightCandidate(item) {
     cover_url: normalizeCoverUrl(item?.cover_url),
     content_url: normalizeText(item?.content_url) || "",
     source_platform: normalizeSourcePlatform(item?.source_platform, item?.content_url) || "",
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     published_at: normalizeText(item?.published_at),
     published_label: String(item?.published_label ?? "").replace(/\s+/g, " ").trim().slice(0, 64),
     content_type: normalizeText(item?.content_type),
@@ -946,6 +973,7 @@ export function shouldFetchProfileSummary({ online, profileLoaded, force = false
 
 export function normalizeRuntimeStatus(status) {
   return {
+    sponsored_status: status?.sponsored_status || {},
     initialized: Boolean(status?.initialized),
     recommendation_count: Number(status?.recommendation_count ?? 0),
     pending_signal_events: Number(status?.pending_signal_events ?? 0),
@@ -959,7 +987,7 @@ export function normalizeRuntimeStatus(status) {
     last_discovered_count: Number(status?.last_discovered_count ?? 0),
     last_replenished_count: Number(status?.last_replenished_count ?? 0),
     recent_pool_topics: Array.isArray(status?.recent_pool_topics)
-      ? status.recent_pool_topics.map(normalizeText).filter(Boolean)
+      ? status.recent_pool_topics.map(getSourceStrategyLabel).filter(Boolean)
       : [],
     manual_refresh_state: normalizeText(status?.manual_refresh_state) || "idle",
     manual_refresh_message: normalizeText(status?.manual_refresh_message),
@@ -1014,7 +1042,7 @@ export function mergeRuntimeStatusEvent(status, event) {
     next.last_discovered_count = Number(event.last_discovered_count);
   }
   if (Array.isArray(event?.recent_pool_topics)) {
-    next.recent_pool_topics = event.recent_pool_topics.map(normalizeText).filter(Boolean);
+    next.recent_pool_topics = event.recent_pool_topics.map(getSourceStrategyLabel).filter(Boolean);
   }
   return next;
 }

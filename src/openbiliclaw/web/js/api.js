@@ -133,6 +133,7 @@ export async function requestJson(path, options = {}) {
       err.details = details;
       throw err;
     }
+    if (res.status === 204) return null;
     return await res.json();
   } finally {
     timeout.cleanup();
@@ -187,6 +188,14 @@ export async function checkHealth() {
 
 export async function fetchConfig(timeoutMs = DEFAULT_READ_TIMEOUT_MS) {
   return requestJson("/config", { timeoutMs });
+}
+
+export async function probeJevConfig(config) {
+  return requestJson("/config/probe-service", {
+    method: "POST", timeoutMs: 25_000,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "jev", config }),
+  });
 }
 
 export async function updateConfig(data, timeoutMs = CONFIG_WRITE_TIMEOUT_MS) {
@@ -527,6 +536,7 @@ export async function streamAgentChatTurn({
     if (name === "error") {
       const err = new Error(String(data?.error || "对话失败了，请稍后重试。"));
       err.agentStreamError = true;
+      err.agentRetrying = data?.retrying === true;
       onEvent?.(name, data);
       throw err;
     }

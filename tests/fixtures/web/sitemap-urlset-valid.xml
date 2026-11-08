@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://docs.example.com/news/alpha?utm_medium=sitemap</loc>
+    <lastmod>2026-08-10</lastmod>
+  </url>
+  <url>
+    <loc>/news/beta</loc>
+    <lastmod>not-a-date</lastmod>
+  </url>
+  <url>
+    <loc>https://outside.example/news/ignored</loc>
+    <lastmod>2026-08-11</lastmod>
+  </url>
+</urlset>

@@ -30,6 +30,7 @@
       if (accent === "classic") document.documentElement.dataset.accent = "classic";
     })();
   </script>
+  <link rel="stylesheet" href="/shared/custom-sources.css">
   <link rel="stylesheet" href="/web/assets/css/app.css">
   <link rel="stylesheet" href="/web/assets/css/classic.css">
   <script src="/web/assets/js/mobile-qr.js" defer></script>
@@ -42,9 +43,12 @@
   <script src="/shared/dialogue-confirmation.js" defer></script>
   <script src="/shared/agent-chat.js" defer></script>
   <script src="/shared/source-status.js" defer></script>
+  <script src="/shared/custom-sources.js" defer></script>
   <script src="/shared/i18n.js" defer></script>
   <script src="/shared/director-client.js" defer></script>
   <link rel="stylesheet" href="/shared/jev-settings.css">
+<link rel="stylesheet" href="/shared/sponsored-settings.css">
+<script src="/shared/sponsored-settings.js"></script>
   <script src="/shared/jev-settings.js" defer></script>
   <script src="/web/assets/js/chat-agent-core.js" defer></script>
   <script src="/web/assets/js/fish-settings.js" defer></script>
@@ -312,6 +316,7 @@
           <aside class="chat-side" id="chatSide" aria-label="会话与任务" hidden>
             <div class="chat-side-head">
               <button class="pill-btn primary" id="chatNewSessionBtn" type="button">＋ 新会话</button>
+              <button class="chat-side-close" id="chatSideClose" type="button" aria-label="收起会话列表">收起</button>
             </div>
             <div class="chat-session-list" id="chatSessionList" role="list" aria-label="会话列表"></div>
             <div class="chat-side-foot">
@@ -326,7 +331,7 @@
           </aside>
           <div class="chat-conversation">
             <div class="chat-session-bar" id="chatSessionBar" hidden>
-              <button class="chat-side-toggle" id="chatSideToggle" type="button" aria-label="会话列表" aria-expanded="true">
+              <button class="chat-side-toggle" id="chatSideToggle" type="button" aria-label="会话列表" aria-expanded="true" aria-controls="chatSide">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
               </button>
               <button class="chat-skill-chip" id="chatSkillChip" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="chatSkillPicker" title="点击切换对话角色">
@@ -357,7 +362,18 @@
               <div class="profile-card-list" id="desktopPendingConfirmations" aria-label="待聊确认列表" hidden></div>
             </div>
             <div class="chat-log" id="chatLog" role="region" aria-label="口味对话记录" tabindex="0"></div>
-            <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+            <div class="chat-composer">
+              <section class="chat-source-guide" aria-labelledby="chatSourceGuideTitle">
+                <h3 id="chatSourceGuideTitle">在这里添加网站 / RSS 来源</h3>
+                <p class="chat-source-guide-intro">发来链接，说清想看什么。阿B会补问必要信息，试跑确认后，定期采集、筛选并推荐。</p>
+                <div class="chat-source-guide-examples">
+                  <p class="chat-source-guide-example"><strong>网站示例</strong><span>“添加 [网址]，只看轻小说。”</span></p>
+                  <p class="chat-source-guide-example"><strong>RSS 示例</strong><span>“订阅 [RSS 地址]，每天采集一次。”</span></p>
+                </div>
+                <p class="chat-source-guide-note">在「设置 → 自定义来源」管理频率、占比和启停。需要登录、验证或处理采集异常时，消息铃铛会提醒你。</p>
+              </section>
+              <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+            </div>
           </div>
         </div>
         <div class="chat-popover" id="chatSkillPicker" role="dialog" aria-label="选择对话角色" hidden></div>
@@ -398,6 +414,7 @@
         </div>
 
         <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
+
           <section class="llm-routing-section" aria-labelledby="llmInstancesHeading">
             <div class="llm-section-head">
               <div>
@@ -410,6 +427,7 @@
                 新建实例
               </button>
             </div>
+            <div id="llmProviderNotice" hidden></div>
             <div class="llm-instance-grid" id="llmInstanceList" aria-live="polite"></div>
           </section>
 
@@ -481,7 +499,7 @@
           </div>
 
           <div class="settings-subpanel is-active" data-model-settings-group="embedding" data-model-settings-panel="default">
-            <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider" translate="no"><option value="">未启用（不跟随聊天链）</option><option value="ollama">ollama</option><option value="openai">openai</option><option value="gemini">gemini</option><option value="openai_compatible">openai_compatible</option><option value="dashscope">dashscope (qwen3-vl)</option></select></label>
+            <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider" translate="no"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option><option value="">未启用（不跟随聊天链）</option><option value="ollama">ollama</option><option value="openai">openai</option><option value="gemini">gemini</option><option value="openai_compatible">openai_compatible</option><option value="dashscope">dashscope (qwen3-vl)</option></select></label>
             <label class="settings-field"><span>Embedding 模型</span><input id="embeddingModel" value="bge-m3"></label>
             <label class="settings-field"><span>Embedding API Key</span><input id="embeddingApiKey" autocomplete="off"></label>
             <label class="settings-field"><span>Embedding Base URL</span><input id="embeddingBaseUrl"></label>
@@ -1355,6 +1373,86 @@
               </div>
             </article>
 
+            <section class="source-aux-card" aria-labelledby="customSourcesHeading" style="grid-column: 1 / -1">
+              <h3 id="customSourcesHeading">自定义来源</h3>
+              <p class="settings-note-inline">在聊一聊提供网址或 RSS、Atom、JSON Feed 订阅链接和想看的内容，试跑后确认启用。每个来源独立设置候选池占比，与平台来源平级；需要登录时在接管页操作。</p>
+              <div id="customSourceManager"></div>
+            </section>
+
+            <article class="source-status-row source-card" data-source-status="web" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-web">
+                <span class="source-card-logo" data-source-logo="web" aria-hidden="true">W</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">Web 旧版订阅</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareWeb" value="1" inputmode="numeric" aria-label="旧版 Web 订阅候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 Web</span><select id="webEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-web">
+                <section class="source-seg">
+                  <h4>公开网页订阅（兼容旧版）</h4>
+                  <p class="seg-note">添加一个明确入口，后端会按 Feed、Sitemap 或列表页 recipe 定时发现内容。仅访问你批准的公开 origin，遵守 robots.txt；不带 Cookie、不登录，也不执行网页脚本。</p>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求超时（秒）</span><input id="webRequestTimeout" type="number" min="1" max="60" value="15"></label>
+                    <label class="settings-field"><span>单次响应上限（字节）</span><input id="webMaxResponseBytes" type="number" min="65536" max="5000000" value="2097152"></label>
+                    <label class="settings-field"><span>最多重定向</span><input id="webMaxRedirects" type="number" min="0" max="10" value="5"></label>
+                    <label class="settings-field"><span>任务租约（秒）</span><input id="webLeaseSeconds" type="number" min="30" max="3600" value="300"></label>
+                  </div>
+                </section>
+                <section class="source-seg web-recipe-manager" aria-labelledby="webRecipeHeading">
+                  <h4 id="webRecipeHeading">旧版 Feed / Sitemap / 列表订阅</h4>
+                  <div id="webProbePanel" class="web-probe-panel" aria-busy="false">
+                    <div class="web-probe-head">
+                      <strong>粘贴网站 URL，自动找入口</strong>
+                      <p class="seg-note" id="webProbeHelp">会尝试识别 Feed、Sitemap 和静态列表结构。探测只生成候选方案，采用后仍需检查并点击「添加网站」才会保存。</p>
+                    </div>
+                    <div class="web-probe-input-row">
+                      <label class="settings-field full"><span>网站 URL</span><input id="webProbeUrl" type="url" maxlength="4096" required autocomplete="url" inputmode="url" placeholder="https://example.com" aria-describedby="webProbeHelp webProbeStatus" form="webProbeStandaloneForm" data-settings-ignore-dirty></label>
+                      <button class="pill-btn primary" id="webProbeButton" type="submit" form="webProbeStandaloneForm">自动探测</button>
+                    </div>
+                    <span class="settings-probe-status web-probe-status" id="webProbeStatus" aria-live="polite" aria-atomic="true" aria-busy="false"></span>
+                    <div id="webProbeCandidates" class="web-probe-candidates" role="list" aria-label="可采用的网站发现方案" hidden></div>
+                  </div>
+                  <div id="webRecipeList" class="web-recipe-list" aria-live="polite"><p class="seg-note">正在读取已配置网站…</p></div>
+                  <div id="webRecipeForm" class="web-recipe-form" role="group" aria-labelledby="webRecipeHeading">
+                    <div class="inline-row">
+                      <label class="settings-field"><span>名称</span><input id="webRecipeName" maxlength="120" required placeholder="例如：Django 官方博客"></label>
+                      <label class="settings-field"><span>发现方式</span><select id="webRecipeStrategy"><option value="feed">Feed（RSS / Atom / JSON Feed）</option><option value="sitemap">Sitemap</option><option value="listing">列表页</option></select></label>
+                    </div>
+                    <label class="settings-field full"><span>入口 URL</span><input id="webRecipeUrl" type="url" maxlength="4096" required placeholder="https://example.com/feed.xml"></label>
+                    <label class="settings-field full"><span>额外允许的 Origin（可选，每行一个）</span><textarea id="webRecipeOrigins" rows="2" placeholder="https://www.example.com"></textarea></label>
+                    <div class="inline-row">
+                      <label class="settings-field"><span>抓取间隔（分钟）</span><input id="webRecipeInterval" type="number" min="5" max="10080" value="30"></label>
+                      <label class="settings-field"><span>每轮最多条目</span><input id="webRecipeMaxItems" type="number" min="1" max="50" value="20"></label>
+                      <label class="settings-field"><span>每轮最多页面</span><input id="webRecipeMaxPages" type="number" min="1" max="5" value="1"></label>
+                      <label class="settings-field"><span>详情页上限</span><input id="webRecipeDetailLimit" type="number" min="0" max="20" value="10"></label>
+                      <label class="settings-field"><span>Recipe 权重</span><input id="webRecipeShare" type="number" min="1" max="20" value="4"></label>
+                    </div>
+                    <fieldset id="webRecipeListingFields" class="web-recipe-listing-fields" hidden>
+                      <legend>列表页选择器</legend>
+                      <p class="seg-note">使用简单的 tag、<code>.class</code> 或 <code>#id</code> 后代选择器；不支持脚本、伪类或属性选择器。</p>
+                      <div class="inline-row">
+                        <label class="settings-field"><span>条目选择器</span><input id="webRecipeItemSelector" maxlength="256" placeholder="article"></label>
+                        <label class="settings-field"><span>链接选择器</span><input id="webRecipeLinkSelector" maxlength="256" value="a"></label>
+                        <label class="settings-field"><span>标题选择器（可选）</span><input id="webRecipeTitleSelector" maxlength="256" placeholder="h2"></label>
+                        <label class="settings-field"><span>明确空列表选择器（可选）</span><input id="webRecipeEmptySelector" maxlength="256" placeholder=".empty-state"></label>
+                      </div>
+                    </fieldset>
+                    <div class="settings-probe-row">
+                      <button class="pill-btn primary" id="webRecipeCreate" type="submit">添加网站</button>
+                      <span class="settings-probe-status" id="webRecipeMessage" aria-live="polite"></span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </article>
+
           </div>
 
           <div class="source-aux-card">
@@ -1429,8 +1527,12 @@
             <div class="settings-advanced-fields">
               <label class="settings-field full"><span>候选评估器</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="jev">Jev（完整评估，纯文本）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
             </div>
-            <p class="settings-note-inline" id="evalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
-            <p class="settings-note-inline">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+            <p class="settings-note-inline" id="evalScorerHint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+            <details class="settings-note-inline">
+              <summary>评估模式说明</summary>
+              <p>Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+              <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+            </details>
             <p class="settings-note-inline" id="jevEvaluatorStatus" role="status" aria-live="polite">正在读取 Jev provider 配置…</p>
             <div id="jevConnectionSettings"></div>
           </section>
@@ -1802,7 +1904,7 @@
               <span class="diag-alerts-summary" id="diagnosticsAlertsSummary" aria-live="polite"></span>
               <button type="button" class="pill-btn diag-alerts-refresh" id="refreshDiagnosticsAlertsBtn">刷新</button>
             </div>
-            <p class="diag-alerts-empty" id="diagnosticsAlertsEmpty">暂无异常报警，LLM / Embedding 请求异常会显示在这里。</p>
+            <p class="diag-alerts-empty" id="diagnosticsAlertsEmpty">暂无异常记录，来源采集、LLM / Embedding 异常与来源恢复会显示在这里。</p>
             <ul class="diag-alert-list" id="diagnosticsAlertList" hidden></ul>
           </div>
         </div>
@@ -1816,6 +1918,8 @@
           </span>
         </div>
       </form>
+      <form id="webRecipeStandaloneForm" hidden></form>
+      <form id="webProbeStandaloneForm" hidden></form>
       </section>
 
       <div class="llm-instance-dialog" id="llmInstanceDialog" role="dialog" aria-modal="true" aria-labelledby="llmInstanceDialogTitle" hidden>

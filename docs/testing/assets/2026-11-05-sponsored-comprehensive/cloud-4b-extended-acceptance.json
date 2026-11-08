@@ -1,0 +1,572 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "http_user_surfaces_and_state_endpoints",
+      "status": "pass",
+      "result": {
+        "/api/health": {
+          "status": 200,
+          "bytes": 136
+        },
+        "/api/profile-summary": {
+          "status": 200,
+          "bytes": 12327
+        },
+        "/api/profile/edit-state": {
+          "status": 200,
+          "bytes": 1755
+        },
+        "/api/recommendations?limit=3": {
+          "status": 200,
+          "bytes": 12
+        },
+        "/api/chat/sessions": {
+          "status": 200,
+          "bytes": 719
+        },
+        "/api/chat/tasks": {
+          "status": 200,
+          "bytes": 44
+        },
+        "/api/runtime-status": {
+          "status": 200,
+          "bytes": 2520
+        },
+        "/api/config": {
+          "status": 200,
+          "bytes": 13780
+        },
+        "/api/notifications/pending": {
+          "status": 200,
+          "bytes": 303
+        },
+        "/api/chat/approvals": {
+          "status": 200,
+          "bytes": 22
+        },
+        "/api/chat/pending-confirmations": {
+          "status": 200,
+          "bytes": 1059
+        },
+        "/web/": {
+          "status": 200,
+          "bytes": 185538
+        },
+        "/m/": {
+          "status": 200,
+          "bytes": 1685
+        },
+        "/setup/": {
+          "status": 200,
+          "bytes": 111849
+        }
+      },
+      "seconds": 15.581,
+      "calls": []
+    },
+    {
+      "name": "profile_manual_edit_dedup_and_invalid_input",
+      "status": "pass",
+      "result": {
+        "duplicate_edit_deduplicated": true,
+        "invalid_edit_rejected": true,
+        "removed": true
+      },
+      "seconds": 0.093,
+      "calls": []
+    },
+    {
+      "name": "durable_turn_idempotency_conflict_and_session_lifecycle",
+      "status": "pass",
+      "result": {
+        "turn_id": "comprehensive-1793878082482851000",
+        "reply": "银杏6029。",
+        "stored_turns": 1,
+        "conflict_status": 409,
+        "rename_archive_restore": true
+      },
+      "seconds": 1.262,
+      "calls": [
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 4914,
+          "completion_tokens": 6,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "background_agent_task_real_tool_and_persistence",
+      "status": "pass",
+      "result": {
+        "task_id": "agent-task-a0ff3a5b68ad46f5af57a9f5a3acd3ec",
+        "session_id": "",
+        "title": "只读画像任务",
+        "prompt": "必须用 get_profile 工具读取画像，最后概括两个兴趣，不要修改数据。",
+        "status": "completed",
+        "skill": "",
+        "progress": "画像数据已读取。根据“兴趣层 Interest”中的喜好部分，概括用户的两个主要兴趣如下：\n\n1.  **编程技术（特别是 Rust）**：用户高度关注编程技术细节，近期连续收藏点赞 Rust、Python、Docker 等教程，偏好侧重原",
+        "report": "画像数据已读取。根据“兴趣层 Interest”中的喜好部分，概括用户的两个主要兴趣如下：\n\n1.  **编程技术（特别是 Rust）**：用户高度关注编程技术细节，近期连续收藏点赞 Rust、Python、Docker 等教程，偏好侧重原理讲解与代码示例的内容。\n2.  **园艺（阳台种植）**：用户明确喜欢园艺，特别是阳台种番茄的趣味活动。\n\n（任务完成，未执行任何写操作）",
+        "suggestions": [],
+        "steps": [
+          {
+            "type": "tool_call",
+            "step": 1,
+            "tool_name": "get_profile",
+            "summary": "get_profile()"
+          },
+          {
+            "type": "tool_result",
+            "step": 1,
+            "text": "# 用户画像\n\n## 核心层 Core\n\n## 价值层 Values\n\n## 兴趣层 Interest\n\n### 喜好\n\n#### 科技 (权重 1.00)\n- 编程 (1.00)\n\n#### 生活 (权重 0.85)\n- 园艺 (0.85)\n\n### 讨厌\n\n#### 赌博内容 (权重 0.90)\n\n### 常看UP主\n- 合成验收样本\n\n## 角色层 Role\n- 生活阶段: 暂无明确自述\n- 当前状态: 暂无明确自述\n\n## 表层 Surface\n\n### 内容偏好\n- 时长偏好: long\n- 深度偏好: 0.95\n- 质量敏感度: 0.90\n\n### 情境模式\n- 工作日: 无明显区分\n- 周末: 无明显区分\n- 探索开放度: 0.70\n\n---\n\n## 综合叙事\n\n你明确喜欢 Rust 编程教程，并享受阳台种番茄的趣味，同时坚定地拒绝赌博内容。你注重技术学习与生活平衡，对特定领域有明确偏好。\n\n## 近期观察\n- [init] 用户高度关注编程技术细节，尤其是 Rust 语言特性与 Python 工程实践\n- [2026-11-04] 用户近期连续对编程类技术教程（Rust、Python、Docker 等）表现出高度的收藏与点赞行为，且内容均侧重于原理讲解与代码示例。\n- [] 用户明确在反馈中表达了对“有可运行代码的原理讲解”的偏好，并多次针对编程及园艺类视频提出相同的备注需求。\n- [] 用户明确表达了强烈的兴趣偏好：既专注于 Rust 编程原理（所有权、生命周期等），又热爱阳台番茄养护，同时坚决要求过滤赌博类内容。\n\n## 当前洞察\n- 用户不仅关注新技术本身，更关注如何利用技术解决实际问题或构建个人项目 (置信度: 92%)\n- 用户倾向于将理论知识与可操作的工程实践紧密结合，偏好能直接辅助构建个人工具或系统的内容形式。 (置信度: 74%)\n- 用户在学习编程技术时表现出高度的系统性，试图建立从底层机制到上层架构的完整知识体系。 (置信度: 68%)\n- 用户倾向于在技术学习之外，寻找能够带来秩序感和成就感的具体实践（如编程原理与番茄种植），以此作为应对信息过载的一种平衡方式。 (置信度: 58%)\n",
+            "tool_name": "get_profile",
+            "ok": true,
+            "truncated": false
+          },
+          {
+            "type": "final",
+            "step": 2,
+            "text": "画像数据已读取。根据“兴趣层 Interest”中的喜好部分，概括用户的两个主要兴趣如下：\n\n1.  **编程技术（特别是 Rust）**：用户高度关注编程技术细节，近期连续收藏点赞 Rust、Python、Docker 等教程，偏好侧重原理讲解与代码示例的内容。\n2.  **园艺（阳台种植）**：用户明确喜欢园艺，特别是阳台种番茄的趣味活动。\n\n（任务完成，未执行任何写操作）"
+          }
+        ],
+        "error": "",
+        "created_at": "2026-11-05 11:28:03",
+        "started_at": "2026-11-05 11:28:03",
+        "finished_at": "2026-11-05 11:28:25",
+        "updated_at": "2026-11-05 11:28:25"
+      },
+      "seconds": 21.421,
+      "calls": [
+        {
+          "caller": "soul.avoidance_speculate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 1723,
+          "completion_tokens": 626,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 1983,
+          "completion_tokens": 16,
+          "success": 1
+        },
+        {
+          "caller": "soul.speculate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2482,
+          "completion_tokens": 973,
+          "success": 1
+        },
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2697,
+          "completion_tokens": 21,
+          "success": 1
+        },
+        {
+          "caller": "agent.task",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2615,
+          "completion_tokens": 99,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "web_content_extraction_preserves_items_and_urls",
+      "status": "pass",
+      "result": {
+        "items": [
+          {
+            "bvid": "",
+            "title": "Rust借用检查实例",
+            "up_name": "",
+            "up_mid": 0,
+            "cover_url": "",
+            "duration": 0,
+            "view_count": 0,
+            "like_count": 0,
+            "favorite_count": 0,
+            "collect_count": 0,
+            "comment_count": 0,
+            "share_count": 0,
+            "danmaku_count": 0,
+            "reply_count": 0,
+            "retweet_count": 0,
+            "bookmark_count": 0,
+            "engagement_available": [],
+            "rating_score": 0.0,
+            "rating_count": 0,
+            "source_rank": 0,
+            "tags": [],
+            "topic_key": "",
+            "topic_group": "",
+            "style_key": "",
+            "franchise_key": "",
+            "description": "用三个可运行的例子解释引用的作用域。",
+            "published_at": "",
+            "published_label": "",
+            "source_strategy": "web_extract",
+            "discovery_lane": "",
+            "relevance_score": 0.0,
+            "relevance_reason": "",
+            "semantic_filter_deferred": false,
+            "semantic_filter_review": false,
+            "temporal_class": "unknown",
+            "temporal_confidence": 0.0,
+            "temporal_reason": "",
+            "temporal_policy_version": "v2",
+            "temporal_validity_mode": "none",
+            "temporal_valid_until": "",
+            "temporal_scope": "none",
+            "temporal_evidence": "",
+            "temporal_state": "unknown",
+            "temporal_next_review_at": "",
+            "temporal_evaluated_at": "",
+            "temporal_evidence_complete": false,
+            "temporal_evaluated": false,
+            "pool_expression": "",
+            "pool_topic_label": "",
+            "candidate_tier": "primary",
+            "discovered_at": "",
+            "last_scored_at": "",
+            "content_id": "rust-17",
+            "item_key": "web:rust-17",
+            "content_url": "https://example.com/post/rust-17",
+            "source_platform": "web",
+            "author_name": "小林",
+            "score_threshold": 0.0,
+            "body_text": "",
+            "content_type": "video",
+            "source_metadata": {},
+            "source_keyword_id": null
+          },
+          {
+            "bvid": "",
+            "title": "番茄支架搭建记录",
+            "up_name": "",
+            "up_mid": 0,
+            "cover_url": "",
+            "duration": 0,
+            "view_count": 0,
+            "like_count": 0,
+            "favorite_count": 0,
+            "collect_count": 0,
+            "comment_count": 0,
+            "share_count": 0,
+            "danmaku_count": 0,
+            "reply_count": 0,
+            "retweet_count": 0,
+            "bookmark_count": 0,
+            "engagement_available": [],
+            "rating_score": 0.0,
+            "rating_count": 0,
+            "source_rank": 0,
+            "tags": [],
+            "topic_key": "",
+            "topic_group": "",
+            "style_key": "",
+            "franchise_key": "",
+            "description": "记录阳台番茄支架安装过程以及本周的浇水安排。",
+            "published_at": "",
+            "published_label": "",
+            "source_strategy": "web_extract",
+            "discovery_lane": "",
+            "relevance_score": 0.0,
+            "relevance_reason": "",
+            "semantic_filter_deferred": false,
+            "semantic_filter_review": false,
+            "temporal_class": "unknown",
+            "temporal_confidence": 0.0,
+            "temporal_reason": "",
+            "temporal_policy_version": "v2",
+            "temporal_validity_mode": "none",
+            "temporal_valid_until": "",
+            "temporal_scope": "none",
+            "temporal_evidence": "",
+            "temporal_state": "unknown",
+            "temporal_next_review_at": "",
+            "temporal_evaluated_at": "",
+            "temporal_evidence_complete": false,
+            "temporal_evaluated": false,
+            "pool_expression": "",
+            "pool_topic_label": "",
+            "candidate_tier": "primary",
+            "discovered_at": "",
+            "last_scored_at": "",
+            "content_id": "garden-29",
+            "item_key": "web:garden-29",
+            "content_url": "https://example.com/post/garden-29",
+            "source_platform": "web",
+            "author_name": "阿青",
+            "score_threshold": 0.0,
+            "body_text": "",
+            "content_type": "video",
+            "source_metadata": {},
+            "source_keyword_id": null
+          }
+        ]
+      },
+      "seconds": 54.357,
+      "calls": [
+        {
+          "caller": "discovery.keyword_planner",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2760,
+          "completion_tokens": 264,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 6810,
+          "completion_tokens": 1300,
+          "success": 1
+        },
+        {
+          "caller": "sources.web.extract",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 381,
+          "completion_tokens": 155,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "five_platform_keyword_generation_and_cache",
+      "status": "pass",
+      "result": {
+        "generated": {
+          "xiaohongshu": 4,
+          "douyin": 4,
+          "youtube": 4,
+          "github": 4
+        },
+        "calls": [
+          {
+            "caller": "discovery.evaluate_batch",
+            "success": 1
+          },
+          {
+            "caller": "discovery.evaluate_batch",
+            "success": 1
+          },
+          {
+            "caller": "discovery.keyword_inspiration",
+            "success": 1
+          },
+          {
+            "caller": "discovery.evaluate_batch",
+            "success": 1
+          }
+        ]
+      },
+      "seconds": 180.093,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 7147,
+          "completion_tokens": 1406,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 7041,
+          "completion_tokens": 1218,
+          "success": 1
+        },
+        {
+          "caller": "discovery.keyword_inspiration",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 3117,
+          "completion_tokens": 877,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 6455,
+          "completion_tokens": 957,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "director_two_screens_with_default_planning_budget",
+      "status": "fail",
+      "error": "AssertionError: plan=None reason_code='planner_timeout' calls=2",
+      "seconds": 20.04,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 7055,
+          "completion_tokens": 1458,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 6143,
+          "completion_tokens": 334,
+          "success": 1
+        },
+        {
+          "caller": "recommendation.director.plan",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 2678,
+          "completion_tokens": 401,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 716,
+          "completion_tokens": 71,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "interest_speculation_generation_and_persistence",
+      "status": "fail",
+      "error": "AssertionError: []",
+      "seconds": 0.011,
+      "calls": []
+    },
+    {
+      "name": "deep_write_gate_rejects_unsupported_occupation",
+      "status": "pass",
+      "result": {
+        "verdict": "downgrade",
+        "reason": "与既有稳定理解（Rust 入门）存在张力，仅凭一次教程行为不足以确证「职业程序员」身份，先作为假设观察。",
+        "enforced": true,
+        "is_error": false
+      },
+      "seconds": 2.959,
+      "calls": [
+        {
+          "caller": "soul.posture_gate",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 513,
+          "completion_tokens": 52,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "dislike_embedding_recall_and_precise_llm_judgement",
+      "status": "pass",
+      "result": {
+        "recalled": [
+          [
+            "fixture-bad",
+            0.8022814053736285
+          ]
+        ],
+        "purge_decisions": [
+          "fixture-bad"
+        ]
+      },
+      "seconds": 3.644,
+      "calls": [
+        {
+          "caller": "pool_purge.llm_agent",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 396,
+          "completion_tokens": 61,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "long_context_middle_record_and_model_specific_bound",
+      "status": "fail",
+      "error": "SponsoredContractMismatchError: invalid fixed SDK operation input",
+      "seconds": 0.035,
+      "calls": []
+    },
+    {
+      "name": "explicit_thinking_real_stream_and_correct_arithmetic",
+      "status": "pass",
+      "result": {
+        "answer": "\n\n17 × 12 - 39 = 165",
+        "first_text_seconds": 25.47221374604851,
+        "deltas": 16,
+        "selected_model": "Qwen/Qwen3.5-4B"
+      },
+      "seconds": 26.075,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 6098,
+          "completion_tokens": 535,
+          "success": 1
+        },
+        {
+          "caller": "recommendation.write_expression",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3.5-4B",
+          "prompt_tokens": 4377,
+          "completion_tokens": 510,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "all_submitted_learning_and_edits_finish",
+      "status": "pass",
+      "result": {
+        "learning_drained": true,
+        "pending_edits_finished": true
+      },
+      "seconds": 0.003,
+      "calls": []
+    }
+  ],
+  "background_observations": [
+    {
+      "logger": "openbiliclaw.recommendation.engine",
+      "message": "Topic supergroup CPU build took 190ms in worker thread (6 labels)",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.runtime.keyword_planner",
+      "message": "keyword planner merged generation failed; falling back to interest names for ['xiaohongshu', 'douyin', 'youtube', 'github']",
+      "failure": true
+    },
+    {
+      "logger": "openbiliclaw.llm.concurrency",
+      "message": "LLM maintenance traffic parked 300s on an empty content pool with no refill progress; admitting 2 waiter(s) so profile updates are not starved indefinitely. Check whether refill is failing (sources disabled, credentials expired, or network blocked).",
+      "failure": false
+    }
+  ]
+}

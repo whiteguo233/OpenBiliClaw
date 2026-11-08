@@ -27,10 +27,12 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
 ) -> None:
     base_url, _ = mobile_web_server
     client = _client(monkeypatch, tmp_path, _configured())
+    saved_payloads = []
 
     def config_api(route: Route) -> None:
         request = route.request
         if request.method == "PUT":
+            saved_payloads.append(request.post_data_json)
             response = client.put("/api/config", json=request.post_data_json)
         else:
             response = client.get("/api/config")
@@ -41,26 +43,27 @@ def test_mobile_can_configure_jev_and_reload_without_exposing_saved_token(
     page = chromium_page
     page.route("**/api/config*", config_api)
     page.goto(f"{base_url}/m/#/recommend")
-    page.get_by_role("button", name="打开保存与候选评估设置").click()
-    root = page.locator("#mobileJevConnectionSettings")
-    root.get_by_label("启用 Jev 服务连接", exact=True).check()
-    root.get_by_label("Token", exact=True).fill("synthetic-mobile-token")
-    root.get_by_label("API URL（完整接口地址）", exact=True).fill(
-        "https://jev.example.test/v1/systemone"
+    page.get_by_role("button", name="打开内容来源、保存与候选评估设置").click()
+    assert page.locator("#mobile-eval-scorer-hint").inner_text() == (
+        "选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。"
     )
+    assert not page.get_by_text("Jev 替换完整候选评估", exact=False).is_visible()
+    root = page.locator("#mobileJevConnectionSettings")
+    root.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
+    root.get_by_label("Token", exact=True).fill("synthetic-mobile-token")
+    root.get_by_label("接口地址类型", exact=True).select_option("base")
+    root.get_by_label("API Base URL", exact=True).fill("https://jev.example.test")
     root.get_by_label("固定模型 ID", exact=True).fill("jev-1.14.0")
     page.locator("#mobile-eval-scorer").select_option("jev")
     page.get_by_role("button", name="保存设置", exact=True).click()
     page.locator(".mobile-settings-status").filter(has_text="设置已保存").wait_for()
+    assert saved_payloads and "llm" not in saved_payloads[-1]
     assert root.get_by_label("Token", exact=True).input_value() == ""
     assert "synthetic-mobile-token" not in page.locator("body").inner_text()
     page.get_by_role("button", name="关闭设置", exact=True).click()
-    page.get_by_role("button", name="打开保存与候选评估设置").click()
+    page.get_by_role("button", name="打开内容来源、保存与候选评估设置").click()
     page.locator(".mobile-settings-status").filter(has_text="设置已加载").wait_for()
     assert page.locator("#mobile-eval-scorer").input_value() == "jev"
     assert root.get_by_label("固定模型 ID", exact=True).input_value() == "jev-1.14.0"
-    assert (
-        root.get_by_label("API URL（完整接口地址）", exact=True).input_value()
-        == "https://jev.example.test/v1/systemone"
-    )
+    assert root.get_by_label("API Base URL", exact=True).input_value() == "https://jev.example.test"
     assert root.get_by_label("Token", exact=True).input_value() == ""

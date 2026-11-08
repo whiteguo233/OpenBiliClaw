@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 import ServiceManagement
 
 private func text(_ key: String) -> String { NSLocalizedString(key, comment: "") }
@@ -21,6 +22,13 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var terminating = false
     private var stopping = false
     private var arguments = ProcessInfo.processInfo.arguments
+    private lazy var bundleSignatureValid: Bool = {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, [], &code) == errSecSuccess,
+              let code else { return false }
+        let flags = SecCSFlags(rawValue: kSecCSCheckNestedCode | kSecCSStrictValidate)
+        return SecStaticCodeCheckValidity(code, flags, nil) == errSecSuccess
+    }()
 
     static func main() {
         let app = NSApplication.shared
@@ -158,6 +166,10 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func startBackend() {
         guard backend?.isRunning != true else { return }
+        guard bundleSignatureValid else {
+            stateLabel.stringValue = text("Application signature verification failed.")
+            return
+        }
         stopping = false
         webURL = nil
         stateLabel.stringValue = text("Starting backend…")
@@ -169,7 +181,8 @@ final class StoreApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         child.executableURL = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/OpenBiliClawBackend")
         child.currentDirectoryURL = root
         var env = ProcessInfo.processInfo.environment
-        for key in ["PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "OPENBILICLAW_SELFTEST"] { env.removeValue(forKey: key) }
+        for key in ["PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "OPENBILICLAW_SELFTEST",
+                    "OPENBILICLAW_SPONSORED_RUNTIME"] { env.removeValue(forKey: key) }
         env["HOME"] = NSHomeDirectory()
         env["OPENBILICLAW_PROJECT_ROOT"] = root.path
         env["OLLAMA_MODELS"] = root.appendingPathComponent("data/ollama-models").path

@@ -80,8 +80,14 @@ def test_popup_saves_jev_connection_through_the_real_config_api(
     page.goto(base_url + "/popup/popup.html")
     page.locator("#settingsGear").click()
     page.get_by_role("tab", name="高级功能").click()
+    assert page.locator("#cfgEvalScorerHint").inner_text() == (
+        "选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。"
+    )
+    assert not page.get_by_text("Agent 沿用完整 AI 评估与缓存", exact=False).is_visible()
     root = page.locator("#cfgJevConnectionSettings")
-    root.get_by_label("启用 Jev 服务连接", exact=True).check()
+    root.get_by_label("启用 Jev 服务连接（不切换评估器）", exact=True).check()
+    root.get_by_label("接口地址类型", exact=True).select_option("base")
+    root.get_by_label("API Base URL", exact=True).fill("https://gateway.example.test/api")
     root.get_by_label("Token", exact=True).fill("synthetic-popup-token")
     page.locator("#cfgEvalScorer").select_option("jev")
     with page.expect_response(
@@ -94,3 +100,7 @@ def test_popup_saves_jev_connection_through_the_real_config_api(
     saved = client.get("/api/config").json()
     assert saved["discovery"]["eval_scorer"] == "jev"
     assert saved["discovery"]["jev_provider"]["ready"] is True
+    assert (
+        saved["discovery"]["jev_provider"]["endpoint_url"]
+        == "https://gateway.example.test/api/v1/systemone"
+    )

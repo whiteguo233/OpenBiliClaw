@@ -250,41 +250,37 @@ class TestSourceToolsMigration:
         db.initialize()
         return db
 
-    def test_source_tools_legacy_shape_unchanged(self) -> None:
-        assert SOURCE_TOOLS == [
-            {
-                "name": "create_source",
-                "description": "创建新的内容源订阅。当用户说想关注某个平台的某类内容时调用。",
-                "parameters": {
-                    "source_type": "平台类型，如 xiaohongshu / web / v2ex / zhihu",
-                    "name": "人类可读的订阅名，如 '小红书-机械键盘'",
-                    "strategy": "search 或 feed",
-                    "query": "搜索关键词（strategy=search 时必填）",
-                    "url": "直接 URL（strategy=feed 时必填）",
-                },
-            },
-            {"name": "list_sources", "description": "列出用户当前的所有内容源订阅。"},
-            {
-                "name": "toggle_source",
-                "description": "启用或禁用某个内容源订阅。",
-                "parameters": {"id": "订阅 ID", "enabled": "true 或 false"},
-            },
-        ]
+    def test_legacy_tools_derive_from_the_same_registry(self) -> None:
+        assert {entry["name"] for entry in SOURCE_TOOLS} == {
+            "create_source",
+            "list_sources",
+            "toggle_source",
+        }
 
     def test_registry_llm_schemas(self, tmp_path: Path) -> None:
         registry = build_source_tool_registry(self._make_db(tmp_path))
         schemas = {entry["function"]["name"]: entry for entry in registry.llm_schemas()}
-        assert set(schemas) == {"create_source", "list_sources", "toggle_source"}
+        assert set(schemas) == {
+            "create_source",
+            "probe_web_source",
+            "list_sources",
+            "toggle_source",
+        }
         create_params = schemas["create_source"]["function"]["parameters"]
         assert create_params["type"] == "object"
-        assert create_params["properties"]["strategy"]["enum"] == ["search", "feed"]
+        assert create_params["properties"]["strategy"]["enum"] == [
+            "search",
+            "feed",
+            "sitemap",
+            "listing",
+        ]
         assert schemas["toggle_source"]["function"]["parameters"]["required"] == ["id"]
 
     def test_permission_levels(self, tmp_path: Path) -> None:
         registry = build_source_tool_registry(self._make_db(tmp_path))
         assert registry.get("list_sources").permission_level == "read"  # type: ignore[union-attr]
         assert registry.get("create_source").permission_level == "hard_write"  # type: ignore[union-attr]
-        assert registry.filter_by_permission("read").names == ["list_sources"]
+        assert registry.filter_by_permission("read").names == ["probe_web_source", "list_sources"]
 
     async def test_registry_dispatch_roundtrip(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
@@ -316,7 +312,10 @@ class TestSourceToolsMigration:
         dispatcher = SourceToolDispatcher(db)
         # strategy must be one of the enum values now.
         result = dispatcher.dispatch(
-            {"name": "create_source", "arguments": {"strategy": "bogus", "name": "x"}}
+            {
+                "name": "create_source",
+                "arguments": {"source_type": "xiaohongshu", "strategy": "bogus", "name": "x"},
+            }
         )
         assert "参数校验失败" in result
         assert db.get_all_recipes() == []

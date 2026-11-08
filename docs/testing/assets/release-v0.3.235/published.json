@@ -1,0 +1,219 @@
+{
+  "version": "0.3.235",
+  "release_source_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+  "tags": {
+    "backend-v0.3.235": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+    "desktop-v0.3.235": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+    "extension-v0.3.235": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+    "openbiliclaw-v0.3.235": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716"
+  },
+  "aggregate": {
+    "tag": "openbiliclaw-v0.3.235",
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235",
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "openbiliclaw-extension-v0.3.235-firefox.zip",
+        "size": 1624710,
+        "digest": "sha256:4d5667a1941fc08c2ea6a731d46ba29cfca8851d53c8468a04e99e2e65b05552",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/openbiliclaw-extension-v0.3.235-firefox.zip"
+      },
+      {
+        "name": "openbiliclaw-extension-v0.3.235-safari.dmg",
+        "size": 6769250,
+        "digest": "sha256:7be1217895d8c8869a277594b37b4740c4005c12b670bc32bfb5d24de7ce07e6",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/openbiliclaw-extension-v0.3.235-safari.dmg"
+      },
+      {
+        "name": "openbiliclaw-extension-v0.3.235.zip",
+        "size": 1743308,
+        "digest": "sha256:51be9e808f1cdb959b2b722caea9ece254c2322579d8f21f2433fb024cbc22de",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/openbiliclaw-extension-v0.3.235.zip"
+      },
+      {
+        "name": "OpenBiliClaw-macos-v0.3.235-arm64-with-embedding.dmg",
+        "size": 1369091801,
+        "digest": "sha256:0793d1b9721d12e2de21d5d812b7394bcedd62b660dae1f911f06e5581eb48b4",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/OpenBiliClaw-macos-v0.3.235-arm64-with-embedding.dmg"
+      },
+      {
+        "name": "OpenBiliClaw-macos-v0.3.235-arm64.dmg",
+        "size": 315136849,
+        "digest": "sha256:79c74d7c801a5dfa4eeb4b6d6e1fa3f6ae62e7f8daa7b72d24dd037adc9313b1",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/OpenBiliClaw-macos-v0.3.235-arm64.dmg"
+      },
+      {
+        "name": "OpenBiliClaw-macos-v0.3.235-x64.dmg",
+        "size": 319197849,
+        "digest": "sha256:f3d0601f499cbb479164156025d54bd9b841363219713c661528cc00d5eece21",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/OpenBiliClaw-macos-v0.3.235-x64.dmg"
+      },
+      {
+        "name": "OpenBiliClaw-windows-0.3.235-Setup.exe",
+        "size": 109282490,
+        "digest": "sha256:f48619ad5e2366a93b3dcdba85e9051bac7f86b56656109890fcc62ebda6d6ee",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/OpenBiliClaw-windows-0.3.235-Setup.exe"
+      },
+      {
+        "name": "OpenBiliClaw-windows-0.3.235-with-embedding-Setup.exe",
+        "size": 1123389507,
+        "digest": "sha256:7fdc245604adceb7fcc5b7bdcd96bbe8ac4cb8d3741001667cd0f581329b41f9",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/openbiliclaw-v0.3.235/OpenBiliClaw-windows-0.3.235-with-embedding-Setup.exe"
+      }
+    ]
+  },
+  "desktop": {
+    "tag": "desktop-v0.3.235",
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/desktop-v0.3.235",
+    "prerelease": true,
+    "assets": [
+      {
+        "name": "OpenBiliClaw-macos-v0.3.235-arm64-with-embedding.dmg",
+        "size": 1369091801,
+        "digest": "sha256:0793d1b9721d12e2de21d5d812b7394bcedd62b660dae1f911f06e5581eb48b4",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/desktop-v0.3.235/OpenBiliClaw-macos-v0.3.235-arm64-with-embedding.dmg"
+      },
+      {
+        "name": "OpenBiliClaw-macos-v0.3.235-arm64.dmg",
+        "size": 315136849,
+        "digest": "sha256:79c74d7c801a5dfa4eeb4b6d6e1fa3f6ae62e7f8daa7b72d24dd037adc9313b1",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/desktop-v0.3.235/OpenBiliClaw-macos-v0.3.235-arm64.dmg"
+      },
+      {
+        "name": "OpenBiliClaw-macos-v0.3.235-x64.dmg",
+        "size": 319197849,
+        "digest": "sha256:f3d0601f499cbb479164156025d54bd9b841363219713c661528cc00d5eece21",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/desktop-v0.3.235/OpenBiliClaw-macos-v0.3.235-x64.dmg"
+      },
+      {
+        "name": "OpenBiliClaw-windows-0.3.235-Setup.exe",
+        "size": 109282490,
+        "digest": "sha256:f48619ad5e2366a93b3dcdba85e9051bac7f86b56656109890fcc62ebda6d6ee",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/desktop-v0.3.235/OpenBiliClaw-windows-0.3.235-Setup.exe"
+      },
+      {
+        "name": "OpenBiliClaw-windows-0.3.235-with-embedding-Setup.exe",
+        "size": 1123389507,
+        "digest": "sha256:7fdc245604adceb7fcc5b7bdcd96bbe8ac4cb8d3741001667cd0f581329b41f9",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/desktop-v0.3.235/OpenBiliClaw-windows-0.3.235-with-embedding-Setup.exe"
+      }
+    ]
+  },
+  "extension": {
+    "tag": "extension-v0.3.235",
+    "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.235",
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "openbiliclaw-extension-v0.3.235-firefox.zip",
+        "size": 1624710,
+        "digest": "sha256:4d5667a1941fc08c2ea6a731d46ba29cfca8851d53c8468a04e99e2e65b05552",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/extension-v0.3.235/openbiliclaw-extension-v0.3.235-firefox.zip"
+      },
+      {
+        "name": "openbiliclaw-extension-v0.3.235-safari.dmg",
+        "size": 6769250,
+        "digest": "sha256:7be1217895d8c8869a277594b37b4740c4005c12b670bc32bfb5d24de7ce07e6",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/extension-v0.3.235/openbiliclaw-extension-v0.3.235-safari.dmg"
+      },
+      {
+        "name": "openbiliclaw-extension-v0.3.235.zip",
+        "size": 1743308,
+        "digest": "sha256:51be9e808f1cdb959b2b722caea9ece254c2322579d8f21f2433fb024cbc22de",
+        "browser_download_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/extension-v0.3.235/openbiliclaw-extension-v0.3.235.zip"
+      }
+    ]
+  },
+  "runs": {
+    "ci": {
+      "id": 42449890630,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42449890630",
+      "head_sha": "484308bf8f1a7b42ac38565b61e1c838b3423a9d",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "sdk_install": {
+      "id": 42451074838,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42451074838",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "manual_macos": {
+      "id": 42451080867,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42451080867",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "backend": {
+      "id": 42452647866,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42452647866",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "docker": {
+      "id": 42452655558,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42452655558",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "desktop": {
+      "id": 42452658123,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42452658123",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "extension_repair": {
+      "id": 42453360674,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42453360674",
+      "head_sha": "eaf19ff9e8e45b94db246f59fba43964ff18db44",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "intel_promotion": {
+      "id": 42453964643,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42453964643",
+      "head_sha": "cb39762d59623b164a4c45119ff9620e77689182",
+      "conclusion": "success",
+      "run_attempt": 2
+    },
+    "chrome_store": {
+      "id": 42452610773,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42452610773",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "firefox_store": {
+      "id": 42452617958,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42452617958",
+      "head_sha": "0e3d9bdcc29ed9f4e9505596c694ce1ba2e46716",
+      "conclusion": "success",
+      "run_attempt": 1
+    },
+    "completeness": {
+      "id": 42454451044,
+      "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42454451044",
+      "head_sha": "cb39762d59623b164a4c45119ff9620e77689182",
+      "conclusion": "success",
+      "run_attempt": 1
+    }
+  },
+  "stores": {
+    "chrome": {
+      "version": "0.3.235",
+      "uploadState": "SUCCEEDED",
+      "submissionState": "PENDING_REVIEW"
+    },
+    "firefox": {
+      "version": "0.3.235",
+      "channel": "listed",
+      "fileStatus": "unreviewed",
+      "privacyPolicySync": "HTTP 406; existing fallback disclosures retained"
+    }
+  }
+}

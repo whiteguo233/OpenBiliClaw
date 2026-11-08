@@ -44,6 +44,7 @@ jobs:
       - name: Archive sandboxed QA app with Xcode
         env:
           STORE_BUILD_NUMBER: ${{ inputs.build_number || '1' }}
+          OPENBILICLAW_PROJECT_ROOT: ${{ runner.temp }}/store-build-profile
         run: |
           python packaging/macos_store/build.py \
             --ollama-bin "$RUNNER_TEMP/ollama/Ollama.app/Contents/Resources/ollama" \

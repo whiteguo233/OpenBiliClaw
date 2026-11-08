@@ -148,9 +148,9 @@ async def _llm_semantic_score(
         return _llm_score_cache[cache_key]
 
     try:
-        from claude_agent_sdk import ClaudeAgentOptions
-
         from openbiliclaw.eval.agents import _collect_text, _extract_json
+
+        from .sponsored_agents import agent_options
 
         text = await _collect_text(
             prompt=(
@@ -161,7 +161,7 @@ async def _llm_semantic_score(
                 f"{instruction}\n\n"
                 '返回: {"score": 0.0-1.0, "deviation": "偏差描述"}'
             ),
-            options=ClaudeAgentOptions(
+            options=agent_options(
                 system_prompt=(
                     "你是语义相似度评分器。对比两个值的语义含义（不是字面文本），"
                     "给出 0-1 分。完全相同概念=1.0，部分重叠=0.5-0.8，完全不同=0-0.3。"

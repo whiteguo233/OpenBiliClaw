@@ -1,5 +1,13 @@
 # 推荐引擎
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 推荐/导演遵循实例路由 | 导演规划通过 `uses_sponsored_route()` 选择已有免费模型的顺序引用输出约束；自有模型路由保留原格式。推荐与导演公开方法签名不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 可切换完整评估器的旧池补评
 
 `RecommendationEngine.bind_content_evaluator()` 可注入共享发现评估器；纯 Jev 模式下
@@ -36,6 +44,8 @@ HTTPS URL。
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 自定义网站来源显示与独立库存 | ✅ | 普通推荐、惊喜单条/批量及手动/后台推送均保留 `source_id/source_name` 与 canonical `web` 身份；内部实例份额独立，公开 Web 平台库存与定向续页合并各实例，重复 URL 只计一次库存，收藏/稍后再看继续共用原内容键。 |
+
 | 推荐导演三策略 | ✅ 默认关闭 | `DirectorRuntime` 接通逐对 Jev、Agent+Jev 局部修补和纯 Agent 多屏计划；屏原子提交、真实曝光反馈及配置换代 fencing，详见[模块合同](director.md) |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
@@ -116,7 +126,7 @@ HTTPS URL。
 | v0.3.x 批量文案限流保护 | ✅ | `_precompute_batch()` 遇到 LLM provider rate limit / cooldown / quota 时不再进入逐条 `_try_generate_expression()` fallback；本轮预生成计为 0，保留空 `pool_expression/topic_label` 等后续调度重试 |
 | v0.3.x 批量文案错位 / 重复防护 | ✅ | 强化 v0.3.81：**多条**候选缺 `bvid/content_id` 时（不止数量不完整）一律降级逐条生成——位置匹配只对无歧义的单条批次保留，杜绝弱模型乱序导致的文案张冠李戴；新增去重闸，同一句文案被分配给多个不同 bvid 时整组丢弃（宁可不发也不发重复），根治本地小模型上下文截断时「每条理由都一样且对不上视频」 |
 | v0.3.x 负反馈表达避让 | ✅ | `_recommendation_profile_summary()` 会把 `preferences.disliked_topics` 带入推荐画像摘要；单条和批量推荐表达 prompt 都要求避开这些主题 / 话术模式，候选明显命中时只能保守说明差异化理由，不得热情背书或把避雷项包装成用户偏好 |
-| v0.3.x 推荐出口避雷兜底 | ✅ | `serve()` 从 discovery pool 读出候选后，会按当前 `profile.preferences.disliked_topics` 再做一次过滤：`topic_key/topic_group/pool_topic_label` 精确命中始终硬丢弃，标题、标签、简介、作者名和短正文包含 dislike term 时用于覆盖异步清池尚未完成或清池失败的窗口。若自然语言子串过滤把整个 serve 窗口杀空，则只对该窗口降级为精确 topic 硬禁用并记录 WARNING，避免“视频/内容”等泛化画像项让推荐永久为空；只要模糊过滤仍留下任一候选，原硬过滤行为完全不变。 |
+| v0.3.x 推荐出口避雷兜底 | ✅ | `serve()` 从 discovery pool 读出候选后，会按当前 `profile.preferences.disliked_topics` 再做一次过滤：`topic_key/topic_group/pool_topic_label` 精确命中始终硬丢弃，标题、标签、简介、作者名和短正文包含 dislike term 时用于覆盖异步清池尚未完成或清池失败的窗口。若自然语言子串过滤把整个 serve 窗口杀空，则只对该窗口降级为精确 topic 硬禁用并记录 WARNING，避免“视频/内容”等泛化画像项让推荐永久为空；只要模糊过滤仍留下任一候选，原硬过滤行为完全不变。**2026-11-04 起加粒度闸**：子串匹配只对「短语级」避雷词生效（≥4 字符或带「的/类/内容/教程/标题…」等限定词），2–3 字的裸类别词（科普 / 崩坏 / 综艺）只按结构化 topic 字段精确匹配——此前一条标题就叫《科普》的视频被点踩一次，就删掉了 198 条缓存行，其中包括同一画像仍标为兴趣的天文科普。 |
 | v0.3.x dislike 即时输出一致性 | ✅ | 单卡 dislike 继续同步标记 processed；已确认主题写入后，历史推荐、1 秒 API snapshot、reshuffle/append、OpenClaw fallback/新生成结果和主动通知都会在最终边界读取最新 effective dislikes。snapshot 命中同时要求 dislike digest 一致；多卡模糊全灭沿用 exact-safe 恢复，单条 push 禁止恢复。普通 dislike 不阻断 discovery 搜索，异步语义清池只优化库存。 |
 | v0.3.x 画像输入上限放宽 | ✅ | `_recommendation_profile_summary()` 兴趣 tag 上限 10 → 30 → 64 → 256 且按 weight 降序排序后截断；`disliked_topics` 5 → 16 → 64 → 128（与存储上限对齐，避雷项不再截断）；`_select_relevant_interests()` 的 embedding 候选池按 weight 排序取前 256（与画像兴趣上限对齐，让头部之外的小众兴趣在语义最匹配时也能被选中；`top_k=5` 不变，故注入 prompt 的数量不变；fallback「top-K by weight」语义与实现一致） |
 | v0.3.x 文案 / delight 候选 description 对齐 | ✅ | 推荐重评估和批量文案表达的候选 `description` 截断统一对齐到 400 字符（此前 200 / 300 / 280 混用），与 discovery 评估输入一致，避免中文简介在关键句中途被砍。Delight score 当前复用 Evo 结果，不再单独构造候选评分或 reason prompt；MMR 去重 embedding 文本仍保持 `[:160]/[:200]`（它是缓存 key，不动） |
@@ -137,6 +147,13 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+### 自定义网站归属
+
+`Recommendation.content` 经 `DiscoveredContent.source_id/source_name` 保留网站实例。内部配额和实例定向读取使用实例 ID；公开平台库存、`append` / `reshuffle` 的 `source_platform=web` 则合并旧 Web recipe 与各动态网站，不能把实例 ID 当作公开平台名。内容的 `item_key` 继续用于打开、反馈及保存。`RecommendationOut`、`WatchLaterItem`、`FavoriteItem` 暴露实例显示字段，默认空字符串保持旧来源兼容。
+
+多个来源发现同一个 URL 时，卡片只有一份 canonical 内容，`source_metadata.source_provenance` 保存多个发现来源。首个入库实例持有一份库存额度，后续发现不重复占用来源份额或创建独立反馈；修改来源名称不改变内容键。归档移除后续调度资格，历史推荐和本地保存仍保留。
+
 
 `DirectorRuntime` 为 controller/composer/repair 注入 `JevContextBudget`；
 `CompositionSession.profile_source_digest` 用于计划新鲜度，实际视图仍绑定 `input_digest`。
@@ -279,6 +296,7 @@ GET /api/recommendations/platform-availability
 
 - 供 PC Web 平台 Tab 显示"该平台还有几条可立即推荐"，与 `count_pool_candidates()` / `serve()` 完全同口径
 - `total_available == sum(by_platform.values())` 由 storage 单次隔离快照保证；"全部" Tab 的数字取自同一份 snapshot 的 `total_available`
+- `by_platform` 使用 canonical 平台键。各动态网站库存合并到 `web`，来源实例仍独立记账并在卡片保留 `source_name`；公开平台筛选不接受 `custom_*` 实例 ID。引擎的最终平台检查与库存读取使用相同口径，避免 Web 显示库存却筛选不到内容。
 - 零库存平台可省略，前端对已启用但缺失的键显示 `0`
 - 读取异常返回可诊断 5xx；前端保留上一次成功值，首次尚未成功读取时显示未知态，不把失败伪装成 `0`
 - 该接口是只读的，刷新库存不消费候选池，也不会重载或覆盖已经 append 的推荐卡片

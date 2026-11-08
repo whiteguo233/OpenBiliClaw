@@ -162,6 +162,24 @@ Manual Douyin discovery: CLI discover → daemon-equivalent producer → per-key
 ```
 
 
+### Dynamic website and Feed discovery
+
+```text
+Chat → prepare_discovery_source → scrubbed observation / compiled plan / trial
+     → activate_discovery_source approval → independent source ID / share / cadence
+     → CustomWorkflowProducer → HTTP Feed or native Ego Lite task space
+     → ordinary candidate evaluation / copy → source-labelled recommendations
+Settings → names / shares / cadence / enabled state / run history
+```
+
+macOS installation and deployed server/desktop startup automatically prepare an isolated
+official Ego Lite host through `EgoSetupManager` (install → onboarding → native handshake).
+The API owns a background preparation task; prepared installations are reused and start on demand.
+Positively parsed RSS/Atom/JSON Feed uses HTTP. Setup failures never trigger Playwright fallback. Persisted legacy
+workflows retain their executor. The native adapter currently targets a local macOS host;
+real onboarding and end-to-end acceptance remain pending in the
+[Ego ledger](testing/2026-10-22-ego-lite-discovery-e2e.md).
+
 ### TikTok public discovery
 
 ```text
@@ -171,3 +189,13 @@ Formal producer / inspiration → TikTok router → shared pacing / durable 429 
 ```
 
 An optional login cookie enables search attempts. Passport session verification and actual search availability are verified separately; account history and profile initialization are excluded.
+
+
+## Optional sponsored SDK (default off, unreleased)
+
+```text
+LLMService / Registry / evaluation / EmbeddingService -> shared fixed-operation SDK IPC
+ -> private Runtime -> SiliconFlow chat + embeddings
+```
+
+Covers text, JSON, tool interfaces via the existing prompt simulation, buffered stream interfaces, vision, and text/image embeddings. Signed policy and compiled rules constrain models, budgets and destinations. Core retains business prompts and tool execution. Jev remains an independent decision provider. See [coverage and limits](plans/2026-10-27-sponsored-all-tasks.md).

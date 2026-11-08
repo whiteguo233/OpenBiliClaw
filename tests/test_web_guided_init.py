@@ -667,6 +667,9 @@ class _StubEngine:
         self.profile = object()
         self.discover_profiles: list[object] = []
 
+    def preference_analysis_batch_count(self, events, *, event_chunk_size):
+        return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
     async def analyze_events(
         self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
     ):

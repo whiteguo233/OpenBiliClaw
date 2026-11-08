@@ -2886,7 +2886,9 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            # Bilibili has 5 items at score 0.95 (high), Douyin has 3 at 0.60 (low).
+            # Bilibili has 5 items at scores 0.95..0.91, Douyin has 3 at 0.66.
+            # Distinct Bilibili scores keep the asserted IDs independent of
+            # last_scored_at tie-breaks when insertion crosses a wall-clock second.
             # Total = 8, target = 6, so 2 must be suppressed.
             # Without share quotas: all low-score Douyin items get axed.
             # With quota bilibili=2: 3 of Bilibili's 5 are over-quota → those go first,
@@ -2897,7 +2899,7 @@ class TestDatabase:
                     title=f"S{i}",
                     up_name="UP",
                     source="search",
-                    relevance_score=0.95,
+                    relevance_score=0.95 - i / 100,
                 )
             for i in range(3):
                 db.cache_content(

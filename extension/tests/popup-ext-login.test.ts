@@ -46,6 +46,45 @@ function fakeEls() {
   };
 }
 
+test("remote setup is required before pairing when password access is disabled", async () => {
+  const storage = storageHarness();
+  const els = fakeEls();
+  try {
+    const control = initExtLogin(els, {
+      getBaseUrl: async () => "https://backend.example/api",
+      fetchImpl: async () => Response.json({
+        enabled: false, authenticated: false, setup_required: true,
+      }),
+    });
+    await control.checkAuthStatus();
+    assert.equal(els.status.textContent, "请先在后端电脑上启用访问密码，再配置扩展设备密钥");
+    assert.equal(els.deviceKey.hidden, true);
+    assert.equal(els.btn.hidden, true);
+    assert.equal(els.status.style.color, "#ef7a86");
+  } finally {
+    storage.restore();
+  }
+});
+
+test("trusted local callers do not need remote device pairing", async () => {
+  const storage = storageHarness();
+  const els = fakeEls();
+  try {
+    const control = initExtLogin(els, {
+      getBaseUrl: async () => "http://127.0.0.1:8420/api",
+      fetchImpl: async () => Response.json({
+        enabled: false, authenticated: true, setup_required: false,
+      }),
+    });
+    await control.checkAuthStatus();
+    assert.equal(els.status.textContent, "本机访问无需配对");
+    assert.equal(els.deviceKey.hidden, true);
+    assert.equal(els.status.style.color, "#30b980");
+  } finally {
+    storage.restore();
+  }
+});
+
 test("checkAuthStatus shows pairing prompt when server reports not authenticated despite a cached token", async () => {
   const storage = storageHarness({
     obc_auth_session: { token: "old-token", expires_at: 2_000_000_000 },

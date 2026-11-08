@@ -1,0 +1,28 @@
+[
+  {
+    "model": "Qwen/Qwen3-8B",
+    "first_delta_seconds": 1.84,
+    "stream_ok": true,
+    "stream_seconds": 1.86,
+    "delta_count": 2,
+    "runtime_negotiated_timeouts": true,
+    "request_timeout_seconds": 1200.0,
+    "embedding_dimensions": 1024,
+    "embedding_seconds": 0.54,
+    "embedding_timeout_seconds": 180.0,
+    "runtime_stopped": true
+  },
+  {
+    "model": "Qwen/Qwen3.5-4B",
+    "first_delta_seconds": 0.81,
+    "stream_ok": true,
+    "stream_seconds": 0.87,
+    "delta_count": 2,
+    "runtime_negotiated_timeouts": true,
+    "request_timeout_seconds": 1200.0,
+    "embedding_dimensions": 1024,
+    "embedding_seconds": 0.17,
+    "embedding_timeout_seconds": 180.0,
+    "runtime_stopped": true
+  }
+]

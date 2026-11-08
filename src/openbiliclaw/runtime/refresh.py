@@ -384,6 +384,8 @@ class ContinuousRefreshController:
     bangumi_producer: Any | None = None
     linuxdo_producer: Any | None = None
     v2ex_producer: Any | None = None
+    web_producer: Any | None = None
+    custom_source_producer_provider: Callable[[str], Any] | None = None
     weibo_producer: Any | None = None
     instagram_producer: Any | None = None
     github_producer: Any | None = None
@@ -526,6 +528,11 @@ class ContinuousRefreshController:
     _last_llm_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
     _startup_maintenance_completed: bool = field(default=False, init=False)
     _last_pool_maintenance_succeeded: bool = field(default=False, init=False)
+    # Recipe-driven sources can change availability without a config reload.
+    # Keep this final in the public constructor to avoid shifting older optional
+    # positional parameters. The API runtime supplies a live projection so a
+    # Web share appears only while the global switch and an enabled recipe exist.
+    pool_source_shares_provider: Callable[[], Mapping[str, int]] | None = None
 
     _signal_event_types = [
         "view",
@@ -861,16 +868,38 @@ class ContinuousRefreshController:
             await self._publish_pool_status_if_changed()
 
             profile = await self.soul_engine.get_profile()
+            custom_results: dict[str, dict[str, object]] = {}
+            # OpenClaw's bounded request has no daemon planner or producer loop.
+            # Supply calls already tick these producers, so do not run them twice.
+            if (
+                self.one_shot_inline_eval_limit > 0
+                and self.custom_source_producer_provider is not None
+                and not self._candidate_supply_lock.locked()
+            ):
+                planner = self.keyword_planner
+                if planner is not None and bool(getattr(planner, "enabled", False)):
+                    planner.bind_deficit_source(self)
+                    await planner.run_once()
+                custom_results = await self._tick_custom_source_producers()
             plan = self._build_refresh_plan(state)
             if not plan:
-                return _result({"refreshed": False, "strategies": [], "reason": "below_threshold"})
-
-            return await self._run_refresh_plan(
-                state=state,
-                profile=profile,
-                plan=plan,
-                reason="triggered",
-            )
+                result: dict[str, object] = {
+                    "refreshed": False,
+                    "strategies": [],
+                    "reason": "below_threshold",
+                }
+            else:
+                result = await self._run_refresh_plan(
+                    state=state,
+                    profile=profile,
+                    plan=plan,
+                    reason="triggered",
+                )
+            if custom_results:
+                result["custom_source_results"] = custom_results
+                if any(_producer_supply_progress_count(row) > 0 for row in custom_results.values()):
+                    result["refreshed"] = True
+            return _result(result)
 
     async def run_init_backfill(
         self,
@@ -917,22 +946,31 @@ class ContinuousRefreshController:
         discovered_count = 0
         async with self._refresh_lock:
             copy_error: BaseException | None = None
-            if sources is not None and "instagram" in sources:
+            # Explicit initialisation owns the producer, evaluation and copy
+            # while daemon coordinators are paused. Do not route GitHub-only
+            # setup through the legacy Bilibili bundle.
+            init_producers = (
+                ("instagram", "Instagram", self.instagram_producer),
+                ("github", "GitHub", self.github_producer),
+            )
+            for source, label, producer in init_producers:
+                if sources is None or source not in sources:
+                    continue
                 current = self.database.count_pool_candidates()
                 self._update_llm_inventory_state(current)
-                if current < target and self.instagram_producer is not None:
-                    await _report(0, 4, "正在基于完整画像发现 Instagram 内容")
+                if current < target and producer is not None:
+                    await _report(0, 4, f"正在基于完整画像发现 {label} 内容")
                     request_limit = max(1, min(20, target - current))
                     produce_kwargs: dict[str, Any] = {"limit": request_limit, "force": True}
-                    if register_instagram_task is not None:
+                    if source == "instagram" and register_instagram_task is not None:
                         produce_kwargs["register_task"] = register_instagram_task
-                    result = await self.instagram_producer.produce_if_due(**produce_kwargs)
+                    result = await producer.produce_if_due(**produce_kwargs)
                     discovered_count += int(result.get("discovered", 0) or 0)
                     # Background coordinators pause during init. Its explicit
                     # wave must own evaluation and copy through readiness.
                     pipeline = self.discovery_candidate_pipeline
                     if pipeline is not None:
-                        await _report(1, 4, "正在评估 Instagram 候选")
+                        await _report(1, 4, f"正在评估 {label} 候选")
                         await pipeline.drain_pending(
                             profile=profile,
                             flush=True,
@@ -940,7 +978,7 @@ class ContinuousRefreshController:
                                 request_limit, max(1, int(result.get("enqueued", 0) or 0))
                             ),
                         )
-                    await _report(2, 4, "正在生成 Instagram 首轮推荐文案")
+                    await _report(2, 4, f"正在生成 {label} 首轮推荐文案")
                     try:
                         await self.recommendation_engine.drain_pending_expression_copy(
                             profile=profile, limit=max(1, target)
@@ -1057,8 +1095,8 @@ class ContinuousRefreshController:
     async def force_refresh(self) -> dict[str, object]:
         """Run a full refresh immediately, bypassing runtime thresholds.
 
-        Explicit replenishment also owns one bounded Instagram discovery,
-        evaluation and copy wave, even when background scheduling is off.
+        Explicit replenishment also owns bounded Instagram and custom-source
+        discovery, evaluation and copy waves while background scheduling is off.
         Runs all 4 Bilibili strategies in a single discover() call so they
         execute concurrently via asyncio.gather, maximizing pool diversity. The pool
         target still applies as a hard cap — if the pool is already full, no
@@ -1101,45 +1139,187 @@ class ContinuousRefreshController:
             return _result({"refreshed": False, "strategies": [], "reason": "pool_at_cap"})
 
         profile = await self.soul_engine.get_profile()
-        instagram_result = await self._manual_instagram_refresh(profile=profile)
-        # Instagram may already have filled the pool. Recompute the Bilibili
-        # plan after its wave, respecting the existing per-source quotas.
+        manual_results = []
+        discovered = replenished = 0
+        for family, label, refresh in (
+            ("instagram", "Instagram", self._manual_instagram_refresh),
+            ("custom_sources", "自定义来源", self._manual_custom_source_refresh),
+        ):
+            try:
+                result = await refresh(profile=profile)
+            except Exception as exc:
+                # One failed producer/copy wave must not block unrelated sources.
+                # Its counters may be incomplete; never reuse the preceding wave's.
+                logger.warning("manual %s refresh failed", family, exc_info=True)
+                manual_results.append(
+                    {
+                        "refreshed": False,
+                        "strategies": [family],
+                        "reason": family,
+                        "producer_results": {
+                            family: {"reason": "error", "error": type(exc).__name__}
+                        },
+                        "manual_failure_message": (
+                            f"{label}未完成，请检查运行记录；其他来源继续处理。"
+                        ),
+                    }
+                )
+                continue
+            if result is not None:
+                manual_results.append(result)
+                state = self.memory_manager.load_discovery_runtime_state()
+                discovered += self._int_state_value(state, "last_discovered_count")
+                replenished += self._int_state_value(state, "last_replenished_count")
+        # Recompute after explicit producer waves; every source shares the same
+        # durable inventory and quotas with the established Bilibili plan.
         plan = self._build_source_replenishment_plan()
-        if not plan:
-            if instagram_result is not None:
-                return _result(instagram_result)
+        if plan:
+            refresh_result = await self._run_refresh_plan(
+                state=self.memory_manager.load_discovery_runtime_state(),
+                profile=profile,
+                plan=plan,
+                reason="manual",
+            )
+            state = self.memory_manager.load_discovery_runtime_state()
+            discovered += self._int_state_value(state, "last_discovered_count")
+            replenished += self._int_state_value(state, "last_replenished_count")
+        elif manual_results:
+            refresh_result = dict(manual_results.pop(0))
+        else:
             return _result({"refreshed": False, "strategies": [], "reason": "below_threshold"})
-        instagram_counts = (0, 0)
-        if instagram_result is not None:
-            state = self.memory_manager.load_discovery_runtime_state()
-            instagram_counts = (
-                self._int_state_value(state, "last_discovered_count"),
-                self._int_state_value(state, "last_replenished_count"),
-            )
-        refresh_result = await self._run_refresh_plan(
-            state=state,
-            profile=profile,
-            plan=plan,
-            reason="manual",
-        )
-        if instagram_result is not None:
-            state = self.memory_manager.load_discovery_runtime_state()
-            state["last_discovered_count"] = (
-                self._int_state_value(state, "last_discovered_count") + instagram_counts[0]
-            )
-            state["last_replenished_count"] = (
-                self._int_state_value(state, "last_replenished_count") + instagram_counts[1]
-            )
-            self.memory_manager.save_discovery_runtime_state(state)
+        for result in manual_results:
             refresh_result["refreshed"] = bool(
-                refresh_result.get("refreshed") or instagram_result.get("refreshed")
+                refresh_result.get("refreshed") or result.get("refreshed")
             )
-            refresh_result["producer_results"] = instagram_result["producer_results"]
-            if instagram_result.get("manual_failure_message"):
-                refresh_result["manual_failure_message"] = instagram_result[
-                    "manual_failure_message"
-                ]
+            refresh_result["strategies"] = [
+                *cast("list[str]", refresh_result.get("strategies", [])),
+                *cast("list[str]", result.get("strategies", [])),
+            ]
+            refresh_result["producer_results"] = {
+                **cast("dict[str, object]", refresh_result.get("producer_results", {})),
+                **cast("dict[str, object]", result.get("producer_results", {})),
+            }
+            if result.get("manual_failure_message"):
+                refresh_result["manual_failure_message"] = " ".join(
+                    str(message)
+                    for message in (
+                        refresh_result.get("manual_failure_message"),
+                        result["manual_failure_message"],
+                    )
+                    if message
+                )
+        state = self.memory_manager.load_discovery_runtime_state()
+        state.update(last_discovered_count=discovered, last_replenished_count=replenished)
+        self.memory_manager.save_discovery_runtime_state(state)
         return _result(refresh_result)
+
+    async def _manual_custom_source_refresh(self, *, profile: Any) -> dict[str, object] | None:
+        """Finish a bounded explicit wave through the ordinary custom producers."""
+        sources = [
+            source
+            for source in self._normalized_pool_source_shares()
+            if source.startswith("custom_")
+        ]
+        if self.custom_source_producer_provider is None or not sources:
+            return None
+        before = self._pool_readiness_counts()["available"]
+        planner = self.keyword_planner
+        if planner is not None and bool(getattr(planner, "enabled", False)):
+            from openbiliclaw.sources.workflow_store import WorkflowStore
+
+            store = WorkflowStore(self.database)
+            if any(
+                workflow.get("query_mode") == "interest"
+                and not store.unavailable_reason(workflow["workflow_id"], force=True)
+                for source in sources
+                if self._source_deficit(source) > 0
+                for workflow in store.list_workflows(source)
+            ):
+                try:
+                    planner.bind_deficit_source(self)
+                    planner.bind_soul_engine(self.soul_engine)
+                    await planner.run_once()
+                except Exception:
+                    # Existing claimable words can still succeed. A missing
+                    # word is reported by the producer with an actionable reason.
+                    logger.warning("manual custom-source keyword planning failed", exc_info=True)
+        results = await self._tick_custom_source_producers(force=True)
+        limit = self._bounded_one_shot_inline_eval_limit(
+            max(1, min(self.discovery_limit, self.pool_target_count - before))
+        )
+        failures: list[str] = []
+        drain_result: dict[str, int] = {}
+        try:
+            drain_result = await self._drain_discovery_candidates_and_precompute(
+                reason="manual_custom_sources",
+                batch_size=limit,
+                profile=profile,
+                precompute=False,
+                flush=True,
+            )
+        except Exception:
+            logger.warning("manual custom-source evaluation failed", exc_info=True)
+            failures.append("evaluation_failed")
+        if int(drain_result.get("failed", 0) or 0) > 0:
+            failures.append("evaluation_failed")
+        receipt = getattr(drain_result, "post_admission_copy", None)
+        if getattr(receipt, "state", None) == "callback_failed":
+            failures.append("copy_failed")
+        copy = getattr(self.recommendation_engine, "drain_pending_expression_copy", None)
+        if callable(copy) and not self._post_admission_copy_stage_is_owned(drain_result):
+            try:
+                await copy(profile=profile, limit=limit)
+            except Exception:
+                logger.warning("manual custom-source expression copy failed", exc_info=True)
+                failures.append("copy_failed")
+        after = self._pool_readiness_counts()["available"]
+        state = self.memory_manager.load_discovery_runtime_state()
+        state.update(
+            last_discovered_count=sum(
+                self._int_state_value(row, "discovered") for row in results.values()
+            ),
+            last_replenished_count=max(0, after - before),
+        )
+        self.memory_manager.save_discovery_runtime_state(state)
+        await self._publish_pool_status_if_changed()
+        payload: dict[str, object] = {
+            "refreshed": after > before or any(bool(row.get("ran")) for row in results.values()),
+            "strategies": list(results),
+            "reason": "custom_sources",
+            "producer_results": results,
+        }
+        normal = {"ok", "empty", "not_modified", "quota_satisfied"}
+        for row in results.values():
+            reasons = row.get("workflow_results")
+            failures.extend(
+                str(reason)
+                for reason in (
+                    reasons.values()
+                    if isinstance(reasons, dict) and reasons
+                    else [row.get("reason", "error")]
+                )
+                if reason not in normal
+            )
+        if failures:
+            guidance = {
+                "login_required": "请在来源设置中完成登录并恢复来源。",
+                "rate_limited": "网站正在限流，请稍后重试。",
+                "backoff": "来源仍在故障冷却期，请稍后重试。",
+                "throttled": "来源仍在冷却期，请稍后重试。",
+                "in_flight": "已有来源任务执行中，请等待它结束。",
+                "keyword_unavailable": "搜索关键词尚未就绪，请检查关键词规划和模型服务。",
+                "disabled": "来源已停用，请先在来源设置中启用。",
+                "evaluation_failed": "候选已保留，但模型评估未完成，请检查模型服务后重试。",
+                "copy_failed": "候选已保留，但推荐文案未完成，请检查模型服务后重试。",
+            }
+            messages = dict.fromkeys(
+                guidance.get(reason, "请检查来源运行记录和网站连接，恢复后重试。")
+                for reason in failures
+            )
+            payload["manual_failure_message"] = (
+                "部分自定义来源未完成。" + "".join(messages) + " 已获取的内容会保留。"
+            )
+        return payload
 
     async def _manual_instagram_refresh(self, *, profile: Any) -> dict[str, object] | None:
         """Run an explicit, bounded producer → eval → usable-copy wave.
@@ -1593,6 +1773,8 @@ class ContinuousRefreshController:
             "cover_url": str(candidate.get("cover_url", "")),
             "content_url": str(candidate.get("content_url", "")),
             "source_platform": str(candidate.get("source_platform", "") or "bilibili"),
+            "source_id": str(candidate.get("source_id", "") or ""),
+            "source_name": str(candidate.get("source_name", "") or ""),
             "published_at": str(candidate.get("published_at", "") or ""),
             "published_label": str(candidate.get("published_label", "") or ""),
             "content_type": str(candidate.get("content_type", "") or "video"),
@@ -1810,6 +1992,7 @@ class ContinuousRefreshController:
             "bangumi": self._tick_bangumi_producer,
             "linuxdo": self._tick_linuxdo_producer,
             "v2ex": self._tick_v2ex_producer,
+            "web": self._tick_web_producer,
             "weibo": self._tick_weibo_producer,
             "instagram": self._tick_instagram_producer,
             "github": self._tick_github_producer,
@@ -1818,7 +2001,8 @@ class ContinuousRefreshController:
             *(ticker() for ticker in tickers.values()),
             return_exceptions=True,
         )
-        results: dict[str, dict[str, object]] = {}
+        custom_results = await self._tick_custom_source_producers()
+        results: dict[str, dict[str, object]] = dict(custom_results)
         for (source, _ticker), raw_result in zip(
             tickers.items(),
             raw_results,
@@ -1937,6 +2121,7 @@ class ContinuousRefreshController:
             ├─ _loop_reddit_producer()   60s   Reddit command-backed discovery when under quota
             ├─ _loop_bangumi_producer()  60s   Bangumi official-API discovery when under quota
             ├─ _loop_linuxdo_producer()  60s   Linux.do extension discovery when under quota
+            ├─ _loop_web_producer()      60s   bounded public-Web recipe discovery
             ├─ _loop_weibo_producer()    60s   Weibo guest-session discovery when under quota
             ├─ _loop_instagram_producer() 60s  Instagram browser-task public discovery
             ├─ _loop_github_producer()   60s   GitHub public repository discovery when under quota
@@ -1987,6 +2172,8 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_bangumi_producer()),
             asyncio.create_task(self._loop_linuxdo_producer()),
             asyncio.create_task(self._loop_v2ex_producer()),
+            asyncio.create_task(self._loop_web_producer()),
+            asyncio.create_task(self._loop_custom_source_producers()),
             asyncio.create_task(self._loop_weibo_producer()),
             asyncio.create_task(self._loop_instagram_producer()),
             asyncio.create_task(self._loop_github_producer()),
@@ -2365,6 +2552,55 @@ class ContinuousRefreshController:
                 await self._tick_github_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
+    async def _loop_web_producer(self) -> None:
+        """Run bounded anonymous Web recipes when their source quota is underfilled."""
+
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_web_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_custom_source_producers(self) -> None:
+        """Discover each registered website against its own share deficit."""
+        while True:
+            if self._llm_work_allowed():
+                with suppress(Exception):
+                    await self._tick_custom_source_producers()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _tick_custom_source_producers(
+        self, *, force: bool = False
+    ) -> dict[str, dict[str, object]]:
+        provider = self.custom_source_producer_provider
+        if provider is None:
+            return {}
+        result: dict[str, dict[str, object]] = {}
+        # Resolve the live registry every tick: toggles, new sources, and share
+        # changes take effect in the worker without a runtime rebuild.
+        for source_id in self._normalized_pool_source_shares():
+            if not source_id.startswith("custom_"):
+                continue
+            try:
+                result[source_id] = await self._tick_platform_producer(
+                    source_family=source_id,
+                    producer=provider(source_id),
+                    force=force,
+                    defer_evaluation=force,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("custom source producer failed: source=%s", source_id, exc_info=True)
+                result[source_id] = {
+                    "source_family": source_id,
+                    "reason": "error",
+                    "error": type(exc).__name__,
+                }
+        return result
+
     async def _loop_keyword_planner(self) -> None:
         """P1.6: deficit-pulled merged keyword generation (flag-gated).
 
@@ -2521,6 +2757,7 @@ class ContinuousRefreshController:
         producer: Any | None,
         require_initialized: bool = True,
         force: bool = False,
+        defer_evaluation: bool = False,
     ) -> dict[str, object]:
         """Run one source producer without overlapping another tick for that source."""
 
@@ -2542,13 +2779,16 @@ class ContinuousRefreshController:
             produce_fn = getattr(producer, "produce_if_due", None)
             if not callable(produce_fn):
                 return {"source_family": source_family, "reason": "not_callable"}
-            limit = max(1, min(deficit, self.discovery_limit))
+            limit = self._bounded_one_shot_inline_eval_limit(
+                max(1, min(deficit, self.discovery_limit))
+            )
             if _call_accepts_limit(produce_fn):
-                raw_result = (
-                    await produce_fn(limit=limit, force=True)
-                    if force
-                    else await produce_fn(limit=limit)
-                )
+                kwargs: dict[str, object] = {"limit": limit}
+                if force:
+                    kwargs["force"] = True
+                if defer_evaluation:
+                    kwargs["defer_evaluation"] = True
+                raw_result = await produce_fn(**kwargs)
             else:
                 raw_result = await produce_fn()
             result = dict(raw_result) if isinstance(raw_result, Mapping) else {}
@@ -2666,6 +2906,14 @@ class ContinuousRefreshController:
         return await self._tick_platform_producer(
             source_family="github",
             producer=self.github_producer,
+        )
+
+    async def _tick_web_producer(self) -> dict[str, object]:
+        """Invoke public-Web recipe discovery when its source quota has a deficit."""
+
+        return await self._tick_platform_producer(
+            source_family="web",
+            producer=self.web_producer,
         )
 
     async def _tick_soul_pipeline(self) -> None:
@@ -2886,6 +3134,7 @@ class ContinuousRefreshController:
         batch_size: int | None = None,
         profile: Any | None = None,
         precompute: bool = True,
+        flush: bool = False,
     ) -> dict[str, int]:
         """Drain one pending raw-candidate batch and optionally precompute it."""
 
@@ -2937,6 +3186,7 @@ class ContinuousRefreshController:
             result = await pipeline.drain_pending(
                 profile=profile,
                 batch_size=self._candidate_eval_drain_batch_size(batch_size),
+                **({"flush": True} if flush else {}),
             )
             drain_result = cast("dict[str, int]", result)
             evaluated = int(drain_result.get("evaluated", 0) or 0)
@@ -3456,6 +3706,8 @@ class ContinuousRefreshController:
                 "cover_url": candidate.get("cover_url", ""),
                 "content_url": candidate.get("content_url", ""),
                 "source_platform": candidate.get("source_platform", "bilibili"),
+                "source_id": candidate.get("source_id", "") or "",
+                "source_name": candidate.get("source_name", "") or "",
                 "published_at": str(candidate.get("published_at", "") or ""),
                 "published_label": str(candidate.get("published_label", "") or ""),
                 "content_type": candidate.get("content_type", "video"),
@@ -4137,10 +4389,15 @@ class ContinuousRefreshController:
                 stranded.append("linuxdo")
             elif source == "v2ex" and self.v2ex_producer is None:
                 stranded.append("v2ex")
+            elif source == "web" and self.web_producer is None:
+                stranded.append("web")
             elif source == "weibo" and self.weibo_producer is None:
                 stranded.append("weibo")
             elif source == "instagram" and self.instagram_producer is None:
                 stranded.append("instagram")
+            elif source.startswith("custom_"):
+                if self.custom_source_producer_provider is None:
+                    stranded.append(source)
             elif source not in {
                 "bilibili",
                 "xiaohongshu",
@@ -4154,6 +4411,7 @@ class ContinuousRefreshController:
                 "bangumi",
                 "linuxdo",
                 "v2ex",
+                "web",
                 "weibo",
                 "instagram",
             }:
@@ -4169,8 +4427,22 @@ class ContinuousRefreshController:
             )
 
     def _normalized_pool_source_shares(self) -> dict[str, int]:
-        raw = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES
+        raw: Mapping[str, int] = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES
+        provider = self.pool_source_shares_provider
+        if callable(provider):
+            try:
+                projected = provider()
+            except Exception:
+                logger.debug("live pool source-share projection failed", exc_info=True)
+            else:
+                if isinstance(projected, Mapping):
+                    raw = projected
         normalized: dict[str, int] = {}
+        from openbiliclaw.runtime.source_policy import _custom_source_rows
+
+        registered = {
+            str(row["source_id"]) for row in _custom_source_rows(self.database) if row["enabled"]
+        }
         for source in _PLATFORM_SOURCE_ORDER:
             try:
                 share = int(raw.get(source, 0))
@@ -4182,13 +4454,19 @@ class ContinuousRefreshController:
             source_key = str(source).strip().lower()
             if not source_key or source_key in normalized:
                 continue
+            if source_key not in _PLATFORM_SOURCE_ORDER and source_key not in registered:
+                continue
             try:
                 share = int(raw_share)
             except (TypeError, ValueError):
                 continue
             if share > 0:
                 normalized[source_key] = share
-        return normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
+        return (
+            normalized
+            if callable(provider)
+            else (normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES))
+        )
 
     def _requested_refresh_limit(
         self,

@@ -1,0 +1,34 @@
+[
+  {
+    "model": "Qwen/Qwen3.5-4B"
+  },
+  {
+    "case": "before_SIGKILL",
+    "first_delta_seen": true,
+    "first_status": "pending",
+    "queued_status": "pending",
+    "backend_pid": 44367
+  },
+  {
+    "case": "after_restart",
+    "interrupted": {
+      "status": "failed",
+      "reply": "",
+      "error": "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。"
+    },
+    "queued": {
+      "status": "completed",
+      "reply": "进程恢复 842。",
+      "error": ""
+    },
+    "turn_count": 2,
+    "events_before_crash": [
+      "delta",
+      "delta"
+    ]
+  },
+  {
+    "case": "failure",
+    "error": "AssertionError: {'turn_id': 'process-queued', 'session': 'desktop', 'scope': 'chat', 'subject_id': '', 'subject_title': '', 'reply_to_turn_id': '', 'message': '只回复：进程恢复842。', 'reply': '进程恢复 842。', 'status': 'completed', 'error': '', 'payload': {'agent_persona': 'natural', 'agent_stream': True, 'dialogue_binding': {'context_digest': '', 'inventory_settles_allowed': True, 'mode': 'ordinary', 'version': 1}, 'agent_events': [{'type': 'execution_started'}, {'type': 'final', 'step': 1, 'text': '进程恢复 842。'}]}, 'session_id': 'chat-c34ae0fd770a494aa358adf9f299211d', 'created_at': '2026-11-05 12:15:01', 'updated_at': '2026-11-05 12:15:11'}"
+  }
+]

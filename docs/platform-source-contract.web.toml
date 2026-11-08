@@ -1,0 +1,200 @@
+# Phase A freezes deterministic, anonymous public-Web following. Phase B adds
+# a user-triggered, read-only authoring probe that returns a preview draft but
+# never saves or schedules it. Recipes remain the explicit network allowlist;
+# this contract does not authorize arbitrary search/crawl, browser automation,
+# credentials, profile import, or upstream writes.
+# Chat authoring increment (2026-10-02): probe_web_source returns a bounded
+# draft; create_source persists only after the AgentLoop approval card is
+# approved and the same typed compiler validates it. Legacy chat refuses Web
+# writes. Desktop, mobile and popup use their existing approval UI; CLI chat
+# is excluded (standalone Web CLI commands remain available).
+
+schema_version = 2
+canonical_slug = "web"
+display_name = "Web"
+integration_level = "discovery-only"
+host_policy = "recipe-allowlist"
+aliases = []
+hosts = []
+content_types = ["article"]
+
+[transport]
+kind = "web-http"
+owner = "backend"
+entrypoints = [
+  "src/openbiliclaw/agent/tools/source_tools.py",
+  "src/openbiliclaw/sources/web_probe.py",
+  "src/openbiliclaw/sources/web_recipe.py",
+  "src/openbiliclaw/sources/web_public.py",
+]
+route_aliases = []
+fallback_owner = "none"
+requires_overseas_network = false
+routed_by_network_mode = true
+network_policy = "Backend-only HTTP with trust_env disabled internally and an explicit per-hop direct/system/custom route; proxied requests use bounded DoH and validated numeric-IP tunnels, without changing robots rules; a user-triggered authoring probe derives one exact normalized origin from the submitted URL, and every probe or recipe request/redirect must remain in its explicit origin set, re-resolve to public IPs, omit credentials, and obey bounded timeout/body/redirect/deadline budgets. Probe output is a preview draft only and cannot persist or schedule a source."
+
+[transport.capability_routes]
+discover = "backend:web-http:anonymous:recipe-origin-allowlist"
+
+[identity]
+item_id = "Canonical URL SHA-256 prefix as url-<24 lowercase hex>, stored under the canonical item key web:url-<24 lowercase hex>."
+url = "Absolute canonical http(s) item URL after host/port normalization, tracking-query removal, query sorting, and fragment removal; it must remain in a recipe-declared exact origin."
+dedupe = "Canonical URL identity is global across Web recipes; recipe id remains provenance and scheduler-state scope, never part of content identity."
+account_scope = "No account identity exists; anonymous fetch state, leases, validators, cursors, and seen rows are isolated by backend-owned recipe id."
+
+[auth]
+mode = "anonymous"
+credential_kinds = []
+verify_action = "none"
+write_path = "none"
+account_resolution = "No upstream account is resolved or represented for public-Web discovery."
+identity_evidence = "Recipe ownership is local provenance only and must never be presented as verified upstream identity."
+login_cookie_names = []
+login_state_path = "none"
+
+[auth.capability_modes]
+discover = "anonymous"
+
+[auth.capability_required]
+discover = true
+
+[upstream]
+success_content_types = [
+  "application/rss+xml",
+  "application/atom+xml",
+  "application/feed+json",
+  "application/json",
+  "application/xml",
+  "text/xml",
+  "text/html",
+]
+pagination = "A compiled recipe caps max_pages at 1..5 and max_items at 1..50; sitemap indexes, listing pages, feed links, redirects, and optional detail fetches all consume bounded backend-owned budgets."
+terminal_evidence = "HTTP success plus an expected MIME family and a valid RSS/Atom/JSON Feed/sitemap envelope, or an HTML selector plan that yields rows or matches its explicit empty selector."
+terminal_policy = "Only a valid decoded envelope or affirmative configured empty marker is complete/empty; login pages, challenge HTML, wrong MIME, malformed XML/JSON, selector drift, timeouts, and rate limits are degraded or failed."
+partial_policy = "Retain valid rows from completed bounded branches, but do not commit validators/cursors or infer complete scope when any required page, child sitemap, feed, or detail branch is partial."
+publication_time_policy = "Use only upstream publication metadata parsed to UTC; discovery time, HTTP Date, sitemap lastmod, and local fetch time never become publication time."
+
+[discover]
+modes = ["feed", "sitemap", "listing"]
+search_generation = "N/A for formal discovery: users explicitly follow compiled feed, sitemap, or listing recipes; the Phase B authoring probe may recognize those structures at one submitted exact origin but does not save, schedule, recurse, or generate KeywordPlanner/inspiration-axis search claims."
+budget = "Per-recipe interval, max_items, max_pages, detail_fetch_limit, exact allowed_origins, redirect, response-byte, and timeout caps are validated before any network request."
+cursor = "Backend-owned per-recipe lease/state records persist conditional validators and a strategy cursor; only a complete fenced run may advance committed scope."
+
+[profile]
+signals = false
+incremental = false
+refresh_mode = "none"
+
+[extension]
+task = "none"
+hosts = []
+task_marker = false
+background = false
+early_response = false
+cookie_sync = false
+
+[surfaces]
+cli = true
+setup = false
+desktop = true
+mobile = true
+extension_popup = true
+source_status = true
+credentials = false
+recommendation = true
+
+[engagement]
+view = "unavailable"
+like = "unavailable"
+favorite = "unavailable"
+comment = "unavailable"
+share = "unavailable"
+danmaku = "unavailable"
+
+[media]
+image = "none"
+image_hosts = []
+deep_link = "browser-fallback"
+native_save = false
+
+[e2e]
+safe_actions = ["fetch-public-feed", "read-public-page"]
+mutating_actions = []
+
+[e2e.safe_assertions]
+fetch-public-feed = "upstream-state-unchanged"
+read-public-page = "upstream-state-unchanged"
+
+[e2e.safe_postconditions]
+fetch-public-feed = "Only anonymous bounded GET/HEAD-equivalent reads occur inside recipe origins; no upstream account, subscription, or collection state changes."
+read-public-page = "Only anonymous bounded public-page reads occur inside a saved recipe origin or the single exact origin explicitly submitted to the authoring probe. Probe results remain preview drafts with no database writes; formal accepted rows may enter only an isolated acceptance database, never production memory."
+
+[events]
+strategy_prefixes = ["web-", "web_"]
+mappings = "Feed, sitemap, listing, and detail rows become discovery candidates with source_platform=web; they do not fabricate profile or engagement events."
+scope_caps = "Recipe validation freezes exact origins and per-run page/item/detail budgets; the backend lease and seen ledger are scoped by recipe id while content dedupe is canonical-URL global."
+
+[task]
+lease = "Backend recipe claims use a token-fenced bounded lease; stale completions cannot commit validators, cursor, or health."
+idle_deadline = "Each HTTP operation has a bounded timeout and a stalled run loses its finite backend lease."
+absolute_deadline = "Per-request timeout plus recipe page/detail/redirect caps bound the complete run; no browser tab or unbounded crawl exists."
+retry = "Conditional 304, Retry-After, and transient failure scheduling are backend-owned; partial runs retain rows but cannot advance committed scope."
+buffer = "Decoded response bodies are size-capped before parsing; credentials and arbitrary browser/page state never enter a task buffer."
+
+[smoke]
+storage_scope = "isolated-only"
+
+[smoke.sinks]
+task = "forbidden"
+task_result = "forbidden"
+seen = "forbidden"
+affinity = "forbidden"
+snapshot = "forbidden"
+schedule = "forbidden"
+event_ingress = "forbidden"
+memory = "forbidden"
+profile = "forbidden"
+
+[exclusions]
+"search.integration" = "Formal discovery follows user-specified deterministic recipes; the Phase B authoring probe only recognizes structures at one submitted exact origin and does not claim arbitrary Web search or keyword generation."
+"profile.signals" = "Public pages are discovery inputs only; they provide no verified user-interest profile or account-scoped signals."
+"profile.incremental" = "No profile signal corpus exists, so there is no post-init profile delta to synchronize."
+"profile.refresh-mode" = "Profile signals are out of scope, therefore no init, on-demand, or incremental profile refresh mode is exposed."
+"extension.task" = "All network access is backend-owned and recipe-bounded; no browser-extension task protocol is authorized."
+"extension.task-marker" = "Without an extension task, Web pages must not receive a task-mode URL marker."
+"extension.background" = "The extension only asks the local backend to run a user-triggered authoring probe; it does not dispatch, recover, or own public-Web network work."
+"extension.early-response" = "Deterministic backend parsers consume bounded response bodies; no browser response interception is used."
+"extension.cookie-sync" = "Public-Web transport is anonymous and deliberately strips Cookie and Authorization state."
+"surface.setup" = "Web recipes are an optional post-setup discovery source; first-run model and core-source prerequisites do not require one."
+"surface.credentials" = "The anonymous Web source has no credential kind, login state, credential write path, or account to manage."
+"engagement.view" = "Generic feeds and pages have no portable canonical view-count field."
+"engagement.like" = "Generic feeds and pages have no portable canonical like-count field."
+"engagement.favorite" = "A page's upstream saves are neither observable nor mutated by anonymous discovery."
+"engagement.comment" = "Generic feeds and pages have no portable canonical comment-count field."
+"engagement.share" = "Generic feeds and pages have no portable canonical share-count field."
+"engagement.danmaku" = "Generic Web content has no portable Bilibili-style danmaku metric."
+"media.image" = "Formal discovery and the authoring probe do not fetch, proxy, cache, or claim arbitrary page image hosts."
+"media.deep-link" = "No generic native URL scheme exists; mobile opens the canonical public http(s) URL in a browser."
+"media.native-save" = "The integration is read-only and has no upstream bookmark, favorite, or save mutation adapter."
+
+[exclusion_tests]
+"search.integration" = ["tests/test_web_source_contract.py::test_web_search_integration_is_follow_only"]
+"profile.signals" = ["tests/test_web_source_contract.py::test_web_profile_signals_are_absent"]
+"profile.incremental" = ["tests/test_web_source_contract.py::test_web_profile_incremental_is_absent"]
+"profile.refresh-mode" = ["tests/test_web_source_contract.py::test_web_profile_refresh_mode_is_none"]
+"extension.task" = ["tests/test_web_source_contract.py::test_web_extension_task_is_none"]
+"extension.task-marker" = ["tests/test_web_source_contract.py::test_web_extension_task_marker_is_absent"]
+"extension.background" = ["tests/test_web_source_contract.py::test_web_extension_background_is_absent"]
+"extension.early-response" = ["tests/test_web_source_contract.py::test_web_extension_early_response_is_absent"]
+"extension.cookie-sync" = ["tests/test_web_source_contract.py::test_web_extension_cookie_sync_is_absent"]
+"surface.setup" = ["tests/test_web_source_contract.py::test_web_surface_setup_is_excluded"]
+"surface.credentials" = ["tests/test_web_source_contract.py::test_web_surface_credentials_are_excluded"]
+"engagement.view" = ["tests/test_web_source_contract.py::test_web_engagement_view_is_unavailable"]
+"engagement.like" = ["tests/test_web_source_contract.py::test_web_engagement_like_is_unavailable"]
+"engagement.favorite" = ["tests/test_web_source_contract.py::test_web_engagement_favorite_is_unavailable"]
+"engagement.comment" = ["tests/test_web_source_contract.py::test_web_engagement_comment_is_unavailable"]
+"engagement.share" = ["tests/test_web_source_contract.py::test_web_engagement_share_is_unavailable"]
+"engagement.danmaku" = ["tests/test_web_source_contract.py::test_web_engagement_danmaku_is_unavailable"]
+"media.image" = ["tests/test_web_source_contract.py::test_web_media_image_is_none"]
+"media.deep-link" = ["tests/test_web_source_contract.py::test_web_media_deep_link_is_browser_fallback"]
+"media.native-save" = ["tests/test_web_source_contract.py::test_web_media_native_save_is_absent"]

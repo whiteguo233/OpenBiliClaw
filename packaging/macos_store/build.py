@@ -110,6 +110,13 @@ def prepare_backend(ollama_bin: Path) -> Path:
     desktop.bundle_ollama_binary(frozen, ollama_bin)
     app = frozen / "OpenBiliClaw.app"
     resources = app / "Contents/Resources"
+    from openbiliclaw.runtime.sponsored_bundle import stage_runtime_bundle
+
+    sponsored = resources / "sponsored"
+    stage_runtime_bundle(sponsored)
+    if sponsored.is_dir():
+        # The verified executable will be moved to MacOS and signed with inherit.
+        (sponsored / "obc-sponsored-runtime").rename(resources / "obc-sponsored-runtime")
     (resources / "mac-app-store.json").write_text(
         json.dumps({"channel": "mac_app_store", "bundle_id": BUNDLE_ID}) + "\n", encoding="utf-8"
     )

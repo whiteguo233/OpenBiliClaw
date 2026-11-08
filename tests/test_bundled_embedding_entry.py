@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from openbiliclaw.runtime import ollama_supervisor
-
-if TYPE_CHECKING:
-    import pytest
 
 # packaging/entry.py is a script, not an importable package member.
 _ENTRY_PATH = Path(__file__).resolve().parents[1] / "packaging" / "entry.py"
@@ -83,11 +81,15 @@ def test_seed_bundled_lean_variant_is_noop(tmp_path: Path) -> None:
     assert entry._seed_bundled_embedding_model(resources, tmp_path / "config.toml") is False
 
 
+@pytest.mark.parametrize("free_chat", [False, True])
 def test_seed_bundled_success_starts_private_daemon_and_points_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, free_chat: bool
 ) -> None:
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     cfg = _write_config(tmp_path)
+    if free_chat:
+        with cfg.open("a") as stream:
+            stream.write('\n[llm.sponsored]\nenabled = true\nembedding_mode = "local"\n')
     resources = _bundled_with_seed(tmp_path)
     models = tmp_path / "eff-models"
     monkeypatch.setenv("OLLAMA_MODELS", str(models))  # ASCII + writable => effective dir
@@ -119,6 +121,29 @@ def test_seed_bundled_respects_remote_provider(
     resources = _bundled_with_seed(tmp_path)
     # User chose a remote embedding provider — do not hijack it.
     assert entry._seed_bundled_embedding_model(resources, cfg) is False
+
+
+@pytest.mark.parametrize(
+    ("model", "endpoint"),
+    [
+        ("custom-embedding", "http://127.0.0.1:11435/v1"),
+        ("bge-m3", "http://ollama:11434/v1"),
+        ("bge-m3", "http://127.0.0.1:12434/v1"),
+    ],
+)
+def test_free_local_mode_does_not_replace_an_existing_deployment_with_bundled_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str, endpoint: str
+) -> None:
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    cfg = _write_config(tmp_path, provider="ollama")
+    entry._set_embedding_field(cfg, "model", model)
+    entry._set_embedding_field(cfg, "base_url", endpoint)
+    with cfg.open("a") as stream:
+        stream.write('\n[llm.sponsored]\nenabled = true\nembedding_mode = "local"\n')
+    before = cfg.read_bytes()
+    resources = _bundled_with_seed(tmp_path)
+    assert entry._seed_bundled_embedding_model(resources, cfg) is False
+    assert cfg.read_bytes() == before
 
 
 def test_seed_bundled_daemon_failure_falls_back(

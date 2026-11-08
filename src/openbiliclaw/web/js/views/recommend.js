@@ -46,7 +46,7 @@ import {
   buildRecommendationClickPayload,
   normalizeSourcePlatform,
   normalizeSavedIdentity,
-  getSourceLabel,
+  getRecommendationSourceLabel,
   formatRelativeTimestamp,
   getPublishedTimeDisplay,
   getMobileChatSession,
@@ -512,7 +512,7 @@ function renderDelightTray() {
             ${coverHtml}
             <div class="delight-reason"><span class="delight-reason-label">\u63A8\u8350\u539F\u56E0</span>${esc(reasonText)}</div>
             <div class="delight-meta">
-              <span class="card-source" data-source="${d.source_platform}">${esc(getSourceLabel(d.source_platform))}</span>
+              <span class="card-source" data-source="${d.source_platform}">${esc(getRecommendationSourceLabel(d))}</span>
               ${uiState.score_label ? `<span>${esc(uiState.score_label)}</span>` : ""}
               ${publishedHtml}
             </div>
@@ -520,7 +520,7 @@ function renderDelightTray() {
         ` : `
           <div class="delight-media-only">${coverHtml}</div>
           <div class="delight-meta">
-            <span class="card-source" data-source="${d.source_platform}">${esc(getSourceLabel(d.source_platform))}</span>
+            <span class="card-source" data-source="${d.source_platform}">${esc(getRecommendationSourceLabel(d))}</span>
             ${uiState.score_label ? `<span>${esc(uiState.score_label)}</span>` : ""}
             ${publishedHtml}
           </div>
@@ -1213,7 +1213,7 @@ function renderCard(rawItem, index = 0) {
     <div class="card-body">
       <div class="card-title">${esc(item.title)}</div>
       <div class="card-meta">
-        <span class="card-source" data-source="${item.source_platform}">${esc(getSourceLabel(item.source_platform))}</span>
+        <span class="card-source" data-source="${item.source_platform}">${esc(getRecommendationSourceLabel(item))}</span>
         ${item.up_name ? `<span>${esc(item.up_name)}</span>` : ""}
         ${item.topic_label ? `<span style="color:var(--text-muted)">${esc(item.topic_label)}</span>` : ""}
         ${publishedHtml}

@@ -109,7 +109,10 @@ async def test_run_init_backfill_skips_when_pool_already_full() -> None:
     assert disc.calls == []
 
 
-async def test_instagram_only_init_uses_formal_producer_eval_and_copy_without_bilibili() -> None:
+@pytest.mark.parametrize("source", ["instagram", "github"])
+async def test_selected_source_init_uses_formal_producer_eval_and_copy_without_bilibili(
+    source: str,
+) -> None:
     from unittest.mock import AsyncMock
 
     db = SimpleNamespace(count_pool_candidates=lambda **_: 0)
@@ -134,14 +137,16 @@ async def test_instagram_only_init_uses_formal_producer_eval_and_copy_without_bi
         db.count_pool_candidates = lambda **_: 1
         return 1
 
-    ctrl.instagram_producer = SimpleNamespace(produce_if_due=AsyncMock(side_effect=produce))
+    setattr(
+        ctrl, f"{source}_producer", SimpleNamespace(produce_if_due=AsyncMock(side_effect=produce))
+    )
     ctrl.discovery_candidate_pipeline = SimpleNamespace(
         drain_pending=AsyncMock(side_effect=evaluate)
     )
     ctrl.recommendation_engine = SimpleNamespace(
         drain_pending_expression_copy=AsyncMock(side_effect=copy)
     )
-    n = await ctrl.run_init_backfill(object(), 15, sources={"instagram"})
+    n = await ctrl.run_init_backfill(object(), 15, sources={source})
     assert n == 3
     assert order == ["produce", "evaluate", "copy"]
     assert disc.calls == []

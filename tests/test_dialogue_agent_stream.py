@@ -203,6 +203,44 @@ class TestStreamAgentReply:
             systems.append(llm.calls[0]["messages"][0]["content"])
         assert systems[0] == systems[1] == systems[2]
 
+    async def test_recent_exchange_is_quoted_separately_without_losing_older_context(self) -> None:
+        """Similar values in a long session must not obscure the latest original."""
+        loop, llm = _loop(
+            [LLMResponse(content=f"收到，暗号是松果18000000000{i:02d}。") for i in range(25)]
+            + [LLMResponse(content="松果1800000000024")]
+        )
+        dialogue = _dialogue(object())
+        for index in range(25):
+            await _collect(
+                dialogue.stream_agent_reply(
+                    loop, f"这次的临时暗号是松果18000000000{index:02d}。", session_id="recall"
+                )
+            )
+
+        events = await _collect(
+            dialogue.stream_agent_reply(
+                loop, "我刚才说的临时暗号是什么？只回复暗号。", session_id="recall"
+            )
+        )
+
+        prompt = llm.calls[-1]["messages"]
+        earlier_block, recent_block = prompt[-2]["content"].split("\n\n", 1)
+        recent = json.loads(recent_block.split("\n", 1)[1])
+        assert [record["content"] for record in recent] == [
+            "这次的临时暗号是松果1800000000024。",
+            "收到，暗号是松果1800000000024。",
+        ]
+        assert "最近一轮" in recent_block
+        assert "时间晚于以上历史" in recent_block
+        assert "不是本轮消息，也不是回复格式示例" in earlier_block
+        records = json.loads(earlier_block.split("\n", 1)[1])
+        assert len(records) + len(recent) == 40
+        assert records[0]["content"] == "这次的临时暗号是松果1800000000005。"
+        assert records[-1]["content"] == "收到，暗号是松果1800000000023。"
+        assert [message["role"] for message in prompt] == ["system", "user", "user"]
+        assert "我刚才说的临时暗号是什么" in prompt[-1]["content"]
+        assert events[-1].text == "松果1800000000024"
+
     @pytest.mark.parametrize(
         ("message", "reply"),
         [
@@ -434,6 +472,68 @@ async def test_agent_restores_only_own_durable_conversation(tmp_path: Any) -> No
     assert not any("A 的独有历史" in item["content"] for item in llm.calls[0]["messages"])
 
 
+async def test_recent_exchange_keeps_later_hypothesis_and_question_cards(tmp_path: Any) -> None:
+    from openbiliclaw.storage.database import Database
+
+    database = Database(tmp_path / "recent-cards.db")
+    database.initialize()
+    database.create_chat_session(session_id="cards")
+    for turn_id, message, reply in [
+        ("older", "较早的话题", "较早的回答"),
+        ("latest", "我更想理解原理", "我明白了"),
+    ]:
+        database.create_chat_turn(turn_id=turn_id, session_id="cards", message=message)
+        database.complete_chat_turn(turn_id, reply=reply)
+    database.create_chat_turn(
+        turn_id="hypothesis",
+        session_id="cards",
+        message="",
+        scope="hypothesis",
+        payload={"type": "card", "title": "你喜欢先理解原理"},
+    )
+    database.complete_chat_turn("hypothesis", reply="")
+    database.create_chat_turn(
+        turn_id="question",
+        session_id="cards",
+        message="",
+        scope="confusion",
+        payload={"type": "question"},
+    )
+    database.complete_chat_turn("question", reply="你收藏是准备稍后细看吗？")
+    for minute, turn_id in enumerate(["older", "latest", "hypothesis", "question"]):
+        database.conn.execute(
+            "UPDATE chat_turns SET created_at = ? WHERE turn_id = ?",
+            (f"2026-10-25 04:{minute:02d}:00", turn_id),
+        )
+    database.conn.commit()
+    loop, llm = _loop([LLMResponse(content="刚才问你收藏是不是为了稍后细看。")])
+    dialogue = SocraticDialogue(
+        llm=None,
+        soul_engine=object(),
+        llm_service=object(),
+        database=database,
+        learning_mode=DialogueLearningMode.REPLY_ONLY_TEST,
+    )
+
+    await _collect(
+        dialogue.stream_agent_reply(loop, "你刚才问了什么？", session_id="cards", turn_id="new")
+    )
+
+    messages = llm.calls[0]["messages"]
+    earlier_block, recent_block = messages[1]["content"].split("\n\n", 1)
+    assert [record["content"] for record in json.loads(earlier_block.split("\n", 1)[1])] == [
+        "较早的话题",
+        "较早的回答",
+    ]
+    assert [record["content"] for record in json.loads(recent_block.split("\n", 1)[1])] == [
+        "我更想理解原理",
+        "我明白了",
+        "你喜欢先理解原理",
+        "你收藏是准备稍后细看吗？",
+    ]
+    assert not any(message["role"] == "assistant" for message in messages)
+
+
 async def test_durable_history_preserves_old_timestamp_text_as_data_not_assistant_examples(
     tmp_path: Any,
 ) -> None:
@@ -477,7 +577,11 @@ async def test_durable_history_preserves_old_timestamp_text_as_data_not_assistan
     # Neither generated envelopes nor previously polluted replies may become
     # live assistant-message templates. Original text must remain recoverable.
     assert not any(message["role"] == "assistant" for message in messages)
-    archive = json.loads(messages[1]["content"].split("\n", 1)[1])
+    archive = [
+        record
+        for block in messages[1]["content"].split("\n\n")
+        for record in json.loads(block.split("\n", 1)[1])
+    ]
     assert len(archive) == 40  # The actual durable entry retains 20 exchanges.
     assert archive[0]["content"] == "早期话题5"
     assert archive[-4:] == [
@@ -493,7 +597,7 @@ async def test_durable_history_preserves_old_timestamp_text_as_data_not_assistan
             loop, "刚才第一次问候是什么时间？", session_id="recheck", turn_id="next"
         )
     )
-    assert json.loads(llm.calls[1]["messages"][1]["content"].split("\n", 1)[1]) == archive
+    assert llm.calls[1]["messages"][1] == messages[1]
     assert database.get_chat_turn("greeting")["reply"] == "[09-26 16:50] 在。"
     assert database.get_chat_turn("quoted")["reply"] == "[09-26 16:52] 测试"
 

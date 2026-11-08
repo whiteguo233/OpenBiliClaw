@@ -7,6 +7,7 @@
 "Show backend" = "Show backend";
 "Quit OpenBiliClaw" = "Quit OpenBiliClaw";
 "Starting backend…" = "Starting backend…";
+"Application signature verification failed." = "Application signature verification failed.";
 "Stop backend" = "Stop backend";
 "Start backend" = "Start backend";
 "Backend stopped" = "Backend stopped";

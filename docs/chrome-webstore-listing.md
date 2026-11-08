@@ -63,6 +63,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 提供实验性的「蓝鱼实验室」：为独立 B 站小号预览或执行评论区互动；默认只预览，真实发布受账号隔离、配额、间隔与重复检查保护。
 - 桌面、移动 Web、插件和 CLI 提供简体中文、繁体中文与英文界面。
 - 在配置页分别展示“来源是否启用”和“接入状态”；“凭据已就绪”“状态待验证”“无需登录”含义不同，不会把仅保存在本地的令牌冒充成实时登录成功。
+- 在「公开 Web」卡片创建、启停和删除 typed recipe，查看最近运行状态；只允许 exact origin、受限 selector 和有界抓取参数，后端拒绝原因会原样显示。
 
 重要说明：
 - 插件不是独立云服务；需要本地后端运行后才有完整体验。
@@ -78,6 +79,8 @@ https://github.com/whiteguo233/OpenBiliClaw
 - TikTok 与 Instagram 的站点访问均随插件默认主机权限声明，由浏览器在安装或更新时处理；保存来源设置无需二次授权，两个来源仍需显式启用。
 - 插件在 `*.instagram.com` 上申请的 host permission 仅用于扩展创建的隔离只读任务 tab。公开任务读取有界 topic/creator 内容，登录态初始化任务在同源 current-account 响应确认数字账号 ID 后读取 liked/saved/following；`sessionid` 只转成布尔 readiness。Cookie value、Authorization/CSRF、请求头、原始响应与挑战页都不会上传；任务不输入 Instagram Search，也不执行点赞、收藏、关注、评论或消息写入。该来源默认关闭，技术隔离不替代 Meta 的自动采集许可。
 - GitHub 不申请任何新增 host permission、content script、Cookie 或来源任务能力；公开 repository discovery 与公开 starred 初始化均由本地后端调用官方 REST API。插件只展示配置、状态和 repository 文字卡，本地收藏不会调用 GitHub Star。
+
+- 通用 Web recipe 完全由本地后端以匿名有界 HTTP 执行；插件设置页只管理计划，不在任意网站 tab 中执行抓取。每个 recipe 的 exact origin allowlist 同时是网络权限边界，请求遵守 robots fail-closed、逐跳公共 DNS 校验与 socket pin；不读取 Cookie / Authorization、不访问登录态页面、不运行 JavaScript，也不自动递归 crawl。
 - 插件在 `tiktok.com` 上申请的 host permission 仅用于可选登录 Cookie 同步：在你登录 tiktok.com 后把 Cookie 头回传给你配置的本地后端，解锁 TikTok 关键词搜索；不执行页面任务、不采集浏览行为。TikTok 推荐流 / 话题标签 / 创作者发现由本地后端以 Web API 访客身份匿名完成，不需要该权限。
 - 「个人通讯」采集范围除侧边栏聊天消息外，还包含你在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（经网络层在提交成功后采集，仅送本机后端，用于更准确地构建兴趣画像）。
 

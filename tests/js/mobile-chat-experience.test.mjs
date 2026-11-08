@@ -50,7 +50,7 @@ test("mobile renders the final reply before history refresh and respects the rea
   assert.equal(context.sending, false);
 });
 
-test("history repaint keeps the editing textarea attached with its selection", () => {
+test("history repaint preserves the editing textarea and the open source guide", () => {
   const removals = [];
   class Element {
     constructor(selector, children = []) {
@@ -86,7 +86,8 @@ test("history repaint keeps the editing textarea attached with its selection", (
     value: "第一行\n第二行", selectionStart: 1, selectionEnd: 5, scrollTop: 16,
   });
   const send = Object.assign(new Element("#chat-send"), { disabled: true });
-  const composer = new Element(".chat-input-row", [input, send]);
+  const guide = Object.assign(new Element(".chat-source-guide"), { open: true, scrollTop: 80 });
+  const composer = new Element(".chat-input-row", [guide, input, send]);
   const shell = new Element(".chat-shell", [new Element("old messages"), composer]);
   const root = new Element("root", [shell]);
   const nextInput = Object.assign(new Element("#chat-input"), { value: input.value, placeholder: "聊聊" });
@@ -101,6 +102,9 @@ test("history repaint keeps the editing textarea attached with its selection", (
   assert.equal(actual, input);
   assert.deepEqual([input.selectionStart, input.selectionEnd, input.scrollTop], [1, 5, 16]);
   assert.ok(!removals.includes(composer) && !removals.includes(input) && !removals.includes(shell));
+  assert.equal(composer.querySelector(".chat-source-guide"), guide);
+  assert.equal(guide.open, true);
+  assert.equal(guide.scrollTop, 80);
   assert.equal(send.disabled, false);
   assert.deepEqual(shell.children.map(child => child.selector), ["header", "messages", ".chat-input-row", "status"]);
 });

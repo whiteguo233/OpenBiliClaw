@@ -22,6 +22,7 @@ def build_cli_jev_evaluator(config: Config) -> JevContentEvaluator | None:
         LoopLocalDecisionProvider(config.decision),
         model=config.decision.providers.jev.model,
         config=config.discovery.jev_evaluation,
+        provider_identity=config.decision.providers.jev.endpoint_url,
         context_budget=resolve_jev_context(
             config.decision.providers.jev.model,
             config.decision.providers.jev.context_limits,

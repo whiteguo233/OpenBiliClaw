@@ -238,9 +238,10 @@ def test_loopback_bypass_denied_for_dns_rebinding_host(tmp_path, monkeypatch) ->
     )
 
 
-def test_disabled_gate_allows_everything(tmp_path, monkeypatch) -> None:
+def test_disabled_gate_keeps_private_api_local_only(tmp_path, monkeypatch) -> None:
     app, _ = _build_app(tmp_path, monkeypatch, enabled=False)
-    assert _remote(app).get("/api/favorites/BV1AUTH").status_code == 200
+    assert _remote(app).get("/api/favorites/BV1AUTH").status_code == 401
+    assert _loopback(app).get("/api/favorites/BV1AUTH").status_code == 200
     assert _remote(app).get("/api/auth/status").json()["enabled"] is False
 
 
@@ -814,8 +815,8 @@ def test_first_enable_does_not_bump_epoch(tmp_path, monkeypatch) -> None:
 def test_admin_enable_disable_from_local(tmp_path, monkeypatch) -> None:
     app, db = _build_app(tmp_path, monkeypatch, enabled=False, password=None)
     loop = _loopback(app)
-    # starts disabled → remote is open
-    assert _remote(app).get("/api/favorites/BV1AUTH").status_code == 200
+    # Until setup completes, private APIs remain local-only.
+    assert _remote(app).get("/api/favorites/BV1AUTH").status_code == 401
     # local (extension/UI) enables + sets a password
     r = loop.post("/api/auth/admin", json={"enabled": True, "password": "newpw"})
     assert r.status_code == 200 and r.json()["enabled"] is True
@@ -827,9 +828,9 @@ def test_admin_enable_disable_from_local(tmp_path, monkeypatch) -> None:
         "/api/auth/login", json={"password": "newpw"}, headers={"origin": _ORIGIN}
     ).json()["ok"]
     assert rc.get("/api/favorites/BV1AUTH").status_code == 200
-    # local disables → remote open again
+    # Disabling the password returns to local-only access.
     assert loop.post("/api/auth/admin", json={"enabled": False}).status_code == 200
-    assert _remote(app).get("/api/favorites/BV1AUTH").status_code == 200
+    assert _remote(app).get("/api/favorites/BV1AUTH").status_code == 401
 
 
 def test_admin_change_password_revokes_old_sessions(tmp_path, monkeypatch) -> None:

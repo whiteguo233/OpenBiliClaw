@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { normalizeReleaseVersion } from "./release-utils.mjs";
 
@@ -63,7 +64,34 @@ export function makeSafariArtifactName(version, artifactFormat) {
   return `openbiliclaw-extension-${normalizeReleaseVersion(version)}-safari.${artifactFormat}`;
 }
 
-function notarizeAndStaple(archivePath, staplePath) {
+/** Retry only temporary Apple ticket transport failures; validation must still succeed. */
+export async function stapleNotarizationTicket(staplePath, {
+  run = execFileSync,
+  wait = delay,
+  warn = console.warn,
+} = {}) {
+  const backoff = [5000, 15000, 30000];
+  for (const operation of ["staple", "validate"]) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const output = run("xcrun", ["stapler", operation, staplePath], {
+          encoding: "utf8", timeout: 60000,
+        });
+        if (output) console.log(String(output));
+        break;
+      } catch (error) {
+        const detail = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
+        const transient = error.code === "ETIMEDOUT" || (error.status === 68 &&
+          /NSURLErrorDomain Code=-(?:1001|1005|1009)\b|network connection was lost|connection reset|timed out|HTTP[^\n]*(?:429|502|503|504)/i.test(detail));
+        if (!transient || attempt >= backoff.length) throw error;
+        warn(`Apple ticket ${operation} transport failed; retry ${attempt + 1}/${backoff.length}`);
+        await wait(backoff[attempt]);
+      }
+    }
+  }
+}
+
+async function notarizeAndStaple(archivePath, staplePath) {
   const auth = notaryProfile
     ? ["--keychain-profile", notaryProfile,
        ...(notaryKeychain ? ["--keychain", notaryKeychain] : [])]
@@ -81,12 +109,7 @@ function notarizeAndStaple(archivePath, staplePath) {
     throw new Error(`Apple rejected Safari notarization: ${result.status}`);
   }
   console.log("\nStapling notarization ticket...");
-  execFileSync("xcrun", ["stapler", "staple", staplePath], {
-    stdio: "inherit",
-  });
-  execFileSync("xcrun", ["stapler", "validate", staplePath], {
-    stdio: "inherit",
-  });
+  await stapleNotarizationTicket(staplePath);
 }
 
 async function packageSafari() {
@@ -209,7 +232,7 @@ async function packageSafari() {
       ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, notaryZip],
       { stdio: "inherit" },
     );
-    notarizeAndStaple(notaryZip, appPath);
+    await notarizeAndStaple(notaryZip, appPath);
     await rm(notaryZip, { force: true });
   }
 
@@ -260,7 +283,7 @@ async function packageSafari() {
     execFileSync("codesign", ["--sign", signIdentity, "--timestamp", outPath], {
       stdio: "inherit",
     });
-    notarizeAndStaple(outPath, outPath);
+    await notarizeAndStaple(outPath, outPath);
   }
 
   const stats = await stat(outPath);

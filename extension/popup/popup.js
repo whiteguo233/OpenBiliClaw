@@ -21,6 +21,7 @@ import {
   getRecommendationCardKind,
   getHintBannerState,
   getRuntimeRefreshSubmissionState,
+  getSourceStrategyLabel,
   getPopupState,
   getSubmissionProgressMessage,
   getTabButtonState,
@@ -30,7 +31,9 @@ import {
   normalizeProbeType,
   normalizeRuntimeStatus,
   normalizeProfileSummary,
+  isPublicWebSource,
   platformDisplayName,
+  recommendationSourceName,
   probeMessageKey,
   reconcileRecommendationReplacement,
   resolveInitBangumiUsername,
@@ -100,6 +103,9 @@ import {
   appendRecommendations,
   actOnChatCard,
   checkBackendStatus,
+  createWebSourceRecipe,
+  requestJson,
+  deleteWebSourceRecipe,
   fetchActivityFeed,
   fetchUpdateStatus,
   checkBackendUpdate,
@@ -123,13 +129,16 @@ import {
   fetchContentHistory,
   fetchDiagnosticsAlerts,
   fetchRuntimeStatus,
+  fetchSourceRecipes,
   fetchSourceShareSuggestion,
   fetchSourcesStatus,
+  probeWebSource,
   fetchV2exIdentity,
   acceptV2exBrowserIdentity,
   markDelightSent,
   openPendingConfirmation,
   probeConfigService,
+  prepareSponsoredRuntime,
   startEmbeddingRepair,
   startInit,
   readCachedConfigSnapshot,
@@ -161,6 +170,7 @@ import {
   sendChatMessage,
   submitFeedback,
   updateConfig,
+  updateWebSourceRecipe,
   fetchSavedItems,
   pollSavedSyncTask,
   removeSavedItem,
@@ -1406,7 +1416,8 @@ function buildSavedCard(listKind, item, { list, empty, toggles }) {
   const platform = document.createElement("span");
   platform.className = "saved-card-platform";
   platform.dataset.source = item.source_platform || "bilibili";
-  platform.textContent = platformDisplayName(item.source_platform || "bilibili");
+  platform.textContent = recommendationSourceName(item);
+  platform.title = platform.textContent;
   const up = document.createElement("p");
   up.className = "saved-card-up";
   up.textContent = item.author_name || item.up_name || "";
@@ -2239,14 +2250,18 @@ function _renderInitSources() {
   bangumiInput.id = "initBangumiUsername";
   bangumiInput.maxLength = 128;
   bangumiInput.autocomplete = "off";
-  bangumiInput.disabled = true;
+  bangumiInput.disabled = !elements.initSources.querySelector('input[data-init-source="bangumi"]')?.checked;
   bangumiInput.value = state.initBangumiUsername;
   bangumiInput.addEventListener("input", () => {
     state.initBangumiUsername = bangumiInput.value;
     state.initBangumiUsernameTouched = true;
   });
   bangumiRow.append(bangumiLabel, bangumiInput);
-  elements.initSources.append(bangumiRow);
+  const bangumiOptions = document.createElement("div");
+  bangumiOptions.dataset.initSourceOptions = "bangumi";
+  bangumiOptions.hidden = bangumiInput.disabled;
+  elements.initSources.append(bangumiOptions);
+  bangumiOptions.append(bangumiRow);
 
   // Optional personal access token: identifies the account via /v0/me and reads
   // private collections. When set, the username above is auto-resolved.
@@ -2259,13 +2274,13 @@ function _renderInitSources() {
   bangumiTokenInput.type = "password";
   bangumiTokenInput.maxLength = 512;
   bangumiTokenInput.autocomplete = "off";
-  bangumiTokenInput.disabled = true;
+  bangumiTokenInput.disabled = bangumiInput.disabled;
   bangumiTokenInput.value = state.initBangumiToken;
   bangumiTokenInput.addEventListener("input", () => {
     state.initBangumiToken = bangumiTokenInput.value;
   });
   bangumiTokenRow.append(bangumiTokenLabel, bangumiTokenInput);
-  elements.initSources.append(bangumiTokenRow);
+  bangumiOptions.append(bangumiTokenRow);
   const bangumiTokenHint = document.createElement("p");
   bangumiTokenHint.className = "init-sources-hint";
   // Spell out the three-way choice: the backend accepts a token, an explicit
@@ -2293,10 +2308,11 @@ function _renderInitSources() {
     document.createTextNode("（约 1 年有效，视同密码保管）·"),
     bangumiTokenDocLink,
   );
-  elements.initSources.append(bangumiTokenHint);
+  bangumiOptions.append(bangumiTokenHint);
 
   elements.initSources.querySelector('input[data-init-source="bangumi"]')?.addEventListener("change", (event) => {
     const checked = Boolean(event.currentTarget.checked);
+    bangumiOptions.hidden = !checked;
     bangumiInput.disabled = !checked;
     bangumiTokenInput.disabled = !checked;
   });
@@ -2311,14 +2327,18 @@ function _renderInitSources() {
   githubInput.autocomplete = "off";
   githubInput.autocapitalize = "off";
   githubInput.spellcheck = false;
-  githubInput.disabled = true;
+  githubInput.disabled = !elements.initSources.querySelector('input[data-init-source="github"]')?.checked;
   githubInput.value = state.initGitHubUsername;
   githubInput.addEventListener("input", () => {
     state.initGitHubUsername = githubInput.value;
     state.initGitHubUsernameTouched = true;
   });
   githubRow.append(githubLabel, githubInput);
-  elements.initSources.append(githubRow);
+  const githubOptions = document.createElement("div");
+  githubOptions.dataset.initSourceOptions = "github";
+  githubOptions.hidden = githubInput.disabled;
+  elements.initSources.append(githubOptions);
+  githubOptions.append(githubRow);
 
   const githubTokenRow = document.createElement("label");
   githubTokenRow.className = "init-source-row";
@@ -2329,13 +2349,13 @@ function _renderInitSources() {
   githubTokenInput.type = "password";
   githubTokenInput.maxLength = 512;
   githubTokenInput.autocomplete = "off";
-  githubTokenInput.disabled = true;
+  githubTokenInput.disabled = githubInput.disabled;
   githubTokenInput.value = state.initGitHubToken;
   githubTokenInput.addEventListener("input", () => {
     state.initGitHubToken = githubTokenInput.value;
   });
   githubTokenRow.append(githubTokenLabel, githubTokenInput);
-  elements.initSources.append(githubTokenRow);
+  githubOptions.append(githubTokenRow);
 
   const githubTokenHint = document.createElement("p");
   githubTokenHint.className = "init-sources-hint";
@@ -2353,10 +2373,11 @@ function _renderInitSources() {
     githubTokenDocLink,
     document.createTextNode("。"),
   );
-  elements.initSources.append(githubTokenHint);
+  githubOptions.append(githubTokenHint);
 
   elements.initSources.querySelector('input[data-init-source="github"]')?.addEventListener("change", (event) => {
     const checked = Boolean(event.currentTarget.checked);
+    githubOptions.hidden = !checked;
     githubInput.disabled = !checked;
     githubTokenInput.disabled = !checked;
   });
@@ -2807,6 +2828,16 @@ async function handleStartInitClick() {
 }
 
 function renderPoolStatus(runtimeStatus) {
+  window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("cfgLlmProviderNotice"), runtimeStatus?.sponsored_status);
+  const messageList = elements.messagesList;
+  if (messageList) {
+    let notice = document.getElementById("sponsoredMessageNotice");
+    if (!notice) { notice = document.createElement("div"); notice.id = "sponsoredMessageNotice"; messageList.before(notice); }
+    window.OpenBiliClawSponsoredSettings?.renderNotice(notice, runtimeStatus?.sponsored_status, () => {
+      closeMessagesPanel(); document.getElementById("settingsGear")?.click();
+    });
+    updateMessageBadge();
+  }
   if (
     !(elements.poolStatus instanceof HTMLElement) ||
     !(elements.poolAvailable instanceof HTMLElement) ||
@@ -3800,7 +3831,7 @@ async function handleProbeResponse(responseType) {
 function updateMessageBadge() {
   const badge = elements.messageBadge;
   if (!(badge instanceof HTMLElement)) return;
-  const count = state.messages.length;
+  const count = state.messages.length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0);
   badge.textContent = String(count);
   badge.hidden = count === 0;
 }
@@ -3815,6 +3846,7 @@ async function openMessagesPanel() {
   // Render whatever we have synchronously so the panel doesn't open
   // empty while we refetch.
   renderMessagesList();
+  try { state.runtimeStatus = await fetchRuntimeStatus(); renderPoolStatus(state.runtimeStatus); } catch { /* Keep the last known notice while offline. */ }
   // Then force-refresh the profile so the inbox shows the *current*
   // active speculations.  Without this, probes that the speculator
   // rotated out (TTL, replacement, manual force_tick) can sit stale
@@ -4084,6 +4116,7 @@ function renderMessagesList() {
   container.replaceChildren();
 
   if (state.messages.length === 0) {
+    if (state.runtimeStatus?.sponsored_status?.notices?.length) return;
     const empty = document.createElement("div");
     empty.className = "messages-empty";
     empty.innerHTML = '<div class="messages-empty-icon">\u{1F4EC}</div><p>\u6682\u65F6\u6CA1\u6709\u65B0\u6D88\u606F\u3002<br>\u5174\u8DA3\u786E\u8BA4\u3001\u60CA\u559C\u63A8\u8350\u548C\u901A\u77E5\u90FD\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p>';
@@ -4203,6 +4236,7 @@ function formatCountCn(n) {
 // Build the "▶ … · 👍 … · 💬 … · ⭐ … · 弹幕 …" stats line. Only counts
 // > 0 appear; when nothing qualifies the result is "" (render nothing).
 function recommendationStats(item) {
+  if (isPublicWebSource(item)) return "";
   const segments = [];
   const sourceRank = Math.trunc(Number(item?.source_rank) || 0);
   if (item?.view_count > 0) segments.push(`▶ ${formatCountCn(item.view_count)}`);
@@ -4299,7 +4333,8 @@ function buildDelightCard(delight) {
 
   const platformChip = document.createElement("span");
   platformChip.className = "message-delight-platform";
-  platformChip.textContent = platformDisplayName(delight.source_platform || "bilibili");
+  platformChip.textContent = recommendationSourceName(delight);
+  platformChip.title = platformChip.textContent;
   textCol.append(platformChip);
 
   const title = document.createElement("div");
@@ -6073,6 +6108,11 @@ async function popupDriveAgentStream(turn, { onUpdate, onDone } = {}) {
     void refreshChatSessions();
   } catch (error) {
     popupStreamingTurnIds.delete(turn.turn_id);
+    if (error?.agentRetrying) {
+      popupAgentRuns.delete(turn.turn_id);
+      onUpdate?.({ ...turn, status: "pending" });
+      throw error; // Let the existing poll loop observe durable recovery.
+    }
     if (error?.agentStreamError) {
       const failed = { ...turn, status: "failed", error: String(error.message || "对话失败了") };
       activeChatPolls.delete(turn.turn_id);
@@ -7427,7 +7467,8 @@ function renderDelightSlot() {
   kickerLine.append(kicker);
   const platformChip = document.createElement("span");
   platformChip.className = "delight-banner-platform";
-  platformChip.textContent = platformDisplayName(delight.source_platform || "bilibili");
+  platformChip.textContent = recommendationSourceName(delight);
+  platformChip.title = platformChip.textContent;
   kickerLine.append(platformChip);
   appendPublishedTime(kickerLine, delight);
   if (queueLength > 1) {
@@ -8023,17 +8064,18 @@ function renderRecommendations(items, { append = false } = {}) {
     if (item.topic_label) {
       const badge = document.createElement("span");
       badge.className = "topic-badge";
-      badge.textContent = item.topic_label;
+      badge.textContent = getSourceStrategyLabel(item.topic_label);
       top.append(badge);
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", tiktok: "TikTok", twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram" }[
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", tiktok: "TikTok", twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram", web: "网页" }[
         platformKey
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
     sourceCorner.className = `recommendation-source-corner source-platform-${platformKey}`;
-    sourceCorner.textContent = platformLabel;
+    sourceCorner.textContent = recommendationSourceName(item) || platformLabel;
+    sourceCorner.title = sourceCorner.textContent;
     cover.append(sourceCorner);
     top.append(stateBadge);
 
@@ -9255,7 +9297,14 @@ function bindSettings() {
       breaker_open: "熔断触发",
       provider_error: "请求失败",
     };
-    const table = category === "embedding" ? embeddingCodes : llmCodes;
+    const discoveryCodes = {
+      verification_required: "需要安全验证", login_required: "需要登录",
+      source_timeout: "连接超时", source_network_error: "网络异常", source_rate_limited: "网站限流",
+      source_parse_error: "内容解析异常", source_runtime_unavailable: "执行环境不可用",
+      source_access_denied: "访问受限", source_not_found: "地址不存在",
+      source_queue_error: "入队异常", source_fetch_failed: "持续采集失败", source_recovered: "已恢复",
+    };
+    const table = category === "discovery" ? discoveryCodes : category === "embedding" ? embeddingCodes : llmCodes;
     return table[code] || code || "未知异常";
   }
 
@@ -9278,13 +9327,18 @@ function bindSettings() {
     const emptyEl = document.getElementById("cfgDiagAlertsEmpty");
     const summaryEl = document.getElementById("cfgDiagAlertSummary");
     if (!(listEl instanceof HTMLElement) || !(emptyEl instanceof HTMLElement)) return;
+    if (payload?.source_history_available === false) {
+      if (summaryEl instanceof HTMLElement) summaryEl.textContent = "来源异常记录暂时无法刷新，已显示的记录会保留。";
+      return;
+    }
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
     if (summaryEl instanceof HTMLElement) {
       const errors = Number(payload?.summary?.errors || 0);
       const warnings = Number(payload?.summary?.warnings || 0);
+      const recovered = Number(payload?.summary?.recovered || 0);
       summaryEl.textContent =
-        errors + warnings > 0
-          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告`
+        alerts.length > 0
+          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告 / ${recovered} 恢复`
           : "";
     }
     if (!alerts.length) {
@@ -9297,9 +9351,9 @@ function bindSettings() {
     listEl.hidden = false;
     listEl.replaceChildren(
       ...alerts.map((alert) => {
-        const severity = alert?.severity === "error" ? "error" : "warning";
-        const categoryLabel = alert?.category === "embedding" ? "Embedding" : "LLM";
-        const source = String(alert?.source || "").trim();
+        const severity = alert?.severity === "info" ? "info" : alert?.severity === "error" ? "error" : "warning";
+        const categoryLabel = alert?.category === "discovery" ? "来源采集" : alert?.category === "embedding" ? "Embedding" : "LLM";
+        const source = String(alert?.source_name || alert?.source || "").trim();
         const count = Number(alert?.count || 1);
         const timeLabel = formatDiagAlertTime(alert?.last_seen);
         const item = document.createElement("li");
@@ -9310,7 +9364,7 @@ function bindSettings() {
         top.className = "diag-alert-item-top";
         const badge = document.createElement("span");
         badge.className = "diag-alert-badge";
-        badge.textContent = severity === "error" ? "错误" : "警告";
+        badge.textContent = severity === "info" ? "已恢复" : severity === "error" ? "错误" : "警告";
         const sourceSpan = document.createElement("span");
         sourceSpan.className = "diag-alert-source";
         sourceSpan.textContent = source ? `${categoryLabel} · ${source}` : categoryLabel;
@@ -9602,7 +9656,7 @@ function bindSettings() {
     dashscope: "留空 = https://dashscope.aliyuncs.com（国际站 dashscope-intl.aliyuncs.com）",
   };
 
-  function applyEmbeddingProviderUI() {
+  function applyEmbeddingProviderUI(event) {
     const select = document.getElementById("cfgEmbeddingProvider");
     if (!select) return;
     const provider = select.value;
@@ -9629,6 +9683,17 @@ function bindSettings() {
       }
       el.style.display = visible ? "" : "none";
     }
+
+    window.OpenBiliClawSponsoredSettings.syncEmbedding({
+      reset: event?.type === "change",
+      prepare: prepareSponsoredRuntime,
+      provider: document.getElementById("cfgEmbeddingProvider").value,
+      model: document.getElementById("cfgEmbeddingModel"),
+      key: document.getElementById("cfgEmbeddingApiKey"),
+      base: document.getElementById("cfgEmbeddingBaseUrl"),
+      dimension: document.getElementById("cfgEmbeddingOutputDimensionality"),
+      multimodal: document.getElementById("cfgEmbeddingMultimodalEnabled"),
+    });
   }
 
   const embeddingProviderSelect = document.getElementById("cfgEmbeddingProvider");
@@ -10059,6 +10124,7 @@ function bindSettings() {
   }, 30000);
 
   const LLM_PROVIDER_LABELS = {
+    siliconflow_free: "硅基流动（免费）",
     openai: "OpenAI",
     claude: "Claude",
     gemini: "Gemini",
@@ -10072,6 +10138,7 @@ function bindSettings() {
     openai_compatible: "OpenAI-compatible",
   };
   const LLM_PROVIDER_DEFAULTS = {
+    siliconflow_free: { model: "Qwen/Qwen3-8B", base_url: "" },
     openai: { model: "gpt-5-nano", base_url: "" },
     claude: { model: "claude-sonnet-4-6", base_url: "" },
     gemini: { model: "gemini-2.5-flash", base_url: "" },
@@ -10165,6 +10232,7 @@ function bindSettings() {
   }
 
   function llmEndpointSummary(instance) {
+    if (instance.provider_type === "siliconflow_free") return "内置服务 · 无需 Key";
     const raw = String(instance?.base_url || "").trim();
     if (!raw) return "官方默认地址";
     try {
@@ -10212,6 +10280,7 @@ function bindSettings() {
       return;
     }
     for (const [instanceId, instance] of entries) {
+      const fixed = instance.provider_type === "siliconflow_free";
       const references = llmInstanceReferences(instanceId);
       const probe = state.llmProbeResults.get(instanceId);
       const card = document.createElement("article");
@@ -10230,7 +10299,7 @@ function bindSettings() {
       title.append(name, id);
       head.append(
         title,
-        createLlmBadge(instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
+        createLlmBadge(fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用", instance.enabled !== false ? "success" : ""),
       );
 
       const badges = document.createElement("div");
@@ -10261,7 +10330,7 @@ function bindSettings() {
 
       const actions = document.createElement("div");
       actions.className = "settings-llm-instance-actions";
-      for (const [action, label] of [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]]) {
+      for (const [action, label] of (fixed ? [["probe", "测试"]] : [["probe", "测试"], ["edit", "编辑"], ["delete", "删除"]])) {
         const button = document.createElement("button");
         button.className = "settings-secondary-btn";
         button.type = "button";
@@ -10469,7 +10538,7 @@ function bindSettings() {
       name: getVal("cfgLlmInstanceName").trim() || current.name || instanceId,
       provider_type: providerType,
       enabled: true,
-      api_key: apiKey,
+      api_key: providerType === "siliconflow_free" ? "" : apiKey,
       model: getVal("cfgLlmInstanceModel").trim(),
       base_url: getVal("cfgLlmInstanceBaseUrl").trim(),
       auth_mode: providerType === "openai"
@@ -10564,6 +10633,14 @@ function bindSettings() {
       field.hidden = !visible;
     });
     resetLlmModelDiscovery();
+    window.OpenBiliClawSponsoredSettings.syncInstance({
+      provider: providerType,
+      model: document.getElementById("cfgLlmInstanceModel"),
+      key: document.getElementById("cfgLlmInstanceApiKey"),
+      base: document.getElementById("cfgLlmInstanceBaseUrl"),
+      status: document.getElementById("cfgLlmInstanceModelDiscoveryStatus"),
+      prepare: prepareSponsoredRuntime,
+    });
   }
 
   function applyLlmProviderDefaults() {
@@ -10605,6 +10682,7 @@ function bindSettings() {
     const dialog = document.getElementById("cfgLlmInstanceDialog");
     if (!(dialog instanceof HTMLElement)) return;
     const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+    if (instance?.provider_type === "siliconflow_free") return;
     state.llmEditingInstanceId = instanceId;
     llmDialogReturnFocus = document.activeElement;
     dialog.dataset.providerType = instance?.provider_type || "";
@@ -10700,7 +10778,7 @@ function bindSettings() {
     const effectiveKey = checked("cfgLlmInstanceClearApiKey")
       ? ""
       : typedKey || current.api_key || "";
-    const keyOptional = ["ollama", "gemini"].includes(providerType)
+    const keyOptional = ["ollama", "gemini", "siliconflow_free"].includes(providerType)
       || (providerType === "openai" && authMode === "codex_oauth");
     if (enabled && !keyOptional && !effectiveKey) {
       fail("启用的远端实例需要 API Key。", "cfgLlmInstanceApiKey");
@@ -10715,7 +10793,7 @@ function bindSettings() {
       name,
       provider_type: providerType,
       enabled,
-      api_key: effectiveKey,
+      api_key: providerType === "siliconflow_free" ? "" : effectiveKey,
       model,
       base_url: baseUrl,
       auth_mode: authMode,
@@ -10740,7 +10818,7 @@ function bindSettings() {
   }
 
   function deleteLlmInstance(instanceId) {
-    if (!state.llmDraft?.instances[instanceId]) return;
+    if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
     const references = llmInstanceReferences(instanceId);
     if (references.length) {
       showToast(`无法删除：仍被 ${references.join("、")} 引用。`, "error");
@@ -10760,6 +10838,10 @@ function bindSettings() {
     state.llmProbeResults.set(instanceId, { pending: true });
     renderLlmInstances();
     try {
+      if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+        const prepared = await prepareSponsoredRuntime();
+        if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+      }
       const result = await probeConfigService("llm_instance", collectForm(), instanceId);
       state.llmProbeResults.set(instanceId, result);
     } catch (err) {
@@ -10847,6 +10929,17 @@ function bindSettings() {
 
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
+    window.OpenBiliClawSponsoredSettings.renderNotice(
+      document.getElementById("cfgLlmProviderNotice"),
+      cfg.llm?.sponsored?.service_status,
+      (notices) => {
+        if (notices.every(item => !item.capabilities?.includes("chat"))) {
+          const field = document.getElementById("cfgEmbeddingProvider");
+          field.scrollIntoView({ block: "center" });
+          field.focus();
+        } else openLlmInstanceDialog();
+      },
+    );
     ensurePopupSourceDateFields();
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
@@ -11131,6 +11224,12 @@ function bindSettings() {
     setVal("cfgV2exDailyLatestBudget", cfg.sources?.v2ex?.daily_latest_budget);
     setVal("cfgV2exRequestInterval", cfg.sources?.v2ex?.request_interval_seconds);
     setVal("cfgV2exMinInterval", cfg.sources?.v2ex?.min_interval_minutes);
+    const webEnabled = document.getElementById("cfgWebEnabled");
+    if (webEnabled) webEnabled.checked = cfg.sources?.web?.enabled !== false;
+    setVal("cfgWebRequestTimeout", cfg.sources?.web?.request_timeout_seconds);
+    setVal("cfgWebMaxResponseBytes", cfg.sources?.web?.max_response_bytes);
+    setVal("cfgWebMaxRedirects", cfg.sources?.web?.max_redirects);
+    setVal("cfgWebLeaseSeconds", cfg.sources?.web?.lease_seconds);
     const instagramEnabled = document.getElementById("cfgInstagramEnabled");
     if (instagramEnabled) instagramEnabled.checked = cfg.sources?.instagram?.enabled === true;
     setCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, cfg.sources?.instagram?.source_modes);
@@ -11216,11 +11315,13 @@ function bindSettings() {
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
     setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm");
     const jevProvider = cfg.discovery?.jev_provider || {};
-    window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer"))
+    window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer"), {
+      probe: config => probeConfigService("jev", config),
+    })
       .load(jevProvider, cfg.discovery?.jev_evaluation || {});
     const jevStatus = document.getElementById("cfgJevEvaluatorStatus");
     if (jevStatus) {
-      jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+      jevStatus.textContent = jevProvider.reason || "请在下方配置连接。";
     }
     setVal("cfgKeywordGenerationMode", cfg.discovery?.keyword_generation_mode || "hybrid");
     const visualProfile = document.getElementById("cfgVisualProfileEnabled");
@@ -11259,6 +11360,7 @@ function bindSettings() {
     setVal("cfgPoolShareBangumi", cfg.scheduler?.pool_source_shares?.bangumi);
     setVal("cfgPoolShareLinuxdo", cfg.scheduler?.pool_source_shares?.linuxdo);
     setVal("cfgPoolShareV2ex", cfg.scheduler?.pool_source_shares?.v2ex);
+    setVal("cfgPoolShareWeb", cfg.scheduler?.pool_source_shares?.web);
     setVal("cfgPoolShareInstagram", cfg.scheduler?.pool_source_shares?.instagram);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
@@ -11321,6 +11423,7 @@ function bindSettings() {
         timeout: getInt("cfgLlmTimeoutV2", 1200),
         embedding: {
           ...(state.runtimeConfig?.llm?.embedding || {}),
+          output_dimensionality: getVal("cfgEmbeddingProvider") === "siliconflow_free" ? 1024 : state.runtimeConfig?.llm?.embedding?.output_dimensionality || 1024,
           provider: getVal("cfgEmbeddingProvider"),
           api_key: getVal("cfgEmbeddingApiKey"),
           base_url: getVal("cfgEmbeddingBaseUrl"),
@@ -11539,6 +11642,14 @@ function bindSettings() {
           min_interval_minutes: getInt("cfgV2exMinInterval", 5),
           ...popupSourceDateFieldsForUpdate("v2ex")
         },
+        web: {
+          ...(state.runtimeConfig?.sources?.web || {}),
+          enabled: checked("cfgWebEnabled", true),
+          request_timeout_seconds: getInt("cfgWebRequestTimeout", 15),
+          max_response_bytes: getInt("cfgWebMaxResponseBytes", 2_097_152),
+          max_redirects: getInt("cfgWebMaxRedirects", 5),
+          lease_seconds: getInt("cfgWebLeaseSeconds", 300),
+        },
         instagram: {
           enabled: checked("cfgInstagramEnabled"),
           source_modes: collectCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, ["topic", "creator"]),
@@ -11598,6 +11709,7 @@ function bindSettings() {
           bangumi: getInt("cfgPoolShareBangumi", 1),
           linuxdo: getInt("cfgPoolShareLinuxdo", 1),
           v2ex: getInt("cfgPoolShareV2ex", 1),
+          web: getInt("cfgPoolShareWeb", 1),
           instagram: getInt("cfgPoolShareInstagram", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
@@ -11717,6 +11829,7 @@ function bindSettings() {
     bangumi: "cfgBangumiEnabled",
     linuxdo: "cfgLinuxdoEnabled",
     v2ex: "cfgV2exEnabled",
+    web: "cfgWebEnabled",
     instagram: "cfgInstagramEnabled",
   };
 
@@ -11778,6 +11891,502 @@ function bindSettings() {
     syncSourceCardEnabledState();
   }
 
+  const WEB_RECIPE_STATUS_VIEW = {
+    never_run: ["尚未运行", "muted"],
+    running: ["正在抓取", "warning"],
+    ok: ["运行正常", "success"],
+    not_modified: ["暂无更新", "success"],
+    empty: ["本轮无内容", "warning"],
+    degraded: ["解析退化", "error"],
+    login_required: ["站点要求登录", "error"],
+    rate_limited: ["站点限流", "warning"],
+    failed: ["运行失败", "error"],
+  };
+
+  function webRecipeStrategyLabel(strategy) {
+    return { feed: "Feed", sitemap: "Sitemap", listing: "列表页" }[strategy]
+      || strategy
+      || "未知";
+  }
+
+  function setWebRecipeMessage(tone, text) {
+    setProbeStatus(document.getElementById("webRecipeMessage"), tone, text);
+  }
+
+  const WEB_PROBE_DISCOVERY_METHOD_LABELS = {
+    direct: "直接识别",
+    html_alternate: "页面声明",
+    well_known: "约定入口",
+    html_structure: "页面结构",
+  };
+  let webProbeCandidates = [];
+  let webProbeInFlight = false;
+  let webProbeRequestSerial = 0;
+
+  function setWebProbeBusy(busy) {
+    const result = document.getElementById("webProbeResult");
+    const button = document.getElementById("webProbeRun");
+    if (result) result.setAttribute("aria-busy", busy ? "true" : "false");
+    if (button instanceof HTMLButtonElement) button.disabled = busy;
+  }
+
+  function appendWebProbeSummary(result, text, tone = "muted") {
+    const summary = document.createElement("p");
+    summary.className = "web-probe-summary";
+    summary.dataset.tone = tone;
+    summary.textContent = text;
+    result.appendChild(summary);
+  }
+
+  function webProbeCandidateIsUsable(candidate) {
+    const strategy = String(candidate?.strategy || "").toLowerCase();
+    const confidence = String(candidate?.confidence || "").toLowerCase();
+    const discoveryMethod = String(candidate?.discovery_method || "").toLowerCase();
+    const recipe = candidate?.recipe;
+    return (
+      ["feed", "sitemap", "listing"].includes(strategy)
+      && ["high", "medium"].includes(confidence)
+      && ["direct", "html_alternate", "well_known", "html_structure"].includes(discoveryMethod)
+      && typeof candidate?.entry_url === "string" && Boolean(candidate.entry_url.trim())
+      && recipe && typeof recipe === "object"
+      && String(recipe.strategy || "").toLowerCase() === strategy
+      && recipe.config && typeof recipe.config === "object"
+    );
+  }
+
+  function renderWebProbeResult(payload) {
+    const result = document.getElementById("webProbeResult");
+    if (!result) return;
+    result.textContent = "";
+    webProbeCandidates = [];
+
+    const status = String(payload?.status || "").toLowerCase();
+    if (status === "no_match") {
+      appendWebProbeSummary(
+        result,
+        String(payload?.detail || "没有发现可安全采用的 Feed、Sitemap 或列表结构。"),
+        "warning",
+      );
+      return;
+    }
+
+    const candidates = (Array.isArray(payload?.candidates) ? payload.candidates : [])
+      .filter(webProbeCandidateIsUsable)
+      .slice(0, 6);
+    if (status !== "ready" || !candidates.length) {
+      appendWebProbeSummary(result, "探测响应不完整，请稍后重试。", "error");
+      return;
+    }
+    webProbeCandidates = candidates;
+
+    const pageTitle = String(payload?.page_title || "").trim();
+    const detail = String(payload?.detail || "").trim();
+    const finalUrl = String(payload?.final_url || "").trim();
+    const requestedUrl = String(payload?.requested_url || "").trim();
+    const summaryParts = [
+      detail || `发现 ${candidates.length} 个可用方案。`,
+      pageTitle ? `页面：${pageTitle}` : "",
+      finalUrl && finalUrl !== requestedUrl ? `最终 URL：${finalUrl}` : "",
+    ].filter(Boolean);
+    appendWebProbeSummary(result, summaryParts.join(" · "), "success");
+
+    candidates.forEach((candidate, index) => {
+      const card = document.createElement("article");
+      card.className = "web-probe-candidate";
+
+      const heading = document.createElement("div");
+      heading.className = "web-probe-candidate-heading";
+      const strategy = document.createElement("strong");
+      strategy.textContent = webRecipeStrategyLabel(candidate.strategy);
+      const confidence = document.createElement("span");
+      confidence.className = "web-probe-confidence";
+      confidence.dataset.confidence = candidate.confidence;
+      confidence.textContent = candidate.confidence === "high" ? "高置信度" : "中置信度";
+      const method = document.createElement("span");
+      method.textContent = WEB_PROBE_DISCOVERY_METHOD_LABELS[candidate.discovery_method]
+        || String(candidate.discovery_method || "未知来源");
+      heading.append(strategy, confidence, method);
+      card.appendChild(heading);
+
+      appendWebProbeSummary(
+        card,
+        String(candidate.detail || candidate.entry_url || "后端已生成可编辑的 Recipe。"),
+      );
+      if (candidate.detail && candidate.entry_url) {
+        appendWebProbeSummary(card, `入口：${String(candidate.entry_url)}`);
+      }
+
+      const samples = (Array.isArray(candidate.sample_items) ? candidate.sample_items : [])
+        .slice(0, 5);
+      if (samples.length) {
+        const sampleHeading = document.createElement("strong");
+        sampleHeading.className = "web-probe-candidate-heading";
+        sampleHeading.textContent = "内容预览";
+        card.appendChild(sampleHeading);
+        const sampleList = document.createElement("ul");
+        sampleList.className = "web-probe-samples";
+        samples.forEach((sample) => {
+          const item = document.createElement("li");
+          const title = document.createElement("span");
+          title.textContent = String(sample?.title || sample?.content_url || "未命名内容");
+          item.appendChild(title);
+          const metaParts = [sample?.author_name, sample?.published_at, sample?.content_url]
+            .map((value) => String(value || "").trim())
+            .filter(Boolean);
+          if (metaParts.length) {
+            const meta = document.createElement("span");
+            meta.className = "web-probe-sample-meta";
+            meta.textContent = metaParts.join(" · ");
+            item.appendChild(meta);
+          }
+          sampleList.appendChild(item);
+        });
+        card.appendChild(sampleList);
+      }
+
+      const useButton = document.createElement("button");
+      useButton.className = "settings-secondary-btn";
+      useButton.type = "button";
+      useButton.dataset.webProbeCandidate = String(index);
+      useButton.textContent = "采用此方案";
+      useButton.setAttribute(
+        "aria-label",
+        `采用${webRecipeStrategyLabel(candidate.strategy)}方案并填入 Recipe 表单`,
+      );
+      card.appendChild(useButton);
+      result.appendChild(card);
+    });
+  }
+
+  function applyWebProbeCandidate(candidate) {
+    if (!webProbeCandidateIsUsable(candidate)) return;
+    const recipe = candidate.recipe;
+    const config = recipe.config;
+    const listing = config.listing && typeof config.listing === "object" ? config.listing : {};
+    const allowedOrigins = Array.isArray(config.allowed_origins) ? config.allowed_origins : [];
+    setVal("webRecipeName", recipe.name);
+    setVal("webRecipeStrategy", recipe.strategy);
+    setVal("webRecipeEntryUrl", config.entry_url || candidate.entry_url);
+    setVal("webRecipeOrigins", allowedOrigins.join("\n"));
+    setVal("webRecipeInterval", config.interval_minutes ?? 30);
+    setVal("webRecipeMaxItems", config.max_items ?? 20);
+    setVal("webRecipeMaxPages", config.max_pages ?? 1);
+    setVal("webRecipeDetailLimit", config.detail_fetch_limit ?? 10);
+    setVal("webRecipeShare", recipe.target_share ?? 4);
+    setVal("webRecipeItemSelector", listing.item_selector || "");
+    setVal("webRecipeLinkSelector", listing.link_selector || "a");
+    setVal("webRecipeTitleSelector", listing.title_selector || "");
+    setVal("webRecipeEmptySelector", listing.empty_selector || "");
+    syncWebRecipeStrategyFields();
+    setWebRecipeMessage("success", "方案已填入；检查后点击“添加网站”才会保存。");
+    const form = document.getElementById("webRecipeForm");
+    const firstField = document.getElementById("webRecipeName");
+    form?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    firstField?.focus?.({ preventScroll: true });
+  }
+
+  function invalidateWebProbeResult() {
+    if (webProbeInFlight || !webProbeCandidates.length) return;
+    webProbeCandidates = [];
+    const result = document.getElementById("webProbeResult");
+    if (!result) return;
+    result.textContent = "";
+    appendWebProbeSummary(result, "URL 已更改，请重新探测。", "warning");
+  }
+
+  async function submitWebProbe(event) {
+    event.preventDefault();
+    const form = document.getElementById("webProbeForm");
+    const input = document.getElementById("webProbeUrl");
+    if (
+      !(form instanceof HTMLFormElement)
+      || !(input instanceof HTMLInputElement)
+      || !form.reportValidity()
+      || webProbeInFlight
+    ) return;
+
+    const requestedUrl = input.value.trim();
+    const requestSerial = ++webProbeRequestSerial;
+    webProbeInFlight = true;
+    setWebProbeBusy(true);
+    const result = document.getElementById("webProbeResult");
+    if (result) {
+      result.textContent = "";
+      appendWebProbeSummary(result, "正在只读探测网站…");
+    }
+    try {
+      const payload = await probeWebSource(requestedUrl);
+      if (requestSerial !== webProbeRequestSerial) return;
+      if (input.value.trim() !== requestedUrl) {
+        if (result) {
+          result.textContent = "";
+          appendWebProbeSummary(result, "URL 已改变，请重新探测。", "warning");
+        }
+        webProbeCandidates = [];
+        return;
+      }
+      renderWebProbeResult(payload);
+    } catch (error) {
+      if (requestSerial !== webProbeRequestSerial || !result) return;
+      result.textContent = "";
+      webProbeCandidates = [];
+      appendWebProbeSummary(result, formatWebRecipeError(error, "网站探测失败。"), "error");
+    } finally {
+      if (requestSerial === webProbeRequestSerial) {
+        webProbeInFlight = false;
+        setWebProbeBusy(false);
+      }
+    }
+  }
+
+  function formatWebRecipeError(error, fallback = "网站操作失败。") {
+    const detail = error?.details?.detail;
+    if (typeof detail === "string" && detail.trim()) return detail.trim();
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => String(item?.msg || item?.message || "").trim())
+        .filter(Boolean);
+      if (messages.length) return messages.join("；");
+    }
+    if (detail && typeof detail === "object") {
+      const message = String(detail.message || detail.error || "").trim();
+      if (message) return message;
+    }
+    return String(error?.message || fallback);
+  }
+
+  function renderWebRecipes(items) {
+    const list = document.getElementById("webRecipeList");
+    if (!list) return;
+    const recipes = (Array.isArray(items) ? items : [])
+      .filter((item) => (
+        String(item?.source_type || "").toLowerCase() === "web"
+        && ["feed", "sitemap", "listing"].includes(String(item?.strategy || "").toLowerCase())
+        && Number(item?.config?.plan_version || 0) === 1
+      ));
+    list.textContent = "";
+    list.setAttribute("aria-busy", "false");
+    if (!recipes.length) {
+      const empty = document.createElement("p");
+      empty.className = "settings-hint";
+      empty.textContent = "还没有网站。填写入口后，后端会按设定间隔开始公开内容发现。";
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const recipe of recipes) {
+      const item = document.createElement("article");
+      item.className = "web-recipe-item";
+      item.dataset.recipeId = String(recipe?.id || "");
+
+      const main = document.createElement("div");
+      main.className = "web-recipe-item-main";
+      const title = document.createElement("div");
+      title.className = "web-recipe-item-title";
+      const name = document.createElement("strong");
+      name.textContent = String(recipe?.name || "未命名网站");
+
+      const runtimeStatus = String(recipe?.runtime?.status || "never_run");
+      const [statusText, statusTone] = WEB_RECIPE_STATUS_VIEW[runtimeStatus]
+        || [runtimeStatus || "状态未知", "muted"];
+      const status = document.createElement("span");
+      status.className = "web-recipe-status";
+      status.dataset.tone = statusTone;
+      const discovered = Number(recipe?.runtime?.last_discovered_count || 0);
+      const enqueued = Number(recipe?.runtime?.last_enqueued_count || 0);
+      const counts = discovered || enqueued ? ` · 发现 ${discovered} / 入队待评估 ${enqueued}` : "";
+      status.textContent = `${recipe?.enabled === false ? "已停用" : statusText}${counts}`;
+      const errorCode = String(recipe?.runtime?.last_error_code || "").trim();
+      if (errorCode) status.title = `最近错误：${errorCode}`;
+      title.append(name, status);
+
+      const config = recipe?.config && typeof recipe.config === "object" ? recipe.config : {};
+      const meta = document.createElement("span");
+      meta.className = "web-recipe-item-meta";
+      meta.textContent = `${webRecipeStrategyLabel(recipe?.strategy)} · ${String(config.entry_url || "")} · 每 ${Number(config.interval_minutes || 30)} 分钟`;
+      main.append(title, meta);
+
+      const actions = document.createElement("div");
+      actions.className = "web-recipe-item-actions";
+      const toggle = document.createElement("button");
+      toggle.className = "settings-secondary-btn web-recipe-toggle";
+      toggle.type = "button";
+      toggle.dataset.webRecipeAction = "toggle";
+      toggle.dataset.enabled = recipe?.enabled === false ? "false" : "true";
+      toggle.textContent = recipe?.enabled === false ? "启用" : "停用";
+      toggle.setAttribute("aria-label", `${toggle.textContent}网站 ${name.textContent}`);
+      const remove = document.createElement("button");
+      remove.className = "settings-secondary-btn web-recipe-delete";
+      remove.type = "button";
+      remove.dataset.webRecipeAction = "delete";
+      remove.textContent = "删除";
+      remove.setAttribute("aria-label", `删除网站 ${name.textContent}`);
+      actions.append(toggle, remove);
+      item.append(main, actions);
+      list.appendChild(item);
+    }
+  }
+
+  async function loadWebRecipes() {
+    const list = document.getElementById("webRecipeList");
+    if (!list) return;
+    list.setAttribute("aria-busy", "true");
+    try {
+      const payload = await fetchSourceRecipes();
+      renderWebRecipes(payload?.items);
+    } catch (error) {
+      list.textContent = "";
+      list.setAttribute("aria-busy", "false");
+      const failure = document.createElement("p");
+      failure.className = "settings-hint settings-hint-warning";
+      failure.setAttribute("role", "alert");
+      failure.textContent = formatWebRecipeError(error, "网站列表读取失败，请稍后重试。");
+      list.appendChild(failure);
+    }
+  }
+
+  function webRecipePayloadFromForm() {
+    const strategy = getVal("webRecipeStrategy");
+    const allowedOrigins = getVal("webRecipeOrigins")
+      .split(/[\n,]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const config = {
+      entry_url: getVal("webRecipeEntryUrl"),
+      allowed_origins: allowedOrigins,
+      interval_minutes: getInt("webRecipeInterval", 30),
+      max_items: getInt("webRecipeMaxItems", 20),
+      max_pages: getInt("webRecipeMaxPages", 1),
+      detail_fetch_limit: getInt("webRecipeDetailLimit", 10),
+    };
+    if (strategy === "listing") {
+      config.listing = {
+        item_selector: getVal("webRecipeItemSelector"),
+        link_selector: getVal("webRecipeLinkSelector") || "a",
+        title_selector: getVal("webRecipeTitleSelector"),
+        empty_selector: getVal("webRecipeEmptySelector"),
+      };
+    }
+    return {
+      name: getVal("webRecipeName"),
+      strategy,
+      config,
+      target_share: getInt("webRecipeShare", 4),
+      enabled: true,
+    };
+  }
+
+  function syncWebRecipeStrategyFields() {
+    const strategy = getVal("webRecipeStrategy");
+    const listing = document.getElementById("webRecipeListingFields");
+    if (listing) listing.hidden = strategy !== "listing";
+    const itemSelector = document.getElementById("webRecipeItemSelector");
+    if (itemSelector instanceof HTMLInputElement) itemSelector.required = strategy === "listing";
+    const detailLimit = document.getElementById("webRecipeDetailLimit");
+    if (
+      strategy === "sitemap"
+      && detailLimit instanceof HTMLInputElement
+      && Number(detailLimit.value) < 1
+    ) {
+      detailLimit.value = "10";
+    }
+  }
+
+  async function submitWebRecipe(event) {
+    event.preventDefault();
+    const form = document.getElementById("webRecipeForm");
+    const button = document.getElementById("webRecipeCreate");
+    if (!(form instanceof HTMLFormElement) || !form.reportValidity() || button?.disabled) return;
+    if (button) button.disabled = true;
+    setWebRecipeMessage("pending", "正在验证并保存网站…");
+    try {
+      await createWebSourceRecipe(webRecipePayloadFromForm());
+      form.reset();
+      syncWebRecipeStrategyFields();
+      setWebRecipeMessage("success", "网站已添加；调度器会按设定间隔运行。");
+      await loadWebRecipes();
+      void renderSourcesStatus();
+    } catch (error) {
+      setWebRecipeMessage("error", formatWebRecipeError(error, "网站保存失败。"));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  async function changeWebRecipe(button) {
+    const item = button.closest(".web-recipe-item");
+    const recipeId = String(item?.dataset?.recipeId || "");
+    const action = String(button?.dataset?.webRecipeAction || "");
+    if (!recipeId || !["toggle", "delete"].includes(action) || button.disabled) return;
+    const name = item.querySelector(".web-recipe-item-title strong")?.textContent || "这个网站";
+    if (action === "delete" && !window.confirm(`删除「${name}」及其抓取状态？`)) return;
+    const actionButtons = Array.from(item.querySelectorAll("[data-web-recipe-action]"));
+    actionButtons.forEach((actionButton) => { actionButton.disabled = true; });
+    setWebRecipeMessage("pending", action === "delete" ? "正在删除网站…" : "正在更新网站…");
+    try {
+      if (action === "delete") {
+        await deleteWebSourceRecipe(recipeId);
+      } else {
+        await updateWebSourceRecipe(recipeId, { enabled: button.dataset.enabled !== "true" });
+      }
+      setWebRecipeMessage("success", action === "delete" ? "网站已删除。" : "网站状态已更新。");
+      await loadWebRecipes();
+      void renderSourcesStatus();
+    } catch (error) {
+      setWebRecipeMessage("error", formatWebRecipeError(error, "网站更新失败。"));
+      actionButtons.forEach((actionButton) => { actionButton.disabled = false; });
+    }
+  }
+
+  const customSourceManager = globalThis.OpenBiliClawCustomSources?.createManager({
+    root: document.getElementById("customSourceManager"),
+    request: (path, options) => requestJson(path, { timeoutMs: 45_000, ...options }),
+    baseUrl: getBackendOrigin,
+    openUrl: (url) => chrome.tabs.create({ url }),
+    onChat: () => {
+      closePopupOverlay(overlay);
+      setActiveTab("chat");
+      elements.chatInput?.focus();
+    },
+    onChange(items) {
+      const peers = document.getElementById("customSourceSharePeers");
+      if (!peers) return;
+      peers.replaceChildren();
+      for (const entry of globalThis.OpenBiliClawCustomSources.shareEntries(items)) {
+        const peer = document.createElement("span");
+        peer.className = "custom-source-share-peer";
+        peer.textContent = `${entry.label}：${entry.enabled ? `${entry.weight} 份` : "停用"}`;
+        peers.append(peer);
+      }
+    },
+  });
+
+  function initWebRecipeManager() {
+    const form = document.getElementById("webRecipeForm");
+    const list = document.getElementById("webRecipeList");
+    if (!(form instanceof HTMLFormElement) || !list) return;
+    document.getElementById("webProbeForm")
+      ?.addEventListener("submit", (event) => void submitWebProbe(event));
+    document.getElementById("webProbeUrl")
+      ?.addEventListener("input", invalidateWebProbeResult);
+    document.getElementById("webProbeResult")
+      ?.addEventListener("click", (event) => {
+        const button = event.target?.closest?.("[data-web-probe-candidate]");
+        if (!(button instanceof HTMLButtonElement)) return;
+        const index = Number.parseInt(button.dataset.webProbeCandidate || "", 10);
+        if (!Number.isInteger(index) || !webProbeCandidates[index]) return;
+        applyWebProbeCandidate(webProbeCandidates[index]);
+      });
+    document.getElementById("webRecipeStrategy")
+      ?.addEventListener("change", syncWebRecipeStrategyFields);
+    form.addEventListener("submit", (event) => void submitWebRecipe(event));
+    list.addEventListener("click", (event) => {
+      const button = event.target?.closest?.("[data-web-recipe-action]");
+      if (button instanceof HTMLButtonElement) void changeWebRecipe(button);
+    });
+    syncWebRecipeStrategyFields();
+  }
+
   // ---- 设置页吸底保存栏：未保存修改计数 ------------------------------------
   // Counts distinct touched fields, not events, so retyping one input does not
   // inflate the number.
@@ -11812,7 +12421,7 @@ function bindSettings() {
         if (!(el instanceof Element)) return;
         if (!el.closest(".settings-panel")) return;
         if (el.hasAttribute("readonly")) return;
-        if (el.hasAttribute("data-settings-ignore-dirty")) return;
+        if (el.hasAttribute("data-settings-ignore-dirty") || el.closest("#webRecipeForm")) return;
         markSettingsDirty(el);
       });
     });
@@ -11822,6 +12431,7 @@ function bindSettings() {
   // popup.js is a deferred module script, so the settings markup is already
   // parsed by the time this runs.
   initSourceCards();
+  initWebRecipeManager();
   initSettingsDirtyTracking();
   document.getElementById("cfgBiliDatePreset")?.addEventListener("change", syncBiliDateFields);
 
@@ -12166,6 +12776,8 @@ function bindSettings() {
     void authControl.reload();
     void autostartControl.reload();
     void refreshReinitStatus();
+    void loadWebRecipes();
+    void customSourceManager?.load();
     try {
       const cfg = await fetchConfig();
       populateForm(cfg);
@@ -12218,6 +12830,7 @@ function bindSettings() {
             bangumi: checked("cfgBangumiEnabled"),
             linuxdo: checked("cfgLinuxdoEnabled"),
             v2ex: checked("cfgV2exEnabled"),
+            web: checked("cfgWebEnabled", true),
             instagram: checked("cfgInstagramEnabled"),
           },
           configured_shares: {
@@ -12234,6 +12847,7 @@ function bindSettings() {
             bangumi: getInt("cfgPoolShareBangumi", 1),
             linuxdo: getInt("cfgPoolShareLinuxdo", 1),
             v2ex: getInt("cfgPoolShareV2ex", 1),
+            web: getInt("cfgPoolShareWeb", 1),
             instagram: getInt("cfgPoolShareInstagram", 1),
           },
         });
@@ -12251,6 +12865,7 @@ function bindSettings() {
         if (shares.bangumi !== undefined) setVal("cfgPoolShareBangumi", shares.bangumi);
         if (shares.linuxdo !== undefined) setVal("cfgPoolShareLinuxdo", shares.linuxdo);
         if (shares.v2ex !== undefined) setVal("cfgPoolShareV2ex", shares.v2ex);
+        if (shares.web !== undefined) setVal("cfgPoolShareWeb", shares.web);
         if (shares.instagram !== undefined) setVal("cfgPoolShareInstagram", shares.instagram);
         markSettingsDirty(suggestBtn);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");

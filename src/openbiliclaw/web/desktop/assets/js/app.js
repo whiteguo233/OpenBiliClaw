@@ -39,6 +39,8 @@
       avoidanceProbeRespond: "/avoidance-probes/respond",
       sourceShareSuggestion: "/config/source-share-suggestion",
       configApplyStatus: "/config/apply-status",
+      sources: "/sources",
+      webProbe: "/sources/web/probe",
       sourceCredentials: "/sources/credentials",
       configProbe: "/config/probe-service",
       configModelDiscovery: "/config/discover-models",
@@ -266,13 +268,24 @@
       { key: "linuxdo", label: "Linux.do" },
       { key: "v2ex", label: "V2EX" },
       { key: "instagram", label: "Instagram" },
+      { key: "web", label: "Web" },
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
     // 首次成功读到库存快照之前是"未知"，不能把还没读到伪装成 0。
     const PLATFORM_COUNT_UNKNOWN_TEXT = "—";
     const PLATFORM_COUNT_UNKNOWN_LABEL = "库存待读取";
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX", instagram: "Instagram", ig: "Instagram" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "tiktok", tt: "tiktok", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex", ig: "instagram", instagram: "instagram" };
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX", instagram: "Instagram", ig: "Instagram", web: "Web" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "tiktok", tt: "tiktok", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex", ig: "instagram", instagram: "instagram", web: "web" };
+    const WEB_SOURCE_STRATEGY_LABELS = {
+      "web-feed": "网页订阅（RSS/Atom/JSON Feed）",
+      "web-sitemap": "网页站点地图（Sitemap）",
+      "web-listing": "网页列表页"
+    };
+
+    function formatSourceStrategyLabel(value) {
+      const text = String(value || "").trim();
+      return WEB_SOURCE_STRATEGY_LABELS[text.toLowerCase()] || text;
+    }
     const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment", "repository"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
@@ -1247,10 +1260,11 @@
 
     function handleAuthRequired() {
       // Mid-session token loss (expired / revoked): reload after re-login.
-      showLoginOverlay();
+      fetchAuthStatus().then((status) => showLoginOverlay(undefined, Boolean(status?.setup_required)))
+        .catch(() => showLoginOverlay());
     }
 
-    function showLoginOverlay(onSuccess) {
+    function showLoginOverlay(onSuccess, setupRequired = false) {
       if (_authOverlayShown) return;
       _authOverlayShown = true;
       const overlay = document.createElement("div");
@@ -1268,6 +1282,16 @@
         '<p id="authError" class="auth-error" role="alert" hidden></p>' +
         "</form>";
       document.body.appendChild(overlay);
+      if (setupRequired) {
+        overlay.querySelector(".auth-copy").textContent =
+          "请先在运行后端的电脑上，打开设置并启用局域网访问密码，然后返回此页面。";
+        overlay.querySelector("#authPassword")?.remove();
+        const retry = overlay.querySelector("button");
+        retry.type = "button";
+        retry.textContent = "已设置，重新检查";
+        retry.addEventListener("click", () => location.reload());
+        return;
+      }
       const input = overlay.querySelector("#authPassword");
       const button = overlay.querySelector("button");
       const errorEl = overlay.querySelector("#authError");
@@ -1317,8 +1341,8 @@
 
     function ensureAuthenticated() {
       return fetchAuthStatus().then((status) => {
-        if (status && status.enabled && status.authenticated === false) {
-          return new Promise((resolve) => showLoginOverlay(resolve));
+        if (status && status.authenticated === false) {
+          return new Promise((resolve) => showLoginOverlay(resolve, Boolean(status.setup_required)));
         }
         return undefined;
       });
@@ -1461,9 +1485,13 @@
         up: decodeHtmlEntities(item?.up_name ?? item?.up ?? (canonical.source_platform === "bangumi" ? "" : "未知创作者")),
         cover_url: normalizeImageUrl(item?.cover_url ?? item?.cover ?? item?.pic ?? item?.thumbnail_url ?? item?.thumbnail ?? item?.image_url),
         content_url: canonical.content_url,
-        topic: decodeHtmlEntities(item?.topic_label ?? item?.topic ?? "未归类"),
+        topic: formatSourceStrategyLabel(
+          decodeHtmlEntities(item?.topic_label ?? item?.topic ?? "未归类")
+        ),
         platform: canonical.source_platform,
         source_platform: canonical.source_platform,
+        source_id: String(item?.source_id || ""),
+        source_name: String(item?.source_name || ""),
         content_type: contentType,
         body_text: bodyText,
         duration: Number(item?.duration ?? 0) || 0,
@@ -1953,6 +1981,7 @@
       if (Array.isArray(details.detail)) {
         return details.detail.map((item) => `${item.loc?.join(".") || "字段"}: ${item.msg || JSON.stringify(item)}`).join("\n");
       }
+      if (typeof details.detail === "string") return details.detail;
       return details.message || details.detail?.message || details.detail?.error || details.error || "";
     }
 
@@ -2537,7 +2566,7 @@
       const githubInput = `<label class="init-source-row"><span>GitHub 公开用户名（可留空，仅启用公开仓库发现）</span><input id="initGitHubUsername" maxlength="39" autocomplete="off" autocapitalize="off" spellcheck="false" value="${escapeHtml(githubUsername)}"${githubDisabled}></label>`;
       const githubTokenInput = `<label class="init-source-row"><span>GitHub Personal Access Token（可选）</span><input id="initGitHubToken" type="password" maxlength="512" autocomplete="off" value="${escapeHtml(state.initGitHubToken || "")}"${githubDisabled}></label>`;
       const githubTokenHint = `<p class="init-sources-hint">GitHub 仅导入公开 starred repositories。公开用户名可直接使用；PAT 只用于确认账号身份和提高官方 API 限额，不读取私有仓库。两者都留空时仍可启用公开仓库发现。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a></p>`;
-      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源（至少一个）</p>${rows}${llmConcurrencyRow}${initTimeoutRow}${bangumiInput}${bangumiTokenInput}${bangumiTokenHint}${githubInput}${githubTokenInput}${githubTokenHint}<p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
+      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源（至少一个）</p>${rows}${llmConcurrencyRow}${initTimeoutRow}<div data-init-source-options="bangumi"${selected.has("bangumi") ? "" : " hidden"}>${bangumiInput}${bangumiTokenInput}${bangumiTokenHint}</div><div data-init-source-options="github"${selected.has("github") ? "" : " hidden"}>${githubInput}${githubTokenInput}${githubTokenHint}</div><p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
     }
 
     function initOnboardingPhase(status, progress) {
@@ -2691,11 +2720,15 @@
         input.addEventListener("change", () => {
           state.initSelectedSources = selectedInitSourcesFromDom();
           const bangumiChecked = state.initSelectedSources.includes("bangumi");
+          const bangumiOptions = grid.querySelector('[data-init-source-options="bangumi"]');
+          if (bangumiOptions) bangumiOptions.hidden = !bangumiChecked;
           const bangumiUsername = grid.querySelector("#initBangumiUsername");
           if (bangumiUsername) bangumiUsername.disabled = !bangumiChecked;
           const bangumiToken = grid.querySelector("#initBangumiToken");
           if (bangumiToken) bangumiToken.disabled = !bangumiChecked;
           const githubChecked = state.initSelectedSources.includes("github");
+          const githubOptions = grid.querySelector('[data-init-source-options="github"]');
+          if (githubOptions) githubOptions.hidden = !githubChecked;
           const githubUsername = grid.querySelector("#initGitHubUsername");
           if (githubUsername) githubUsername.disabled = !githubChecked;
           const githubToken = grid.querySelector("#initGitHubToken");
@@ -3187,6 +3220,7 @@
       showMainPage("settingsPage");
       window.scrollTo({ top: 0, behavior: "smooth" });
       renderSettingsReinitStatus();
+      void customSourceManager?.load();
       if (!state.degraded) {
         void renderSourcesStatus();
         void renderSourceCredentials();
@@ -3409,7 +3443,7 @@
         const savedCoverClass = recommendationCoverClass(item);
         const coverContent = `
             ${recommendationMediaHtml(item)}
-            <span class="platform" data-platform="${escapeHtml(item.source_platform || item.platform || "bilibili")}">${escapeHtml(platformName(item.source_platform || item.platform))}</span>
+            <span class="platform" data-platform="${escapeHtml(item.source_platform || item.platform || "bilibili")}" title="${escapeHtml(recommendationSourceName(item))}">${escapeHtml(recommendationSourceName(item))}</span>
           `;
         card.innerHTML = `
           ${url
@@ -3862,6 +3896,10 @@ ${savedCardFeedbackBarHtml(listKind)}
       const panel = event.target.closest(".drawer, .overlay");
       if (panel?.id) closePanel(panel.id);
       openMobileMenu();
+    }
+
+    function recommendationSourceName(item) {
+      return String(item?.source_name || "").trim() || platformName(item?.source_platform || item?.platform || "bilibili");
     }
 
     function platformName(value) {
@@ -4433,6 +4471,7 @@ ${savedCardFeedbackBarHtml(listKind)}
     function contentUrl(item) {
       const platform = item.platform || item.source_platform;
       if (item.content_url) return item.content_url;
+      if (platform === "web") return "";
       if (platform === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${encodeURIComponent(item.bvid)}`;
       if (platform === "youtube" && item.content_id) return `https://www.youtube.com/watch?v=${encodeURIComponent(item.content_id)}`;
       if (platform === "twitter" && item.content_id) return `https://x.com/i/status/${encodeURIComponent(item.content_id)}`;
@@ -4880,6 +4919,7 @@ ${savedCardFeedbackBarHtml(listKind)}
     }
 
     function recommendationStats(item) {
+      if (normalizeSourcePlatform(item) === "web") return "";
       const segments = [];
       const sourceRank = Math.trunc(Number(item.source_rank) || 0);
       if (item.view_count > 0) segments.push(`▶ ${formatCountCn(item.view_count)}`);
@@ -5147,12 +5187,12 @@ ${savedCardFeedbackBarHtml(listKind)}
           ${url
           ? `<a class="cover${recommendationCoverClass(item)}" data-platform="${escapeHtml(item.platform)}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="打开 ${escapeHtml(item.title)}">
             ${recommendationMediaHtml(item, index)}
-            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}">${escapeHtml(platformName(item.platform))}</span>
+            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}" title="${escapeHtml(recommendationSourceName(item))}">${escapeHtml(recommendationSourceName(item))}</span>
             ${durationBadge}
           </a>`
           : `<button class="cover${recommendationCoverClass(item)}" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
             ${recommendationMediaHtml(item, index)}
-            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}">${escapeHtml(platformName(item.platform))}</span>
+            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}" title="${escapeHtml(recommendationSourceName(item))}">${escapeHtml(recommendationSourceName(item))}</span>
             ${durationBadge}
           </button>`}
           <div>
@@ -5707,7 +5747,7 @@ ${cardFeedbackBarHtml()}`;
         if (target) target.innerHTML = activityHtml;
       });
       const mobileCount = $("#mobileMessageCount");
-      if (mobileCount) mobileCount.textContent = String(getRenderableMessages().length);
+      if (mobileCount) mobileCount.textContent = String(getRenderableMessages().length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0));
     }
 
     function renderActivityHistory() {
@@ -6436,6 +6476,7 @@ ${cardFeedbackBarHtml()}`;
 
     function messageKey(msg) {
       const type = messageType(msg);
+      if (type === "source_attention") return `source_attention:${msg.id}`;
       if (type === "interest.probe" || type === "avoidance.probe") {
         return probeKey(type, msg?.domain || msg?.title);
       }
@@ -6445,6 +6486,10 @@ ${cardFeedbackBarHtml()}`;
     function normalizeMessageItem(item) {
       if (!item) return null;
       const type = messageType(item);
+      if (type === "source_attention") {
+        if (!item.id || !["source_login", "draft_login", "source_settings"].includes(item.action)) return null;
+        return { ...item, type, title: String(item.name || "自定义来源"), reason: String(item.message || "来源需要处理") };
+      }
       if (type === "delight") {
         return null;
       }
@@ -6478,7 +6523,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function syncMessageCount() {
-      const count = getRenderableMessages(state.messageListSnapshot && isMessagesDrawerOpen() ? state.messageListSnapshot : state.messages).length;
+      const count = getRenderableMessages(state.messageListSnapshot && isMessagesDrawerOpen() ? state.messageListSnapshot : state.messages).length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0);
       if (state.runtimeStatus) state.runtimeStatus.unread_count = count;
       const metric = $("#metricUnread");
       if (metric) metric.textContent = String(count);
@@ -6487,6 +6532,51 @@ ${cardFeedbackBarHtml()}`;
       const mobileCount = $("#mobileMessageCount");
       if (mobileCount) mobileCount.textContent = String(count);
       return count;
+    }
+
+    let sourceAttentionLoading = false;
+    async function refreshSourceAttention() {
+      if (sourceAttentionLoading) return;
+      sourceAttentionLoading = true;
+      try {
+        const result = await requestJson("/custom-sources/attention");
+        if (!Array.isArray(result?.items)) return;
+        const items = result.items.map((item) => normalizeMessageItem({ ...item, type: "source_attention" })).filter(Boolean);
+        const replace = (rows) => rows.filter((row) => messageType(row) !== "source_attention").concat(items);
+        state.messages = replace(state.messages);
+        if (state.messageListSnapshot) state.messageListSnapshot = replace(state.messageListSnapshot);
+        renderMessages();
+      } catch {
+        // Keep unresolved warnings visible when the backend is temporarily unavailable.
+      } finally { sourceAttentionLoading = false; }
+    }
+
+    async function openSourceAttention(item, button) {
+      button.disabled = true;
+      try {
+        if (item.action === "source_settings") {
+          await openSourceSettings(item.source_id);
+          return;
+        }
+        const result = item.action === "source_login"
+          ? await requestJsonStrict(`/custom-sources/${encodeURIComponent(item.source_id)}/login`, { method: "POST", timeoutMs: 45000 })
+          : await requestJsonStrict(`/custom-sources/drafts/${encodeURIComponent(item.draft_id)}`, { timeoutMs: 15000 });
+        if (result.status !== "needs_login") { await refreshSourceAttention(); return; }
+        const url = window.OpenBiliClawCustomSources.takeoverUrl(result.takeover_url, new URL(getApiBase(), window.location.href).href);
+        window.location.assign(url);
+      } catch { showToast("暂时无法打开来源，请到来源设置重试。"); }
+      finally { button.disabled = false; }
+    }
+
+    async function openSourceSettings(sourceId) {
+      openSettingsPage("sources");
+      await customSourceManager?.load();
+      const card = [...document.querySelectorAll("#customSourceManager [data-source-id]")]
+        .find((item) => item.dataset.sourceId === sourceId);
+      if (!card) { showToast("该来源已归档或暂时不可用。"); return; }
+      card.setAttribute("tabindex", "-1");
+      card.scrollIntoView({ block: "center" });
+      card.focus({ preventScroll: true });
     }
 
     function getRenderableMessages(source = state.messages) {
@@ -6554,7 +6644,7 @@ ${cardFeedbackBarHtml()}`;
       else state.messages = messages;
       syncMessageCount();
       if (!messages.length) {
-        list.innerHTML = `<div class="empty-state">暂无通知。兴趣确认、避雷确认和待通知候选都会出现在这里。</div>`;
+        list.innerHTML = state.runtimeStatus?.sponsored_status?.notices?.length ? "" : `<div class="empty-state">暂无通知。兴趣确认、避雷确认和待通知候选都会出现在这里。</div>`;
         return;
       }
       list.replaceChildren(...messages.map((msg) => {
@@ -6563,6 +6653,13 @@ ${cardFeedbackBarHtml()}`;
         const resolvedResult = state.resolvedMessageResults.get(key);
         el.className = "message-item";
         el.dataset.messageKey = key;
+        if (messageType(msg) === "source_attention") {
+          el.setAttribute("role", "alert");
+          el.innerHTML = `<p class="eyebrow">来源需要处理</p><h3>${escapeHtml(msg.title)}</h3><p class="message-note">${escapeHtml(msg.reason)}</p><button class="small-btn" type="button">${escapeHtml(msg.action_label || "处理来源")}</button>`;
+          const button = el.querySelector("button");
+          button.addEventListener("click", () => void openSourceAttention(msg, button));
+          return el;
+        }
         if (messageType(msg) === "notification") {
           el.classList.add("is-notification");
           const viewAction = msg.content_url
@@ -9244,6 +9341,7 @@ ${cardFeedbackBarHtml()}`;
       }
       return {
         initialized: merged.initialized !== false,
+        sponsored_status: merged.sponsored_status || {},
         recommendation_count: Number(merged.recommendation_count ?? 0),
         pending_signal_events: Number(merged.pending_signal_events ?? 0),
         last_refresh_at: String(merged.last_refresh_at ?? ""),
@@ -9254,7 +9352,9 @@ ${cardFeedbackBarHtml()}`;
         pool_target_count: Number(merged.pool_target_count ?? state.config?.scheduler?.pool_target_count ?? 0),
         last_discovered_count: Number(merged.last_discovered_count ?? 0),
         last_replenished_count: Number(merged.last_replenished_count ?? 0),
-        recent_pool_topics: Array.isArray(merged.recent_pool_topics) ? merged.recent_pool_topics.map(String).filter(Boolean) : [],
+        recent_pool_topics: Array.isArray(merged.recent_pool_topics)
+          ? merged.recent_pool_topics.map(formatSourceStrategyLabel).filter(Boolean)
+          : [],
         manual_refresh_state: manualRefreshState || "idle",
         manual_refresh_message: String(merged.manual_refresh_message || ""),
         discovery_failure_message: Number(merged.pool_available_count) > 0 ? "" : String(merged.discovery_failure_message || ""),
@@ -9454,6 +9554,13 @@ ${cardFeedbackBarHtml()}`;
     function applyRuntimeStatus(payload) {
       if (!payload) return;
       state.runtimeStatus = normalizeRuntimeStatus(payload);
+      window.OpenBiliClawSponsoredSettings?.updateStatus($("#llmProviderNotice"), state.runtimeStatus.sponsored_status);
+      const messageList = $("#messageList");
+      if (messageList) {
+        let notice = $("#sponsoredMessageNotice");
+        if (!notice) { notice = document.createElement("div"); notice.id = "sponsoredMessageNotice"; messageList.before(notice); }
+        window.OpenBiliClawSponsoredSettings?.renderNotice(notice, state.runtimeStatus.sponsored_status, () => openSettingsPage("models"));
+      }
       const summary = getPoolStatusSummary(state.runtimeStatus);
       $("#statusLabel").textContent = state.runtimeStatus.initialized === false ? "后端未初始化" : "已连接本地后端";
       $("#metricPool").textContent = String(state.runtimeStatus.pool_available_count);
@@ -9696,7 +9803,8 @@ ${cardFeedbackBarHtml()}`;
       github: "githubEnabled",
       linuxdo: "linuxdoEnabled",
       v2ex: "v2exEnabled",
-      instagram: "instagramEnabled"
+      instagram: "instagramEnabled",
+      web: "webEnabled"
     };
 
     function collectEnabledSourceIssues(data) {
@@ -9907,7 +10015,7 @@ ${cardFeedbackBarHtml()}`;
       try {
         const result = await requestJsonStrict(`/sources/${encodeURIComponent(slug)}/verify`, {
           method: "POST",
-          timeoutMs: 30000
+          timeoutMs: 65000
         });
         renderVerifyResult(statusEl, result);
         cooldown = Number(result?.retry_after_seconds) || 0;
@@ -9981,6 +10089,518 @@ ${cardFeedbackBarHtml()}`;
       renderSourceCredentialRows(data);
     }
 
+    const WEB_RECIPE_STATUS_VIEW = {
+      never_run: ["尚未运行", "muted"],
+      running: ["正在抓取", "warning"],
+      ok: ["运行正常", "success"],
+      not_modified: ["暂无更新", "success"],
+      empty: ["本轮无内容", "warning"],
+      degraded: ["解析退化", "error"],
+      login_required: ["站点要求登录", "error"],
+      rate_limited: ["站点限流", "warning"],
+      failed: ["运行失败", "error"]
+    };
+
+    function setWebRecipeMessage(tone, text) {
+      setProbeStatus($("#webRecipeMessage"), tone, text);
+    }
+
+    function webRecipeStrategyLabel(strategy) {
+      return { feed: "Feed", sitemap: "Sitemap", listing: "列表页" }[strategy] || strategy || "未知";
+    }
+
+    const WEB_PROBE_DISCOVERY_METHOD_VIEW = {
+      direct: "直接入口",
+      html_alternate: "页面订阅声明",
+      well_known: "站点标准入口",
+      html_structure: "页面列表结构"
+    };
+    let webProbeCandidates = [];
+    let webProbeHasRun = false;
+
+    function webProbeSafeHttpUrl(value) {
+      try {
+        const url = new URL(String(value || ""));
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return "";
+        return url.href;
+      } catch {
+        return "";
+      }
+    }
+
+    function setWebProbeBusy(busy) {
+      const panel = $("#webProbePanel");
+      const status = $("#webProbeStatus");
+      const input = $("#webProbeUrl");
+      const button = $("#webProbeButton");
+      panel?.setAttribute("aria-busy", busy ? "true" : "false");
+      status?.setAttribute("aria-busy", busy ? "true" : "false");
+      if (input) input.disabled = busy;
+      if (button) {
+        button.disabled = busy;
+        button.textContent = busy ? "探测中…" : (webProbeHasRun ? "重新探测" : "自动探测");
+      }
+    }
+
+    function clearWebProbeCandidates() {
+      const list = $("#webProbeCandidates");
+      webProbeCandidates = [];
+      if (!list) return;
+      list.textContent = "";
+      list.hidden = true;
+    }
+
+    function webProbeSampleTitle(sample) {
+      const title = String(sample?.title || "").trim();
+      if (title) return title;
+      const url = webProbeSafeHttpUrl(sample?.content_url);
+      return url || "未命名内容";
+    }
+
+    function renderWebProbeSamples(parent, samples) {
+      const previewItems = asArray(samples).slice(0, 3);
+      if (!previewItems.length) return;
+      const heading = document.createElement("strong");
+      heading.className = "web-probe-samples-heading";
+      heading.textContent = "内容预览";
+      const list = document.createElement("ul");
+      list.className = "web-probe-samples";
+      previewItems.forEach((sample) => {
+        const item = document.createElement("li");
+        item.className = "web-probe-sample";
+        const safeUrl = webProbeSafeHttpUrl(sample?.content_url);
+        const title = webProbeSampleTitle(sample);
+        if (safeUrl) {
+          const link = document.createElement("a");
+          link.href = safeUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = title;
+          item.appendChild(link);
+        } else {
+          const label = document.createElement("span");
+          label.className = "web-probe-sample-title";
+          label.textContent = title;
+          item.appendChild(label);
+        }
+        const metadata = [sample?.author_name, sample?.published_at]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" · ");
+        if (metadata) {
+          const meta = document.createElement("span");
+          meta.className = "web-probe-sample-meta";
+          meta.textContent = metadata;
+          item.appendChild(meta);
+        }
+        list.appendChild(item);
+      });
+      parent.append(heading, list);
+    }
+
+    function webProbeCandidateIsUsable(candidate) {
+      const strategy = String(candidate?.strategy || "").toLowerCase();
+      const confidence = String(candidate?.confidence || "").toLowerCase();
+      const discoveryMethod = String(candidate?.discovery_method || "").toLowerCase();
+      const recipe = candidate?.recipe;
+      return (
+        ["feed", "sitemap", "listing"].includes(strategy)
+        && ["high", "medium"].includes(confidence)
+        && ["direct", "html_alternate", "well_known", "html_structure"].includes(discoveryMethod)
+        && Boolean(webProbeSafeHttpUrl(candidate?.entry_url))
+        && recipe && typeof recipe === "object"
+        && String(recipe.strategy || "").toLowerCase() === strategy
+        && recipe.config && typeof recipe.config === "object"
+      );
+    }
+
+    function renderWebProbeCandidates(items, status = "ready") {
+      const list = $("#webProbeCandidates");
+      if (!list) return 0;
+      list.textContent = "";
+      webProbeCandidates = status === "ready"
+        ? asArray(items).filter(webProbeCandidateIsUsable).slice(0, 6)
+        : [];
+      list.hidden = false;
+      if (!webProbeCandidates.length) {
+        const empty = document.createElement("p");
+        empty.className = "web-probe-empty";
+        empty.textContent = status === "no_match"
+          ? "没有找到可直接采用的公开入口。你仍可以在下方手动填写 Recipe。"
+          : "探测完成，但没有返回可采用的方案。你可以重试或手动填写 Recipe。";
+        list.appendChild(empty);
+        return 0;
+      }
+
+      webProbeCandidates.forEach((candidate, index) => {
+        const card = document.createElement("article");
+        card.className = "web-probe-candidate";
+        card.setAttribute("role", "listitem");
+
+        const head = document.createElement("div");
+        head.className = "web-probe-candidate-head";
+        const title = document.createElement("div");
+        title.className = "web-probe-candidate-title";
+        const strategy = document.createElement("strong");
+        strategy.textContent = webRecipeStrategyLabel(candidate.strategy);
+        const confidence = document.createElement("span");
+        confidence.className = "web-probe-confidence";
+        confidence.dataset.confidence = String(candidate.confidence || "medium");
+        confidence.textContent = candidate.confidence === "high" ? "高置信度" : "中置信度";
+        title.append(strategy, confidence);
+        const method = document.createElement("span");
+        method.className = "web-probe-candidate-detail";
+        method.textContent = WEB_PROBE_DISCOVERY_METHOD_VIEW[candidate.discovery_method]
+          || String(candidate.discovery_method || "自动发现");
+        head.append(title, method);
+        card.appendChild(head);
+
+        const detail = document.createElement("p");
+        detail.className = "web-probe-candidate-detail";
+        detail.textContent = String(candidate.detail || "已识别可用入口。");
+        const entry = document.createElement("p");
+        entry.className = "web-probe-candidate-url";
+        entry.textContent = String(candidate.entry_url || candidate.recipe?.config?.entry_url || "");
+        card.append(detail, entry);
+        renderWebProbeSamples(card, candidate.sample_items);
+
+        const adopt = document.createElement("button");
+        adopt.className = "pill-btn primary web-probe-adopt";
+        adopt.type = "button";
+        adopt.dataset.candidateIndex = String(index);
+        adopt.textContent = "采用此方案";
+        adopt.setAttribute("aria-label", `采用 ${webRecipeStrategyLabel(candidate.strategy)} 方案并回填表单`);
+        card.appendChild(adopt);
+        list.appendChild(card);
+      });
+      return webProbeCandidates.length;
+    }
+
+    function webProbeErrorMessage(error) {
+      const detail = String(error?.message || "").trim().slice(0, 500);
+      if (error?.status === 422) {
+        return `网址无法探测：${detail || "请检查 URL 是否为可公开访问的 HTTP(S) 地址。"}`;
+      }
+      if (error?.code === "request_timeout" || error?.name === "TimeoutError") {
+        return "探测超时。站点可能响应较慢，请稍后重新探测。";
+      }
+      if (error instanceof TypeError) {
+        return "无法连接本地后端，请确认 OpenBiliClaw 正在运行后重试。";
+      }
+      return detail ? `探测失败：${detail}` : "探测失败，请稍后重试。";
+    }
+
+    async function runWebProbe(event) {
+      event?.preventDefault();
+      const form = $("#webProbeStandaloneForm");
+      const button = $("#webProbeButton");
+      if (!form?.reportValidity() || button?.disabled) return;
+      const requestedUrl = getInput("webProbeUrl");
+      webProbeHasRun = true;
+      clearWebProbeCandidates();
+      setWebProbeBusy(true);
+      setProbeStatus($("#webProbeStatus"), "pending", "正在安全探测公开入口…");
+      try {
+        const result = await requestJsonStrict(ENDPOINTS.webProbe, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: requestedUrl }),
+          timeoutMs: 65000
+        });
+        if (getInput("webProbeUrl") !== requestedUrl) {
+          clearWebProbeCandidates();
+          setProbeStatus($("#webProbeStatus"), "neutral", "URL 已更改，请重新探测。");
+          return;
+        }
+        const status = String(result?.status || "");
+        if (status === "no_match") {
+          renderWebProbeCandidates([], status);
+          setProbeStatus(
+            $("#webProbeStatus"),
+            "neutral",
+            String(result?.detail || "没有找到可直接采用的公开入口，可手动填写 Recipe。")
+          );
+          return;
+        }
+        if (status !== "ready") throw new Error("后端返回了无法识别的探测结果。");
+        const count = renderWebProbeCandidates(result?.candidates, status);
+        const detail = String(result?.detail || "").trim();
+        const pageTitle = String(result?.page_title || "").trim();
+        const responseRequestedUrl = String(result?.requested_url || "").trim();
+        const finalUrl = String(result?.final_url || "").trim();
+        const summary = [
+          detail || (count ? `发现 ${count} 个候选方案。` : "探测响应不完整，请稍后重试。"),
+          pageTitle ? `页面：${pageTitle}` : "",
+          finalUrl && finalUrl !== responseRequestedUrl ? `最终 URL：${finalUrl}` : ""
+        ].filter(Boolean).join(" · ");
+        setProbeStatus(
+          $("#webProbeStatus"),
+          count ? "success" : "error",
+          summary
+        );
+      } catch (error) {
+        clearWebProbeCandidates();
+        setProbeStatus(
+          $("#webProbeStatus"),
+          getInput("webProbeUrl") === requestedUrl ? "error" : "neutral",
+          getInput("webProbeUrl") === requestedUrl
+            ? webProbeErrorMessage(error)
+            : "URL 已更改，请重新探测。"
+        );
+      } finally {
+        setWebProbeBusy(false);
+      }
+    }
+
+    function setWebProbeRecipeNumber(id, value) {
+      if (value === undefined || value === null || value === "") return;
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) setInput(id, numeric);
+    }
+
+    function applyWebProbeCandidate(candidate) {
+      if (!webProbeCandidateIsUsable(candidate)) {
+        setProbeStatus($("#webProbeStatus"), "error", "这个候选方案不完整，请重新探测或手动填写。");
+        return;
+      }
+      const recipe = candidate?.recipe;
+      const strategy = String(recipe?.strategy || candidate?.strategy || "");
+      const config = recipe?.config && typeof recipe.config === "object" ? recipe.config : {};
+      const entryUrl = webProbeSafeHttpUrl(config.entry_url || candidate?.entry_url);
+      if (!recipe || !["feed", "sitemap", "listing"].includes(strategy) || !entryUrl) {
+        setProbeStatus($("#webProbeStatus"), "error", "这个候选方案不完整，请重新探测或手动填写。");
+        return;
+      }
+      const form = $("#webRecipeStandaloneForm");
+      form?.reset();
+      setInput("webRecipeName", recipe.name || "未命名网站");
+      setInput("webRecipeStrategy", strategy);
+      setInput("webRecipeUrl", entryUrl);
+      setInput(
+        "webRecipeOrigins",
+        Array.isArray(config.allowed_origins) ? config.allowed_origins.map(String).join("\n") : ""
+      );
+      setWebProbeRecipeNumber("webRecipeInterval", config.interval_minutes);
+      setWebProbeRecipeNumber("webRecipeMaxItems", config.max_items);
+      setWebProbeRecipeNumber("webRecipeMaxPages", config.max_pages);
+      setWebProbeRecipeNumber("webRecipeDetailLimit", config.detail_fetch_limit);
+      setWebProbeRecipeNumber("webRecipeShare", recipe.target_share);
+      const listing = config.listing && typeof config.listing === "object" ? config.listing : {};
+      setInput("webRecipeItemSelector", listing.item_selector || "");
+      setInput("webRecipeLinkSelector", listing.link_selector || "a");
+      setInput("webRecipeTitleSelector", listing.title_selector || "");
+      setInput("webRecipeEmptySelector", listing.empty_selector || "");
+      syncWebRecipeStrategyFields();
+      setWebRecipeMessage(
+        "success",
+        `已回填 ${webRecipeStrategyLabel(strategy)} 方案；请检查下方字段并点击「添加网站」。当前尚未保存。`
+      );
+      const fields = $("#webRecipeForm");
+      fields?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      $("#webRecipeName")?.focus({ preventScroll: true });
+    }
+
+    function renderWebRecipes(items) {
+      const list = $("#webRecipeList");
+      if (!list) return;
+      const recipes = asArray(items).filter((item) => (
+        String(item?.source_type || "").toLowerCase() === "web"
+        && ["feed", "sitemap", "listing"].includes(String(item?.strategy || "").toLowerCase())
+        && Number(item?.config?.plan_version || 0) === 1
+      ));
+      list.textContent = "";
+      if (!recipes.length) {
+        const empty = document.createElement("p");
+        empty.className = "seg-note";
+        empty.textContent = "还没有网站。填写下面的入口后，保存即会进入定时发现。";
+        list.appendChild(empty);
+        return;
+      }
+      recipes.forEach((recipe) => {
+        const item = document.createElement("article");
+        item.className = "web-recipe-item";
+        item.dataset.recipeId = String(recipe.id || "");
+
+        const main = document.createElement("div");
+        main.className = "web-recipe-item-main";
+        const title = document.createElement("div");
+        title.className = "web-recipe-item-title";
+        const name = document.createElement("strong");
+        name.textContent = String(recipe.name || "未命名网站");
+        const runtimeStatus = String(recipe.runtime?.status || "never_run");
+        const [statusText, statusTone] = WEB_RECIPE_STATUS_VIEW[runtimeStatus] || [runtimeStatus, "muted"];
+        const status = document.createElement("span");
+        status.className = "web-recipe-status";
+        status.dataset.tone = statusTone;
+        const discovered = Number(recipe.runtime?.last_discovered_count || 0);
+        const enqueued = Number(recipe.runtime?.last_enqueued_count || 0);
+        status.textContent = `${recipe.enabled === false ? "已停用" : statusText}${discovered || enqueued ? ` · 发现 ${discovered} / 入队待评估 ${enqueued}` : ""}`;
+        title.append(name, status);
+
+        const meta = document.createElement("span");
+        meta.className = "web-recipe-item-meta";
+        const config = recipe.config && typeof recipe.config === "object" ? recipe.config : {};
+        meta.textContent = `${webRecipeStrategyLabel(recipe.strategy)} · ${String(config.entry_url || "")} · 每 ${Number(config.interval_minutes || 30)} 分钟`;
+        main.append(title, meta);
+
+        const actions = document.createElement("div");
+        actions.className = "web-recipe-item-actions";
+        const toggle = document.createElement("button");
+        toggle.className = "pill-btn web-recipe-toggle";
+        toggle.type = "button";
+        toggle.dataset.enabled = recipe.enabled === false ? "false" : "true";
+        toggle.textContent = recipe.enabled === false ? "启用" : "停用";
+        toggle.setAttribute("aria-label", `${toggle.textContent}网站 ${name.textContent}`);
+        const remove = document.createElement("button");
+        remove.className = "pill-btn web-recipe-delete";
+        remove.type = "button";
+        remove.textContent = "删除";
+        remove.setAttribute("aria-label", `删除网站 ${name.textContent}`);
+        actions.append(toggle, remove);
+        item.append(main, actions);
+        list.appendChild(item);
+      });
+    }
+
+    async function loadWebRecipes() {
+      const list = $("#webRecipeList");
+      if (!list) return;
+      try {
+        const payload = await requestJsonStrict(ENDPOINTS.sources, { timeoutMs: 15000, cache: "no-store" });
+        renderWebRecipes(payload?.items);
+      } catch (error) {
+        list.textContent = "";
+        const failure = document.createElement("p");
+        failure.className = "seg-note";
+        failure.textContent = error?.message || "网站列表读取失败，请稍后重试。";
+        list.appendChild(failure);
+      }
+    }
+
+    function webRecipePayloadFromForm() {
+      const strategy = getInput("webRecipeStrategy");
+      const allowedOrigins = getInput("webRecipeOrigins")
+        .split(/[\n,]/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const config = {
+        entry_url: getInput("webRecipeUrl"),
+        allowed_origins: allowedOrigins,
+        interval_minutes: getIntInput("webRecipeInterval", 30),
+        max_items: getIntInput("webRecipeMaxItems", 20),
+        max_pages: getIntInput("webRecipeMaxPages", 1),
+        detail_fetch_limit: getIntInput("webRecipeDetailLimit", 10)
+      };
+      if (strategy === "listing") {
+        config.listing = {
+          item_selector: getInput("webRecipeItemSelector"),
+          link_selector: getInput("webRecipeLinkSelector") || "a",
+          title_selector: getInput("webRecipeTitleSelector"),
+          empty_selector: getInput("webRecipeEmptySelector")
+        };
+      }
+      return {
+        source_type: "web",
+        name: getInput("webRecipeName"),
+        strategy,
+        config,
+        target_share: getIntInput("webRecipeShare", 4),
+        enabled: true
+      };
+    }
+
+    function syncWebRecipeStrategyFields() {
+      const listing = $("#webRecipeListingFields");
+      const strategy = getInput("webRecipeStrategy");
+      if (listing) listing.hidden = strategy !== "listing";
+      const itemSelector = $("#webRecipeItemSelector");
+      if (itemSelector) itemSelector.required = strategy === "listing";
+      const detail = $("#webRecipeDetailLimit");
+      if (detail && strategy === "sitemap" && Number(detail.value) < 1) detail.value = "10";
+    }
+
+    async function createWebRecipe(event) {
+      event?.preventDefault();
+      const form = $("#webRecipeStandaloneForm");
+      const button = $("#webRecipeCreate");
+      if (!form?.reportValidity() || button?.disabled) return;
+      if (button) button.disabled = true;
+      setWebRecipeMessage("pending", "正在验证并保存网站…");
+      try {
+        await requestJsonStrict(ENDPOINTS.sources, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(webRecipePayloadFromForm()),
+          timeoutMs: 15000
+        });
+        form.reset();
+        syncWebRecipeStrategyFields();
+        setWebRecipeMessage("success", "网站已添加；调度器会按设定间隔运行。 ");
+        await Promise.allSettled([loadWebRecipes(), renderSourcesStatus()]);
+      } catch (error) {
+        setWebRecipeMessage("error", error?.message || "网站保存失败。 ");
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function changeWebRecipe(button) {
+      const item = button.closest(".web-recipe-item");
+      const recipeId = String(item?.dataset?.recipeId || "");
+      if (!recipeId || button.disabled) return;
+      const isDelete = button.classList.contains("web-recipe-delete");
+      const name = item.querySelector(".web-recipe-item-title strong")?.textContent || "这个网站";
+      if (isDelete && !window.confirm(`删除「${name}」及其抓取状态？`)) return;
+      button.disabled = true;
+      setWebRecipeMessage("pending", isDelete ? "正在删除网站…" : "正在更新网站…");
+      try {
+        await requestJsonStrict(`${ENDPOINTS.sources}/${encodeURIComponent(recipeId)}`, isDelete ? {
+          method: "DELETE",
+          timeoutMs: 15000
+        } : {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: button.dataset.enabled !== "true" }),
+          timeoutMs: 15000
+        });
+        setWebRecipeMessage("success", isDelete ? "网站已删除。" : "网站状态已更新。 ");
+        await Promise.allSettled([loadWebRecipes(), renderSourcesStatus()]);
+      } catch (error) {
+        setWebRecipeMessage("error", error?.message || "网站更新失败。 ");
+        button.disabled = false;
+      }
+    }
+
+    function initWebRecipeManager() {
+      const fields = $("#webRecipeForm");
+      const form = $("#webRecipeStandaloneForm");
+      if (!fields || !form) return;
+      fields.querySelectorAll("input, select, textarea, button").forEach((control) => {
+        control.setAttribute("form", form.id);
+      });
+      $("#webRecipeStrategy")?.addEventListener("change", syncWebRecipeStrategyFields);
+      form.addEventListener("submit", (event) => void createWebRecipe(event));
+      $("#webRecipeList")?.addEventListener("click", (event) => {
+        const button = event.target.closest(".web-recipe-toggle, .web-recipe-delete");
+        if (button) void changeWebRecipe(button);
+      });
+      $("#webProbeStandaloneForm")?.addEventListener("submit", (event) => void runWebProbe(event));
+      $("#webProbeUrl")?.addEventListener("input", () => {
+        if (!webProbeHasRun || $("#webProbeButton")?.disabled) return;
+        clearWebProbeCandidates();
+        setProbeStatus($("#webProbeStatus"), "neutral", "URL 已更改，请重新探测。");
+      });
+      $("#webProbeCandidates")?.addEventListener("click", (event) => {
+        const button = event.target?.closest?.(".web-probe-adopt");
+        const index = Number.parseInt(button?.dataset?.candidateIndex || "", 10);
+        if (button && Number.isInteger(index) && webProbeCandidates[index]) {
+          applyWebProbeCandidate(webProbeCandidates[index]);
+        }
+      });
+      syncWebRecipeStrategyFields();
+      void loadWebRecipes();
+    }
+
     // ---- 平台源卡片：展开/折叠、停用态、占比双向同步 ----------------------
     const SOURCE_SHARE_INPUT_IDS = {
       bilibili: "shareBilibili",
@@ -9996,7 +10616,8 @@ ${cardFeedbackBarHtml()}`;
       linuxdo: "shareLinuxdo",
       v2ex: "shareV2EX",
       weibo: "shareWeibo",
-      instagram: "shareInstagram"
+      instagram: "shareInstagram",
+      web: "shareWeb"
     };
     const SOURCE_CARD_LABELS = {
       bilibili: "Bilibili",
@@ -10012,9 +10633,10 @@ ${cardFeedbackBarHtml()}`;
       github: "GitHub",
       linuxdo: "Linux.do",
       v2ex: "V2EX",
-      instagram: "Instagram"
+      instagram: "Instagram",
+      web: "Web 旧版订阅"
     };
-    const SOURCE_CARD_INLINE_COLORS = { linuxdo: "#1f6f43" };
+    const SOURCE_CARD_INLINE_COLORS = { linuxdo: "#1f6f43", web: "#2563eb" };
 
     function sourceCardFor(key) {
       return $("#sourceStatusList")?.querySelector(`[data-source-status="${key}"]`) || null;
@@ -10039,6 +10661,16 @@ ${cardFeedbackBarHtml()}`;
       });
     }
 
+    let customSourceItems = [];
+    const customSourceManager = window.OpenBiliClawCustomSources?.createManager({
+      root: $("#customSourceManager"),
+      request: (path, options) => requestJsonStrict(path, { timeoutMs: 45000, ...options }),
+      baseUrl: () => new URL(getApiBase(), window.location.href).href,
+      openUrl: (url) => window.open(url, "_blank", "noopener,noreferrer"),
+      onChat: () => openChatPage(),
+      onChange(items) { customSourceItems = items; renderShareOverview(); void refreshSourceAttention(); },
+    });
+
     function renderShareOverview() {
       const bar = $("#shareOverviewBar");
       const legend = $("#shareOverviewLegend");
@@ -10053,6 +10685,7 @@ ${cardFeedbackBarHtml()}`;
           enabled: select ? select.value === "on" : true
         };
       });
+      entries.push(...(window.OpenBiliClawCustomSources?.shareEntries(customSourceItems) || []).map((item) => ({ ...item, custom: true })));
       const active = entries.filter((item) => item.enabled && item.weight > 0);
       const total = active.reduce((sum, item) => sum + item.weight, 0);
       bar.textContent = "";
@@ -10060,7 +10693,7 @@ ${cardFeedbackBarHtml()}`;
         const seg = document.createElement("i");
         seg.dataset.sourceKey = item.key;
         seg.style.width = `${(item.weight / total * 100).toFixed(2)}%`;
-        if (SOURCE_CARD_INLINE_COLORS[item.key]) seg.style.background = SOURCE_CARD_INLINE_COLORS[item.key];
+        if (SOURCE_CARD_INLINE_COLORS[item.key] || item.custom) seg.style.background = SOURCE_CARD_INLINE_COLORS[item.key] || SOURCE_CARD_INLINE_COLORS.web;
         seg.title = `${item.label}：${item.weight} 份`;
         bar.appendChild(seg);
       });
@@ -10073,7 +10706,7 @@ ${cardFeedbackBarHtml()}`;
         cell.dataset.off = item.enabled ? "false" : "true";
         const swatch = document.createElement("em");
         swatch.dataset.sourceKey = item.key;
-        if (SOURCE_CARD_INLINE_COLORS[item.key]) swatch.style.background = SOURCE_CARD_INLINE_COLORS[item.key];
+        if (SOURCE_CARD_INLINE_COLORS[item.key] || item.custom) swatch.style.background = SOURCE_CARD_INLINE_COLORS[item.key] || SOURCE_CARD_INLINE_COLORS.web;
         const name = document.createElement("span");
         name.textContent = item.label;
         const value = document.createElement("b");
@@ -10125,6 +10758,8 @@ ${cardFeedbackBarHtml()}`;
       renderShareOverview();
     }
     initSourceCards();
+    initWebRecipeManager();
+    void customSourceManager?.load();
 
     // Login happens outside this page (user signs into a platform in another
     // tab). Runtime events make the normal update immediate; this visible-page
@@ -10133,6 +10768,7 @@ ${cardFeedbackBarHtml()}`;
     setInterval(() => {
       if (document.hidden) return;
       void renderSourcesStatus();
+      void refreshSourceAttention();
     }, 30000);
 
     // LAN password-gate control. The web UI is served from 127.0.0.1, so it is a
@@ -10165,7 +10801,7 @@ ${cardFeedbackBarHtml()}`;
         if (!current) setHint("无法读取后端鉴权状态。");
         else if (!can) setHint(current.env_managed ? "由环境变量管理，请改环境变量并重启后端。" : "仅本机 / 浏览器插件可修改此设置。");
         else if (current.enabled) setHint("已开启：局域网 / 远程设备访问需要登录密码（本机与插件免登录）。");
-        else setHint("已关闭：局域网访问无需密码。");
+        else setHint("已关闭：仅允许本机访问，远程设备需先启用密码。");
       }
       async function load() {
         current = await requestJson("/auth/status");
@@ -10270,6 +10906,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     const LLM_PROVIDER_LABELS = {
+      siliconflow_free: "硅基流动（免费）",
       openai: "OpenAI",
       claude: "Claude",
       gemini: "Gemini",
@@ -10283,6 +10920,7 @@ ${cardFeedbackBarHtml()}`;
       openai_compatible: "OpenAI-compatible"
     };
     const LLM_PROVIDER_DEFAULTS = {
+      siliconflow_free: { model: "Qwen/Qwen3-8B", base_url: "" },
       openai: { model: "gpt-5-nano", base_url: "" },
       claude: { model: "claude-sonnet-4-20250514", base_url: "" },
       gemini: { model: "gemini-2.5-flash", base_url: "" },
@@ -10365,6 +11003,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function llmEndpointSummary(instance) {
+      if (instance.provider_type === "siliconflow_free") return "内置服务 · 无需 Key";
       const raw = String(instance?.base_url || "").trim();
       if (!raw) return "官方默认地址";
       try {
@@ -10492,6 +11131,7 @@ ${cardFeedbackBarHtml()}`;
         return;
       }
       container.innerHTML = entries.map(([instanceId, instance]) => {
+        const fixed = instance.provider_type === "siliconflow_free";
         const references = llmInstanceReferences(instanceId);
         const probe = state.llmProbeResults.get(instanceId);
         const probeText = probe?.pending
@@ -10503,15 +11143,15 @@ ${cardFeedbackBarHtml()}`;
         return `<article class="llm-instance-card" data-enabled="${instance.enabled !== false}" data-instance-card="${escapeHtml(instanceId)}">
           <div class="llm-instance-card-head">
             <div class="llm-instance-card-title"><strong>${escapeHtml(instance.name || instanceId)}</strong><code>${escapeHtml(instanceId)}</code></div>
-            <span class="llm-instance-badge" data-tone="${instance.enabled !== false ? "success" : "muted"}">${instance.enabled !== false ? "已启用" : "已停用"}</span>
+            <span class="llm-instance-badge" data-tone="${instance.enabled !== false ? "success" : "muted"}">${fixed ? "内置 · 只读" : instance.enabled !== false ? "已启用" : "已停用"}</span>
           </div>
           <div class="llm-instance-badges"><span class="llm-instance-badge">${escapeHtml(LLM_PROVIDER_LABELS[instance.provider_type] || instance.provider_type)}</span>${references.map((reference) => `<span class="llm-instance-badge" data-tone="muted">${escapeHtml(reference)}</span>`).join("")}</div>
           <p class="llm-instance-meta"><span>模型：${escapeHtml(instance.model || "未填写")}</span><span>地址：${escapeHtml(llmEndpointSummary(instance))}</span></p>
           <p class="llm-instance-probe" data-tone="${probeTone}" aria-live="polite">${escapeHtml(probeText)}</p>
           <div class="llm-instance-actions">
             <button class="pill-btn" type="button" data-instance-action="probe" data-instance-id="${escapeHtml(instanceId)}">测试</button>
-            <button class="pill-btn" type="button" data-instance-action="edit" data-instance-id="${escapeHtml(instanceId)}">编辑</button>
-            <button class="pill-btn" type="button" data-instance-action="delete" data-instance-id="${escapeHtml(instanceId)}">删除</button>
+            ${fixed ? '<span class="llm-instance-meta">在调用链中选择或切换</span>' : `<button class="pill-btn" type="button" data-instance-action="edit" data-instance-id="${escapeHtml(instanceId)}">编辑</button>
+            <button class="pill-btn" type="button" data-instance-action="delete" data-instance-id="${escapeHtml(instanceId)}">删除</button>`}
           </div>
         </article>`;
       }).join("");
@@ -10613,7 +11253,7 @@ ${cardFeedbackBarHtml()}`;
         name: getInput("llmInstanceName").trim() || current.name || instanceId,
         provider_type: providerType,
         enabled: true,
-        api_key: apiKey,
+        api_key: providerType === "siliconflow_free" ? "" : apiKey,
         model: getInput("llmInstanceModel").trim(),
         base_url: getInput("llmInstanceBaseUrl").trim(),
         auth_mode: providerType === "openai"
@@ -10710,12 +11350,19 @@ ${cardFeedbackBarHtml()}`;
         field.hidden = !visible;
       });
       resetLlmModelDiscovery();
+      window.OpenBiliClawSponsoredSettings.syncInstance({
+        provider: providerType, model: document.getElementById("llmInstanceModel"),
+        key: document.getElementById("llmInstanceApiKey"), base: document.getElementById("llmInstanceBaseUrl"),
+        status: document.getElementById("llmInstanceModelDiscoveryStatus"),
+        prepare: () => requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
+      });
     }
 
     function openLlmInstanceDialog(instanceId = "") {
       if (!state.llmDraft) return;
       const dialog = $("#llmInstanceDialog");
       const instance = instanceId ? state.llmDraft.instances[instanceId] : null;
+      if (instance?.provider_type === "siliconflow_free") return;
       state.llmEditingInstanceId = instanceId;
       llmDialogReturnFocus = document.activeElement;
       dialog.dataset.providerType = instance?.provider_type || "";
@@ -10801,7 +11448,7 @@ ${cardFeedbackBarHtml()}`;
       const effectiveKey = $("#llmInstanceClearApiKey")?.checked
         ? ""
         : typedKey || current.api_key || "";
-      if (enabled && !["ollama", "gemini"].includes(providerType) && !(providerType === "openai" && authMode === "codex_oauth") && !effectiveKey) {
+      if (enabled && !["ollama", "gemini", "siliconflow_free"].includes(providerType) && !(providerType === "openai" && authMode === "codex_oauth") && !effectiveKey) {
         error.textContent = "启用的远端实例需要 API Key。";
         $("#llmInstanceApiKey")?.focus();
         return;
@@ -10814,7 +11461,7 @@ ${cardFeedbackBarHtml()}`;
         name,
         provider_type: providerType,
         enabled,
-        api_key: effectiveKey,
+        api_key: providerType === "siliconflow_free" ? "" : effectiveKey,
         model,
         base_url: baseUrl,
         auth_mode: authMode,
@@ -10830,7 +11477,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function deleteLlmInstance(instanceId) {
-      if (!state.llmDraft?.instances[instanceId]) return;
+      if (!state.llmDraft?.instances[instanceId] || state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") return;
       const references = llmInstanceReferences(instanceId);
       if (references.length) {
         showToast(`无法删除：仍被 ${references.join("、")} 引用`);
@@ -10946,6 +11593,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("shareGitHub", scheduler.pool_source_shares?.github);
       setInput("shareLinuxdo", scheduler.pool_source_shares?.linuxdo);
       setInput("shareV2EX", scheduler.pool_source_shares?.v2ex);
+      setInput("shareWeb", scheduler.pool_source_shares?.web);
       setInput("shareWeibo", scheduler.pool_source_shares?.weibo);
       setInput("shareInstagram", scheduler.pool_source_shares?.instagram);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
@@ -10966,11 +11614,13 @@ ${cardFeedbackBarHtml()}`;
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
       const jevProvider = discovery.jev_provider || {};
-      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"))
+      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"), {
+        probe: config => probeConfigService("jev", config),
+      })
         .load(jevProvider, discovery.jev_evaluation || {});
       const jevStatus = $("#jevEvaluatorStatus");
       if (jevStatus) {
-        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+        jevStatus.textContent = jevProvider.reason || "请在下方配置连接。";
       }
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");
@@ -11041,6 +11691,12 @@ ${cardFeedbackBarHtml()}`;
       }
 
       const llm = config.llm || {};
+      window.OpenBiliClawSponsoredSettings.renderNotice(document.getElementById("llmProviderNotice"), llm.sponsored?.service_status, (notices) => {
+        if (notices.every(item => !item.capabilities?.includes("chat"))) {
+          const field = document.getElementById("embeddingProvider");
+          field.scrollIntoView({ block: "center" }); field.focus();
+        } else openLlmInstanceDialog();
+      });
       setInput("llmConcurrency", llm.concurrency ?? 3);
       setInput("llmTimeout", llm.timeout);
       state.llmDraft = normalizeLlmDraft(llm);
@@ -11056,6 +11712,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("embeddingSimilarity", llm.embedding?.similarity_threshold);
       const embeddingMultimodal = $("#embeddingMultimodalEnabled");
       if (embeddingMultimodal) embeddingMultimodal.checked = llm.embedding?.multimodal_enabled === true;
+      syncEmbeddingFields();
       setSelect("biliAuth", config.bilibili?.auth_method || "cookie");
       setCookieOverrideInput("biliCookie", config.bilibili?.cookie, " B 站");
       setInput("biliBrowserExecutable", config.bilibili?.browser_executable);
@@ -11258,6 +11915,11 @@ ${cardFeedbackBarHtml()}`;
       setInput("v2exDailyLatestBudget", config.sources?.v2ex?.daily_latest_budget);
       setInput("v2exRequestInterval", config.sources?.v2ex?.request_interval_seconds);
       setInput("v2exMinInterval", config.sources?.v2ex?.min_interval_minutes);
+      setSelect("webEnabled", config.sources?.web?.enabled === false ? "off" : "on");
+      setInput("webRequestTimeout", config.sources?.web?.request_timeout_seconds);
+      setInput("webMaxResponseBytes", config.sources?.web?.max_response_bytes);
+      setInput("webMaxRedirects", config.sources?.web?.max_redirects);
+      setInput("webLeaseSeconds", config.sources?.web?.lease_seconds);
       if (!state.initBangumiUsernameTouched) {
         state.initBangumiUsername = config.sources?.bangumi?.username || "";
         // A successful prefill populated the field; a later explicit clear is
@@ -11333,6 +11995,8 @@ ${cardFeedbackBarHtml()}`;
         cover_url: normalizeImageUrl(item.cover_url ?? item.cover ?? item.pic ?? item.thumbnail_url ?? item.thumbnail ?? item.image_url),
         content_url: canonical.content_url,
         source_platform: canonical.source_platform,
+        source_id: String(item?.source_id || ""),
+        source_name: String(item?.source_name || ""),
         chat_turn_id: String(item.chat_turn_id ?? ""),
         chat_reply: String(item.chat_reply ?? item.reply ?? ""),
         chat_draft: String(item.chat_draft ?? ""),
@@ -11368,7 +12032,8 @@ ${cardFeedbackBarHtml()}`;
       text.textContent = bodyText;
       const badge = document.createElement("span");
       badge.className = "platform";
-      badge.textContent = platformName(delight.source_platform);
+      badge.textContent = recommendationSourceName(delight);
+      badge.title = badge.textContent;
       badge.dataset.platform = String(delight.source_platform || "bilibili").toLowerCase();
       thumb.append(text, badge);
     }
@@ -11385,7 +12050,8 @@ ${cardFeedbackBarHtml()}`;
       if (!delight) return;
       const badge = document.createElement("span");
       badge.className = "platform";
-      badge.textContent = platformName(delight.source_platform);
+      badge.textContent = recommendationSourceName(delight);
+      badge.title = badge.textContent;
       badge.dataset.platform = String(delight.source_platform || "bilibili").toLowerCase();
       thumb.append(badge);
     }
@@ -11409,7 +12075,8 @@ ${cardFeedbackBarHtml()}`;
       // 平台徽章不依赖封面 —— 图片正常加载时也始终标明内容来源。
       const badge = document.createElement("span");
       badge.className = "platform";
-      badge.textContent = platformName(delight.source_platform);
+      badge.textContent = recommendationSourceName(delight);
+      badge.title = badge.textContent;
       badge.dataset.platform = String(delight.source_platform || "bilibili").toLowerCase();
       const image = document.createElement("img");
       if (isCrossOriginBase()) image.crossOrigin = "anonymous";
@@ -11921,6 +12588,7 @@ ${cardFeedbackBarHtml()}`;
         // 异常报警实时推送：仅当日志设置面板可见时才刷新，避免无谓请求。
         const loggingPanel = document.querySelector('[data-settings-panel="logging"]');
         if (loggingPanel && !loggingPanel.hidden) void refreshDiagnosticsAlerts();
+        if (event.category === "discovery") void refreshSourceAttention();
       }
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
       if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
@@ -12275,6 +12943,7 @@ ${cardFeedbackBarHtml()}`;
         () => requestJson(ENDPOINTS.notificationPending).then(applyNotificationSnapshot),
         () => requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`).then(applyChatSnapshot),
         () => requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&scope=delight&limit=80`).then(applyDelightChatSnapshot),
+        () => refreshSourceAttention(),
         () => loadConfigSnapshot(),
         () => refreshPlatformAvailability(),
       ];
@@ -12393,6 +13062,17 @@ ${cardFeedbackBarHtml()}`;
       markSettingsDirty();
     });
 
+
+    function syncEmbeddingFields(event) {
+      window.OpenBiliClawSponsoredSettings.syncEmbedding({
+        reset: event?.type === "change",
+        prepare: () => requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 }),
+        provider: document.getElementById("embeddingProvider").value,
+        model: document.getElementById("embeddingModel"), key: document.getElementById("embeddingApiKey"),
+        base: document.getElementById("embeddingBaseUrl"), dimension: document.getElementById("embeddingOutputDimensionality"),
+        multimodal: document.getElementById("embeddingMultimodalEnabled"),
+      });
+    }
     function buildConfigUpdate() {
       const jevUpdate = window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer")).collect();
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
@@ -12406,6 +13086,9 @@ ${cardFeedbackBarHtml()}`;
         similarity_threshold: getFloatInput("embeddingSimilarity", 0.82),
         multimodal_enabled: $("#embeddingMultimodalEnabled")?.checked === true
       };
+      if (embedding.provider === "siliconflow_free") Object.assign(embedding, {
+        model: "BAAI/bge-m3", api_key: "", base_url: "", output_dimensionality: 1024, multimodal_enabled: false,
+      });
       if (getInput("embeddingApiKey")) embedding.api_key = getInput("embeddingApiKey");
       if (getInput("embeddingBaseUrl")) embedding.base_url = getInput("embeddingBaseUrl");
       const cookie = getInput("biliCookie");
@@ -12647,6 +13330,13 @@ ${cardFeedbackBarHtml()}`;
             min_interval_minutes: getIntInput("instagramMinInterval", 10),
             bootstrap_limit: getIntInput("instagramBootstrapLimit", 300),
             ...sourceDateFieldsForUpdate("instagram")
+          },
+          web: {
+            enabled: $("#webEnabled").value === "on",
+            request_timeout_seconds: getIntInput("webRequestTimeout", 15),
+            max_response_bytes: getIntInput("webMaxResponseBytes", 2097152),
+            max_redirects: getIntInput("webMaxRedirects", 5),
+            lease_seconds: getIntInput("webLeaseSeconds", 300)
           }
         },
         scheduler: {
@@ -12679,7 +13369,8 @@ ${cardFeedbackBarHtml()}`;
             linuxdo: getIntInput("shareLinuxdo", 1),
             v2ex: getIntInput("shareV2EX", 1),
             weibo: getIntInput("shareWeibo", 1),
-            instagram: getIntInput("shareInstagram", 1)
+            instagram: getIntInput("shareInstagram", 1),
+            web: getIntInput("shareWeb", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -13037,9 +13728,9 @@ ${cardFeedbackBarHtml()}`;
     async function probeConfigService(kind, config, instanceId = "") {
       return await requestJsonStrict(ENDPOINTS.configProbe, {
         method: "POST",
-        // Backend allows a bounded 120s probe so cold local Ollama models can
-        // finish their startup retry window. The browser must outlive it.
-        timeoutMs: 125000,
+        // Outlive backend budgets: 120s LLM, 180s free embeddings including
+        // local RPM recovery; the combined legacy probe keeps its own bound.
+        timeoutMs: kind === "sponsored" ? 370000 : kind === "embedding" ? 190000 : 125000,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind, instance_id: String(instanceId || ""), config })
       });
@@ -13072,6 +13763,10 @@ ${cardFeedbackBarHtml()}`;
       state.llmProbeResults.set(instanceId, { pending: true });
       renderLlmInstances();
       try {
+        if (state.llmDraft.instances[instanceId].provider_type === "siliconflow_free") {
+          const prepared = await requestJsonStrict("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 });
+          if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+        }
         const result = await probeConfigService("llm_instance", buildConfigUpdate(), instanceId);
         state.llmProbeResults.set(instanceId, result);
       } catch (error) {
@@ -13188,7 +13883,14 @@ ${cardFeedbackBarHtml()}`;
         breaker_open: "熔断触发",
         provider_error: "请求失败",
       };
-      const table = category === "embedding" ? embeddingCodes : llmCodes;
+      const table = category === "discovery" ? {
+        verification_required: "需要安全验证", login_required: "需要登录",
+        source_timeout: "连接超时", source_network_error: "网络异常", source_rate_limited: "网站限流",
+        source_parse_error: "内容解析异常", source_runtime_unavailable: "执行环境不可用",
+        source_access_denied: "访问受限", source_not_found: "地址不存在",
+        source_queue_error: "入队异常", source_fetch_failed: "持续采集失败", source_recovered: "已恢复",
+      }
+        : category === "embedding" ? embeddingCodes : llmCodes;
       return table[code] || code || "未知异常";
     }
 
@@ -13197,12 +13899,17 @@ ${cardFeedbackBarHtml()}`;
       const emptyEl = $("#diagnosticsAlertsEmpty");
       const summaryEl = $("#diagnosticsAlertsSummary");
       if (!listEl || !emptyEl) return;
+      if (payload?.source_history_available === false) {
+        if (summaryEl) summaryEl.textContent = "来源异常记录暂时无法刷新，已显示的记录会保留。";
+        return;
+      }
       const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
       if (summaryEl) {
         const errors = Number(payload?.summary?.errors || 0);
         const warnings = Number(payload?.summary?.warnings || 0);
-        summaryEl.textContent = errors + warnings > 0
-          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告`
+        const recovered = Number(payload?.summary?.recovered || 0);
+        summaryEl.textContent = alerts.length > 0
+          ? `${alerts.length} 条记录 · ${errors} 错误 / ${warnings} 警告 / ${recovered} 恢复`
           : "";
       }
       if (!alerts.length) {
@@ -13214,19 +13921,23 @@ ${cardFeedbackBarHtml()}`;
       emptyEl.hidden = true;
       listEl.hidden = false;
       listEl.innerHTML = alerts.map((alert) => {
-        const severity = alert.severity === "error" ? "error" : "warning";
-        const categoryLabel = alert.category === "embedding" ? "Embedding" : "LLM";
+        const severity = alert.severity === "info" ? "info" : alert.severity === "error" ? "error" : "warning";
+        const categoryLabel = alert.category === "discovery" ? "来源采集" : alert.category === "embedding" ? "Embedding" : "LLM";
         const codeLabel = describeDiagnosticsAlertCode(alert.code, alert.category);
         const count = Number(alert.count || 1);
         const timeLabel = formatDiagnosticsAlertTime(alert.last_seen);
-        const source = String(alert.source || "").trim();
+        const source = String(alert.source_name || alert.source || "").trim();
         return `<li class="diag-alert-item" data-severity="${severity}">`
-          + `<span class="diag-alert-badge">${severity === "error" ? "错误" : "警告"}</span>`
+          + `<span class="diag-alert-badge">${severity === "info" ? "已恢复" : severity === "error" ? "错误" : "警告"}</span>`
           + `<span class="diag-alert-source">${escapeHtml(categoryLabel)}${source ? ` · ${escapeHtml(source)}` : ""}</span>`
           + `<span class="diag-alert-message">${escapeHtml(String(alert.message || ""))}</span>`
           + `<span class="diag-alert-meta">${escapeHtml(codeLabel)}${count > 1 ? ` ×${count}` : ""}${timeLabel ? ` · ${escapeHtml(timeLabel)}` : ""}</span>`
+          + (alert.category === "discovery" && alert.source_id ? `<button class="small-btn" type="button" data-diagnostic-source="${escapeHtml(String(alert.source_id))}">查看来源</button>` : "")
           + "</li>";
       }).join("");
+      listEl.querySelectorAll("[data-diagnostic-source]").forEach((button) => {
+        button.addEventListener("click", () => void openSourceSettings(button.dataset.diagnosticSource));
+      });
     }
 
     async function refreshDiagnosticsAlerts() {
@@ -13420,6 +14131,7 @@ ${cardFeedbackBarHtml()}`;
       returnToMessages();
       renderMessages();
       void refreshProfile().catch(() => {});
+      void refreshSourceAttention();
     });
     safeBind("#activityBtn", "click", () => { closeSideDrawer(); renderActivityHistory(); openPanel("activityDrawer"); });
     safeBind("#activityMoreBtn", "click", () => loadActivityPage());
@@ -13566,6 +14278,11 @@ ${cardFeedbackBarHtml()}`;
       state.agentChat.sidebarOpen = !state.agentChat.sidebarOpen;
       applyAgentChatChrome();
     });
+    safeBind("#chatSideClose", "click", () => {
+      state.agentChat.sidebarOpen = false;
+      applyAgentChatChrome();
+      $("#chatSideToggle")?.focus();
+    });
     safeBind("#chatSkillChip", "click", () => toggleChatSkillPicker());
     safeBind("#chatPersonaChip", "click", () => toggleChatPersonaPicker());
     safeBind("#chatPersonaClose", "click", () => toggleChatPersonaPicker(false, { restoreFocus: true }));
@@ -13652,6 +14369,7 @@ ${cardFeedbackBarHtml()}`;
     safeBind("#cancelLlmInstance", "click", closeLlmInstanceDialog);
     safeBind("[data-close-llm-instance-dialog]", "click", closeLlmInstanceDialog);
     safeBind("#saveLlmInstance", "click", saveLlmInstanceDraft);
+    safeBind("#embeddingProvider", "change", syncEmbeddingFields);
     safeBind("#llmInstanceProviderType", "change", applyLlmProviderDefaults);
     safeBind("#refreshLlmInstanceModels", "click", () => { void discoverLlmInstanceModels(); });
     safeBind("#llmInstanceBaseUrl", "input", resetLlmModelDiscovery);
@@ -13711,7 +14429,7 @@ ${cardFeedbackBarHtml()}`;
       safeBind(`#${id}`, "change", () => renderSourcesStatusRows(state.sourceStatus));
     });
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", tiktok: $("#tiktokEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", github: $("#githubEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on", bangumi: $("#bangumiEnabled").value === "on", linuxdo: $("#linuxdoEnabled").value === "on", v2ex: $("#v2exEnabled").value === "on", weibo: $("#weiboEnabled").value === "on", instagram: $("#instagramEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", tiktok: $("#tiktokEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", github: $("#githubEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on", bangumi: $("#bangumiEnabled").value === "on", linuxdo: $("#linuxdoEnabled").value === "on", v2ex: $("#v2exEnabled").value === "on", weibo: $("#weiboEnabled").value === "on", instagram: $("#instagramEnabled").value === "on", web: $("#webEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
@@ -13726,6 +14444,7 @@ ${cardFeedbackBarHtml()}`;
         if (shares.github !== undefined) setInput("shareGitHub", shares.github);
         if (shares.linuxdo !== undefined) setInput("shareLinuxdo", shares.linuxdo);
         if (shares.v2ex !== undefined) setInput("shareV2EX", shares.v2ex);
+        if (shares.web !== undefined) setInput("shareWeb", shares.web);
         if (shares.weibo !== undefined) setInput("shareWeibo", shares.weibo);
         if (shares.instagram !== undefined) setInput("shareInstagram", shares.instagram);
         renderShareOverview();
@@ -13935,6 +14654,7 @@ ${cardFeedbackBarHtml()}`;
         // Read-only status mirrors (配置状态 / 凭据脱敏预览) are written by the
         // page itself and must never look like a user edit.
         if (
+          el.closest("#webRecipeForm") ||
           el.hasAttribute("readonly") ||
           el.hasAttribute("data-settings-ignore-dirty") ||
           el.classList.contains("source-credential-value")
@@ -14146,5 +14866,7 @@ ${cardFeedbackBarHtml()}`;
     const requestedSettingsPanel = new URLSearchParams(window.location.search).get("settings");
     if (["models", "sources", "scheduler", "advanced", "general", "frontend", "logging"].includes(requestedSettingsPanel)) {
       openSettingsPage(requestedSettingsPanel);
+    } else if (new URLSearchParams(window.location.search).get("chat") === "1") {
+      openChatPage();
     }
     })();

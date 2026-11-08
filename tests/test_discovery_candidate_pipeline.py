@@ -1699,6 +1699,36 @@ async def test_pipeline_accumulates_eval_batch_until_minimum_or_timeout(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("concurrency", [1, 3])
+async def test_explicit_flush_caps_total_claim_despite_daemon_batch_settings(
+    tmp_path: Path,
+    concurrency: int,
+) -> None:
+    db = Database(tmp_path / "flush-budget.db")
+    db.initialize()
+    engine = _BatchRecordingEvalEngine()
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        min_eval_batch_size=30,
+        max_eval_wait_seconds=90,
+        eval_batch_concurrency=concurrency,
+    )
+    pipeline.enqueue_candidates(
+        [
+            DiscoveredContent(content_id=f"flush-{index}", title=f"Article {index}")
+            for index in range(8)
+        ]
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=2, flush=True)
+
+    assert result["evaluated"] == 2
+    assert engine.batch_lengths == [2]
+    assert db.count_discovery_candidates_by_status()["pending_eval"] == 6
+
+
+@pytest.mark.asyncio
 async def test_token_diet_e2e_coalesces_evaluates_caches_and_admits(
     tmp_path: Path,
 ) -> None:

@@ -10,6 +10,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.llm.sponsored_router import complete_project_task
+
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.soul.profile import OnionProfile
@@ -101,7 +103,8 @@ class EventSimulator:
 
         # Fallback: direct LLM call
         messages = build_event_simulation_prompt(persona, event_count)
-        response: LLMResponse = await self._llm.complete(
+        response: LLMResponse = await complete_project_task(
+            self._llm,
             messages,
             temperature=0.8,
             max_tokens=8192,

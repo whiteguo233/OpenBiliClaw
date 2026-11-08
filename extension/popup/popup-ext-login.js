@@ -4,6 +4,7 @@ import {
 } from "./popup-device-auth.js";
 
 const AUTH_ERRORS = {
+  auth_disabled: "请先在后端电脑上启用访问密码，再配置扩展设备密钥",
   invalid_device_key: "设备访问密钥无效或已撤销",
   extension_access_disabled: "后端尚未开启扩展设备访问",
   locked: "尝试次数过多，请稍后重试",
@@ -30,8 +31,11 @@ export function initExtLogin(els = {}, opts = {}) {
       const response = await popupAuthenticatedFetch(`${base}/auth/status`, {}, doFetch);
       if (!response.ok) throw new Error("unreachable");
       const data = await response.json();
-      if (!data.enabled) {
-        setStatus("后端未开启访问控制，无需配对", true);
+      if (data.setup_required) {
+        setStatus(AUTH_ERRORS.auth_disabled, false);
+        showFields(false);
+      } else if (!data.enabled) {
+        setStatus("本机访问无需配对", true);
         showFields(false);
       } else if (data.authenticated) {
         setStatus("设备已配对", true);

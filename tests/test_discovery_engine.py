@@ -1148,6 +1148,23 @@ async def test_evaluate_content_batch_limits_llm_batch_concurrency_to_two_by_def
     assert llm_service.max_active_calls == 2
 
 
+async def test_free_evaluation_splits_long_batch_without_losing_or_reordering_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("openbiliclaw.llm.sponsored_router.sponsored_enabled", lambda: True)
+    service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=service)
+    contents = [
+        DiscoveredContent(bvid=f"BV_FREE_{i}", title=f"候选 {i}", source_strategy="search")
+        for i in range(30)
+    ]
+    scores = await engine.evaluate_content_batch(contents, _build_profile(), batch_size=30)
+    batches = [_batch_prompt_items(text) for text in service.user_inputs]
+    assert max(map(len, batches)) <= 8
+    assert sum(map(len, batches)) == len(contents)
+    assert scores == [0.8] * len(contents)
+
+
 @pytest.mark.asyncio
 async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_llm() -> None:
     llm_service = FakeLLMService(
@@ -4817,9 +4834,9 @@ def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams(
     assert _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT == "sparse-json"
     assert default_engine.evaluation_candidate_transport == "sparse-json"
     assert default_key == sparse_key
-    assert default_key.startswith("content-eval-v6:batch:")
+    assert default_key.startswith("content-eval-v7:batch:")
     assert default_key.endswith(":transport:sparse-json")
-    assert explicit_production_key.startswith("content-eval-v6:batch:")
+    assert explicit_production_key.startswith("content-eval-v7:batch:")
     assert ":transport:" not in explicit_production_key
     assert explicit_production_key != default_key
     assert row_key.endswith(":transport:row-wire-v1")
@@ -4835,8 +4852,8 @@ def test_sparse_evaluation_is_the_v6_cache_default_with_explicit_rollback_seams(
         content(),
         profile_digest="profile",
     )
-    assert single_key.startswith("content-eval-v6:single:")
-    old_batch_key = default_key.replace("content-eval-v6:", "content-eval-v5:", 1)
+    assert single_key.startswith("content-eval-v7:single:")
+    old_batch_key = default_key.replace("content-eval-v7:", "content-eval-v6:", 1)
     default_engine._set_eval_cache_entry(
         old_batch_key,
         (0.9, "old", "old", "deep_focus", ""),
@@ -5158,9 +5175,9 @@ async def test_evaluate_batch_sends_metrics_and_tags() -> None:
     assert item["comment_count"] == 70
     assert item["share_count"] == 60
     assert item["danmaku_count"] == 50
-    assert "reply_count" not in item
-    assert "retweet_count" not in item
-    assert "bookmark_count" not in item
+    assert item["reply_count"] == 40
+    assert item["retweet_count"] == 30
+    assert item["bookmark_count"] == 20
 
 
 @pytest.mark.asyncio

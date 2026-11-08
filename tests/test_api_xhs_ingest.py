@@ -362,6 +362,8 @@ class TestXhsObservedUrls:
                         "url": "https://www.xiaohongshu.com/explore/note-xyz-001",
                         "title": "手冲咖啡入门",
                         "author": "豆子老师",
+                        "description": "保留完整笔记。" * 100,
+                        "tags": ["手冲", "咖啡"],
                         "cover_url": "https://example.com/cover.jpg",
                         "view_count": 1000,
                         "like_count": 100,
@@ -380,10 +382,7 @@ class TestXhsObservedUrls:
         assert body["enqueued"] == 1
 
         row = db.conn.execute(
-            "SELECT source_strategy, source_platform, content_id, content_url, title, up_name, "
-            "view_count, like_count, collect_count, comment_count, published_at, "
-            "published_label "
-            "FROM discovery_candidates WHERE content_id=?",
+            "SELECT * FROM discovery_candidates WHERE content_id=?",
             ("note-xyz-001",),
         ).fetchone()
         assert row is not None, "xhs note was not enqueued"
@@ -395,6 +394,16 @@ class TestXhsObservedUrls:
         assert row["comment_count"] == 80
         assert row["published_at"] == "2026-07-08T06:30:00Z"
         assert row["published_label"] == "3小时前"
+        from openbiliclaw.discovery.candidate_pool import row_to_discovered_content
+        from openbiliclaw.discovery.engine import _batch_evaluation_content_item
+        from openbiliclaw.discovery.eval_payload import build_canonical_evaluation_batch
+
+        restored = row_to_discovered_content(dict(row))
+        wire = build_canonical_evaluation_batch(
+            [_batch_evaluation_content_item(restored, source_context="search")]
+        ).items[0]
+        assert wire["body_text"] == "保留完整笔记。" * 100
+        assert wire["tags"] == ["手冲", "咖啡"]
 
     def test_notes_ingest_drains_through_pipeline_into_content_cache(
         self,

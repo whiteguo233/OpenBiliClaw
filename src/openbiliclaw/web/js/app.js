@@ -9,6 +9,8 @@ import {
   fetchAuthStatus,
   fetchConfig,
   updateConfig,
+  requestJson,
+  probeJevConfig,
 } from "./api.js";
 import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
@@ -144,7 +146,7 @@ function renderStatusBar() {
   bell.type = "button";
   bell.setAttribute("aria-label", "查看消息");
   bell.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`;
-  const unread = state.messages.notifications.length + state.messages.delights.length;
+  const unread = state.messages.notifications.length + state.messages.delights.length + (state.runtimeStatus?.sponsored_status?.notices?.length || 0);
   const badge = document.createElement("span");
   badge.className = "badge-count";
   badge.dataset.count = unread;
@@ -157,7 +159,7 @@ function renderStatusBar() {
   settings.id = "mobile-settings-button";
   settings.className = "badge-btn";
   settings.type = "button";
-  settings.setAttribute("aria-label", "打开保存与候选评估设置");
+  settings.setAttribute("aria-label", "打开内容来源、保存与候选评估设置");
   settings.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5v.2h-4v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1-2.8-2.8.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3v-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1 2.8-2.8.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3h4v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.2v4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg>';
   settings.addEventListener("click", () => { void openMobileSettings(settings); });
   right.appendChild(settings);
@@ -181,12 +183,52 @@ function renderStatusBar() {
   }
 }
 
+let closeMobileSettings = null;
+
+function openMobileSourceLogin(value) {
+  if (!String(value || "").trim()) throw new Error("登录入口暂不可用，请重试。");
+  const backend = new URL("../", window.location.href);
+  const url = new URL(value, backend);
+  if (url.origin !== window.location.origin || url.username || url.password
+    || !["https:", "http:"].includes(url.protocol)) {
+    throw new Error("登录入口无效，请刷新来源列表后重试。");
+  }
+  // Login creation is asynchronous. Same-tab navigation also works when the
+  // mobile browser blocks windows opened after the original tap has finished.
+  const mobilePath = new URL("m/desktop/source-login.html", backend).pathname;
+  const desktopPath = new URL("web/source-login.html", backend).pathname;
+  if (!["/web/source-login.html", "/m/desktop/source-login.html", desktopPath, mobilePath].includes(url.pathname)
+    || !url.searchParams.get("draft_id")) {
+    throw new Error("登录入口无效，请刷新来源列表后重试。");
+  }
+  // The mobile StaticFiles mount already serves this same page under /m/.
+  // Keep the takeover inside the installed PWA's scope.
+  url.pathname = mobilePath;
+  window.location.assign(url.href);
+}
+
+function handleMobileSourceLoginClick(event) {
+  const anchor = event.target?.closest?.("a[href]");
+  if (!anchor || event.defaultPrevented || event.button !== 0
+    || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  let url;
+  try { url = new URL(anchor.href, window.location.origin); } catch { return; }
+  const desktopPath = new URL("../web/source-login.html", window.location.href).pathname;
+  if (url.origin !== window.location.origin || !["/web/source-login.html", desktopPath].includes(url.pathname)
+    || url.username || url.password || !url.searchParams.get("draft_id")) return;
+  event.preventDefault();
+  openMobileSourceLogin(url.href);
+}
+
+// Covers links rendered in chat as well as the source manager's fallback link.
+document.addEventListener("click", handleMobileSourceLoginClick);
+
 async function openMobileSettings(opener) {
-  document.getElementById("mobile-settings-overlay")?.remove();
+  closeMobileSettings?.();
   const overlay = document.createElement("section");
   overlay.id = "mobile-settings-overlay";
   overlay.className = "mobile-settings-overlay";
-  overlay.setAttribute("aria-label", "保存与候选评估设置");
+  overlay.setAttribute("aria-label", "内容来源、保存与候选评估设置");
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.tabIndex = -1;
@@ -194,7 +236,7 @@ async function openMobileSettings(opener) {
   card.className = "mobile-settings-card";
   card.innerHTML = `
     <div class="mobile-settings-head">
-      <div><p class="eyebrow">Settings</p><h2>保存与候选评估</h2></div>
+      <div><p class="eyebrow">Settings</p><h2>设置</h2></div>
       <button class="mobile-settings-close" type="button" aria-label="关闭设置">×</button>
     </div>
     <label class="mobile-settings-field" for="mobile-language">
@@ -205,11 +247,25 @@ async function openMobileSettings(opener) {
         <option value="en">English</option>
       </select>
     </label>
+    <section class="mobile-source-settings" aria-labelledby="mobile-custom-sources-title">
+      <h3 id="mobile-custom-sources-title">自定义来源</h3>
+      <p class="mobile-settings-hint">在聊一聊提供网址或 RSS、Atom、JSON Feed 订阅链接，试跑后确认启用。在这里管理各来源的份额、频率与状态；份额与内置来源平级。</p>
+      <div id="mobile-custom-sources"></div>
+    </section>
+    <section class="mobile-sync-settings" aria-labelledby="mobile-saved-sync-title">
+    <h3 id="mobile-saved-sync-title">保存与同步</h3>
     <label class="mobile-settings-field" for="mobile-saved-auto-sync">
       <input id="mobile-saved-auto-sync" type="checkbox">
       <span>保存时自动同步到对应平台</span>
     </label>
     <p class="mobile-settings-hint">默认关闭。收藏和稍后再看始终先保存在本地；关闭时仍可在列表页手动同步。</p>
+    <label class="mobile-settings-field mobile-settings-provider" for="mobile-llm-instance"><span>默认 LLM 实例</span>
+      <select id="mobile-llm-instance"></select></label>
+    <p id="mobile-llm-model-field" class="mobile-settings-hint">内置模型的配置固定，可通过上方实例选项切换。</p>
+    <div id="mobileLlmProviderNotice" hidden></div>
+    <label class="mobile-settings-field mobile-settings-provider" for="mobile-embedding"><span>Embedding Provider</span>
+      <select id="mobile-embedding"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option><option value="ollama">本地 Ollama（bge-m3）</option><option value="">暂不启用</option></select></label>
+    <p class="mobile-settings-hint">更换默认实例会将默认链设为该实例；模块独立链保留。<a href="../web/?settings=models">管理全部实例与备用链</a></p>
     <label class="mobile-settings-field" for="mobile-eval-scorer">候选评估器</label>
     <select id="mobile-eval-scorer" aria-describedby="mobile-eval-scorer-hint">
       <option value="llm">Agent（默认）</option>
@@ -217,12 +273,17 @@ async function openMobileSettings(opener) {
       <option value="shadow">Shadow（校准观察）</option>
       <option value="learned">Learned（仅相关性，实验性）</option>
     </select>
-    <p class="mobile-settings-hint" id="mobile-eval-scorer-hint">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知，评分未经当前模型质量校准。上下文按保守字节预算拆批，不删除关键画像。Shadow 与 Learned 仍调用 LLM 生成元数据；切换不会重算已有推荐。</p>
+    <p class="mobile-settings-hint" id="mobile-eval-scorer-hint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+    <details class="mobile-settings-hint">
+      <summary>评估模式说明</summary>
+      <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知，评分未经当前模型质量校准。上下文按保守字节预算拆批，不删除关键画像。Shadow 与 Learned 仍调用 LLM 生成元数据；切换不会重算已有推荐。</p>
+    </details>
     <p class="mobile-settings-hint" id="mobile-jev-status" role="status" aria-live="polite"></p>
     <div id="mobileJevConnectionSettings"></div>
     <p class="mobile-settings-status" aria-live="polite"></p>
     <button class="mobile-settings-retry btn btn-outline" type="button" hidden>重试加载</button>
-    <div class="mobile-settings-actions"><button class="mobile-settings-save btn btn-brand" type="button">保存设置</button></div>`;
+    <div class="mobile-settings-actions"><button class="mobile-settings-save btn btn-brand" type="button">保存设置</button></div>
+    </section>`;
   overlay.append(card);
   document.body.append(overlay);
   const close = card.querySelector(".mobile-settings-close");
@@ -230,18 +291,33 @@ async function openMobileSettings(opener) {
   const languageSelect = card.querySelector("#mobile-language");
   const evaluator = card.querySelector("#mobile-eval-scorer");
   const jevStatus = card.querySelector("#mobile-jev-status");
-  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator);
+  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator, {
+    probe: probeJevConfig,
+  });
+  let modelConfig = {};
+  const llmSelect = card.querySelector("#mobile-llm-instance");
+  const embeddingSelect = card.querySelector("#mobile-embedding");
+  const syncModel = () => {
+    const instance = modelConfig.instances?.[llmSelect.value];
+    card.querySelector("#mobile-llm-model-field").hidden = instance?.provider_type !== "siliconflow_free";
+  };
+  llmSelect.addEventListener("change", syncModel);
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
   save.disabled = true;
   toggle.disabled = true;
+  let sourceManager = null;
   evaluator.disabled = true;
   let focusController = null;
   const closeDialog = () => {
+    sourceManager?.destroy();
+    sourceManager = null;
     focusController?.deactivate();
     overlay.remove();
+    if (closeMobileSettings === closeDialog) closeMobileSettings = null;
   };
+  closeMobileSettings = closeDialog;
   focusController = createDialogFocusController({
     dialog: overlay,
     opener,
@@ -249,6 +325,23 @@ async function openMobileSettings(opener) {
   });
   focusController.activate();
   close.addEventListener("click", closeDialog);
+  const sourceRoot = card.querySelector("#mobile-custom-sources");
+  if (globalThis.OpenBiliClawCustomSources?.createManager) {
+    sourceManager = globalThis.OpenBiliClawCustomSources.createManager({
+      root: sourceRoot,
+      request: (path, options = {}) => requestJson(path, { timeoutMs: 30_000, ...options }),
+      baseUrl: window.location.origin,
+      openUrl: openMobileSourceLogin,
+      onChat: () => {
+        closeDialog();
+        navigateToTab("chat");
+      },
+    });
+    void sourceManager.load();
+  } else {
+    sourceRoot.setAttribute("role", "alert");
+    sourceRoot.textContent = "来源管理未能加载，请刷新页面后重试。";
+  }
   let storedValue = false;
   let storedEvaluator = "llm";
   let configLoaded = false;
@@ -262,6 +355,24 @@ async function openMobileSettings(opener) {
     status.textContent = "正在加载设置…";
     try {
       const config = await fetchConfig();
+      modelConfig = config.llm || {};
+      window.OpenBiliClawSponsoredSettings?.renderNotice(card.querySelector("#mobileLlmProviderNotice"), modelConfig.sponsored?.service_status, () => { location.href = new URL("../web/?settings=models", location.href).href; });
+      llmSelect.replaceChildren();
+      for (const [id, instance] of Object.entries(modelConfig.instances || {})) {
+        if (instance.enabled === false) continue;
+        const option = document.createElement("option"); option.value = id;
+        option.textContent = instance.provider_type === "siliconflow_free"
+          ? instance.name || instance.model : `${instance.name || id} · ${instance.model}`;
+        llmSelect.append(option);
+      }
+      llmSelect.value = modelConfig.default_chain?.[0] || "";
+      syncModel();
+      const provider = modelConfig.embedding?.provider || "";
+      if (![...embeddingSelect.options].some(option => option.value === provider)) {
+        const option = document.createElement("option"); option.value = provider;
+        option.textContent = `已配置：${provider}`; embeddingSelect.append(option);
+      }
+      embeddingSelect.value = provider;
       storedValue = config.saved_sync?.auto_sync_enabled === true;
       toggle.checked = storedValue;
       const runtime = globalThis.OpenBiliClawI18n;
@@ -275,7 +386,7 @@ async function openMobileSettings(opener) {
       const visionEnabled = config.discovery?.multimodal_evaluation_enabled === true;
       jevStatus.textContent = visionEnabled
         ? "Jev 仅支持文本。请先在桌面或扩展设置关闭“候选封面参与 LLM 评估”，再刷新此页。"
-        : `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+        : jevProvider.reason || "请在下方配置连接。";
       configLoaded = true;
       save.disabled = false;
       toggle.disabled = false;
@@ -307,6 +418,27 @@ async function openMobileSettings(opener) {
     try {
       const selectedLanguage = languageSelect.value;
       const payload = { ...jevForm.collect(), language: selectedLanguage, saved_sync: { auto_sync_enabled: toggle.checked } };
+      const id = llmSelect.value;
+      const instances = structuredClone(modelConfig.instances || {});
+      const llmChanged = id !== (modelConfig.default_chain?.[0] || "");
+      const provider = embeddingSelect.value;
+      const embeddingChanged = provider !== (modelConfig.embedding?.provider || "");
+      const embedding = provider === (modelConfig.embedding?.provider || "") ? modelConfig.embedding : {
+        provider, model: provider === "siliconflow_free" ? "BAAI/bge-m3" : provider === "ollama" ? "bge-m3" : "",
+        api_key: "", base_url: provider === "ollama" ? "http://127.0.0.1:11434/v1" : "",
+        output_dimensionality: 1024, fallback_enabled: false, fallback_provider: "", multimodal_enabled: false,
+      };
+      if (llmChanged) {
+        payload.llm = { routing_version: 2, instances,
+          default_chain: id === modelConfig.default_chain?.[0] ? modelConfig.default_chain : id ? [id] : [],
+        };
+      }
+      if (embeddingChanged) payload.llm = { ...(payload.llm || {}), embedding };
+      if (((llmChanged && instances[id]?.provider_type === "siliconflow_free")
+        || (embeddingChanged && provider === "siliconflow_free")) && !modelConfig.sponsored?.runtime_available) {
+        const prepared = await requestJson("/config/sponsored/prepare", { method: "POST", timeoutMs: 125000 });
+        if (!prepared?.ok) throw new Error(prepared?.error || "免费组件准备失败");
+      }
       if (evaluator.value !== storedEvaluator) payload.discovery = {...(payload.discovery || {}), eval_scorer: evaluator.value};
       await updateConfig(payload);
       await loadConfig();
@@ -471,7 +603,10 @@ const stream = createStreamClient({
 
 // ── State subscription — re-render shell on relevant changes ─
 subscribe((_state, changed) => {
-  if ("online" in changed || "degraded" in changed || "degradedReason" in changed || "messages" in changed) {
+  if ("runtimeStatus" in changed) {
+    window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("mobileLlmProviderNotice"), _state.runtimeStatus?.sponsored_status);
+  }
+  if ("online" in changed || "degraded" in changed || "degradedReason" in changed || "messages" in changed || "runtimeStatus" in changed) {
     renderStatusBar();
   }
   if ("activeTab" in changed || "pendingConfirmationCount" in changed) {
@@ -575,12 +710,14 @@ async function startApp() {
   navigateToTab(route.id, { libraryTab: route.libraryTab, replaceRoute: route.legacy });
 }
 
-function showLogin() {
+function showLogin(setupRequired = false) {
+  closeMobileSettings?.();
   patchState({ needsLogin: true });
   document.body.classList.add("auth-locked");
   $statusBar.innerHTML = "";
   $tabBar.innerHTML = "";
   renderLoginView($app, {
+    setupRequired,
     // Reload after a successful login instead of re-running startApp() in place:
     // renderLoginView cleared #app (detaching cached view nodes that ensureView
     // would otherwise return stale), and the view modules aren't safe to re-init.
@@ -598,7 +735,7 @@ window.addEventListener("obc:auth-required", () => {
   if (state.needsLogin) return;
   try { stream.disconnect(); } catch { /* ignore */ }
   patchState({ authenticated: false });
-  showLogin();
+  fetchAuthStatus().then((status) => showLogin(Boolean(status.setup_required)));
 });
 
 (async function boot() {
@@ -607,8 +744,8 @@ window.addEventListener("obc:auth-required", () => {
   const enabled = Boolean(status.enabled);
   const authenticated = status.authenticated !== false;
   patchState({ authEnabled: enabled, authenticated });
-  if (enabled && !authenticated) {
-    showLogin();
+  if (!authenticated) {
+    showLogin(Boolean(status.setup_required));
     return;
   }
   startApp();

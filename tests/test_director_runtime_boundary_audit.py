@@ -163,7 +163,7 @@ async def test_profile_topic_ban_during_planning_cannot_commit_old_candidates(
     pending = None
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
             pending = asyncio.create_task(
                 client.post(

@@ -1,5 +1,39 @@
 # 后端 API
 
+小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
+
+
+## 默认远程访问限制（2026-11-06）
+
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| 关闭密码时的私有接口 | 仅 trusted-local 可达；远程 HTTP `401 auth_setup_required`、runtime WebSocket `4401`。不触发模型或业务处理。 |
+| `GET /api/auth/status` | 关闭时增加 `setup_required`；authenticated 仅表示当前调用者是否可信本机。 |
+| 桌面 / 手机登录入口 | 未设置密码显示本机设置指引；重新检查后正常登录。 |
+
+详见 [API Auth](api-auth.md)。
+
+## 硅基流动固定实例（2026-11-07，待随应用发布）
+
+| 已实现能力 | 行为 |
+| --- | --- |
+| 普通 LLM 实例 | Qwen3-8B 与 Qwen3.5-4B 各是一个固定实例，与自有渠道共用实例列表、默认链和模块链；卡片标注只读，只有测试入口，不能编辑、删除、停用或复制。 |
+| 独立 Embedding | 在原 Embedding Provider 下拉选择硅基流动 BGE-M3（1024维）或本地 Ollama；与聊天实例独立，不覆盖另一份隐藏配置。 |
+| 初始化与切换 | 初始化保存普通实例和向量配置；PC / 插件可把另一免费实例加入备用链，手机可选择主实例，完整链编辑通过 PC 设置。选择免费服务不隐式添加付费备用。 |
+| 安装、探测与通知 | 内置实例测试自动准备签名组件，普通实例探测只测该实例，Embedding 单独探测。凭据通知按实际启用能力保留，状态刷新保留恢复按钮和未保存草稿。 |
+
+公开接口：内置实例的 `read_only=true` 由后端计算；`PUT /api/config` 拒绝其任意字段修改及新建副本，整体替换实例列表时保留被省略的内置项；仅改变调用链可生效。`GET/PUT /api/config` 使用 `llm.instances`、`default_chain`、`routes` 与 `embedding`；`POST /api/config/probe-service` 使用 `kind=llm_instance`（带 `instance_id`）或 `kind=embedding`；模型发现返回获批的两个 ID。组件就绪和凭据通知仍通过兼容的 `llm.sponsored` 元信息输出，组件安装沿用 `POST /api/config/sponsored/prepare`，不向页面暴露共享 Key、路径或任意运行命令。
+
+共享前端 `syncInstance()` / `syncEmbedding()` 只控制普通字段；`renderNotice()` / `updateStatus()` 渲染无凭据通知。原 `mount()` 独立方案表单已移除。已有免费开关配置在后端迁移为实例和链。免费实例仅启用文本 / JSON / 工具能力，BGE 不支持图片向量；图片能力是可选能力，不影响初始化。
+
+## 抖音账号导入来源校验（2026-11-06）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/sources/dy/task-result` | ✅ | `bootstrap_profile` 回报非零 `debug.dom_items_harvested`，或携带视频却明确回报 `api_items_harvested=0` 时，在 staging / 事件入库前拒绝，任务记 failed，返回 HTTP 200 `{ok:true,rejected:"untrusted_bootstrap_source"}`。 |
+
+旧客户端可能在身份识别失败后，把同一批推荐卡片重复当作作品、收藏和喜欢。新扩展只返回本人 API 记录；后端额外阻止明确承认 DOM 回退或零 API 的结果。混合 DOM/API 包无法逐项辨别来源，整包拒绝；无 provenance 字段的历史协议保持兼容，因此该检查不等于验证任意客户端主张。既有终态重试仍 ignored，已冻结 final 的崩溃恢复仍使用原 canonical payload，后续回调不能推翻它。有效 API partial 和真实空列表保留原协议。
+
 ## 手机连接地址发现（2026-10-26）
 
 | 已实现能力 / 公开 API | 行为 |
@@ -10,6 +44,30 @@
 | `GET /m/` 手机入口 | 经反代去除部署前缀后仍使用原入口；手机页面从当前 `/m/` 位置解析 API、共享脚本、语言目录、封面与 WebSocket 地址，保留二维码中的协议、端口和路径前缀。无新增接口或配置。 |
 
 端点继续公开、降级模式可用，响应 `Cache-Control: no-store`；应用内节点仅在功能开启且状态为 `ready` 时公布。只返回地址，不返回入网凭据、登录 URL 或会话。新旧前端 / 后端兼容；详见[连接协议](../mobile-connection.md)。
+
+## Jev 草稿完整评估探测（2026-11-06）
+
+| 接口 / 能力 | 状态 | 契约 |
+|---|---|---|
+| `POST /api/config/probe-service`，`kind="jev"` | ✅ | 对当前配置内存副本应用 `config.decision` / `config.discovery.jev_evaluation` 草稿，走真实 native provider 与完整 8 题评估；仅一次 HTTP 尝试，传输最长 15 秒、总计 20 秒 |
+| `api.jev_probe.probe_jev_config(config, update)` | ✅ | 固定合成画像与内容，不读取真实画像、不落候选、不写配置、不热重载；有效完整结果才返回 `ok=true` |
+| 三端草稿状态 | ✅ | 复用配置写鉴权；请求中禁止重复点击，编辑后旧成功状态失效；错误只返回安全原因码，不返回 Token 或远端正文 |
+| `GET /api/runtime-status` → `candidate_eval_invalid_evidence_blocked` | ✅ | 默认 0；统计时效矛盾及 native INVALID 的停放候选，不混入输入超限数；同上下文不重复付费，修正端点或有效上下文后有界恢复 |
+
+本地装不下返回 `input_budget_exhausted` 且不发送请求。测试使用固定模型及双预算，
+不会切换到 LLM；按钮提示可能计费。合成测试成功不代表真实大画像或模型质量均通过。
+后台 Jev 的候选本地打包不再同步占住 API 事件循环；接口、返回格式、请求次数和
+生产评估预算不变，取消等待不会继续派发模型请求。
+
+## Jev 预算停放诊断（2026-10-27）
+
+| 接口 / 字段 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/runtime-status` → `candidate_eval_input_budget_blocked` | ✅ | 新增整数，默认 0；表示持久化的输入预算停放数，读取不触发模型请求 |
+| `candidate_eval_last_error` | ✅ | 沿用已有字段，预算停放提供 `input_budget_exhausted` 原因及扩大容量/减少必需输入建议；不暴露画像、正文或 Token |
+
+现有 `PUT /api/config` / apply-status 仍是三端共用配置入口；保存不同容量后下一次有效唤醒重新检查停放项，
+保存相同设置不会重复付费评估。未新增配置字段、CLI 命令、安装依赖或付费探测开关。
 
 ## 抖音发现冷却与失败回传（issue #332）
 
@@ -40,7 +98,7 @@
 | `GET /web`、`/web/`、`/web/index.html` | ✅ | 返回同一份 `no-store` 页面，将 12 个依赖脚本按原顺序替换为一次带内容版本的请求；主题和其他内联启动代码保持原位。 |
 | `GET /web/assets/desktop-bundle.js?v=<version>` | ✅ | 只拼接固定包内清单，不接受用户文件路径。应用内保留最近两个构建版本；命中版本返回对应的原始或预压缩 gzip 内容、表示相关的 ETag、`Vary: Accept-Encoding` 与一年 immutable 缓存。未知或已淘汰版本返回 `404 no-store`，不把新内容放进旧 URL。无版本请求使用 `no-cache`；不接受任何可用编码时返回 406。 |
 
-`api.desktop_assets.DesktopAssets` 检查 HTML、全部 13 个脚本和 3 个样式表的文件签名，输入变化才重建内容摘要及 gzip；构建由锁合并，压缩在同步路由工作线程执行。简体、聊天、扫码、收藏同步等代码仍使用相同的独立源码；`/shared/*` 与原桌面脚本路径继续服务移动端、插件及开发工具。`gzip;q=0` 被正确保留，外层压缩中间件不会再次压缩已协商内容。静态脚本仍公开，业务 API 的密码门禁不变。无需 Node 构建、额外依赖或配置，安装包仍使用原包内资源。
+`api.desktop_assets.DesktopAssets` 检查 HTML、全部 15 个脚本和 5 个样式表的文件签名，输入变化才重建内容摘要及 gzip；构建由锁合并，压缩在同步路由工作线程执行。简体、聊天、来源管理、扫码、收藏同步等代码仍使用相同的独立源码；来源管理脚本与样式均参与版本失效，`/shared/*` 与原桌面脚本路径继续服务移动端、插件及开发工具。`gzip;q=0` 被正确保留，外层压缩中间件不会再次压缩已协商内容。静态脚本仍公开，业务 API 的密码门禁不变。无需 Node 构建、额外依赖或配置，安装包仍使用原包内资源。
 
 ## 首屏健康查询不阻塞请求（2026-10-23）
 
@@ -73,6 +131,9 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
 完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
 改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+自动预算现在使用容量整数作为字节上限（标准 64,000/32,000 bytes），不再额外扣 25%；
+`JevEvaluationConfigOut.max_candidates_per_request` 默认 64，实际合批取决于双容量。
+三端读取同一合同并保留旧手动小上限，readiness 仍只说明配置就绪，不等于已联网测试。
 
 `PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
 （完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、
@@ -87,6 +148,13 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 `reveal_keys=true`）、校验失败和 CLI 都不回显 Token。保存值优先于环境变量；仅本机
 TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
 202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
+
+`decision.providers.jev.base_url` 是设置更新的可选输入别名，与 `endpoint_url` 互斥；
+解析为完整原生 endpoint 后持久化，读取仍返回 `endpoint_url`。服务根或代理前缀追加
+`/v1/systemone`，已有 `/v1` 只补 `/systemone`。完整 endpoint 不允许误填进 Base 模式；
+自定义原生路径走 `endpoint_url`。相同解析目标可沿用 Token，新目标必须同时提供新 Token。
+只读 `discovery.jev_provider.base_url_supported=true` 声明此写入能力；旧后端未声明时
+共享表单保留完整地址模式，不发送可能被旧后端忽略的 Base 字段。协议、HTTPS 和凭据规则不变。
 
 ## 概述
 
@@ -233,6 +301,8 @@ guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST 
 
 ## GitHub 配置、初始化与推荐 DTO
 
+已实现修复（2026-11-05）：`POST /api/init` 的 GitHub 来源选择一直传递到正式补池入口；公开 Star 画像生成后，使用 GitHub producer、同步评估及推荐文案，不落入 B站旧发现计划。接口字段不变。
+
 `GET /api/config` 的 `sources.github` 返回启用状态、公开用户名、固定
 `token_env="OPENBILICLAW_GITHUB_TOKEN"`、三种 discovery mode、预算 / 节流和 bootstrap
 上限；秘密只用 `access_token_set` 表示是否存在，`access_token` 永不回显。`PUT /api/config`
@@ -276,6 +346,155 @@ V2EX 任务桥提供 `POST /api/sources/v2ex/login-state`、`GET|POST /identity`
 result，再经过后端身份门禁转换统一事件和账号分区 Node affinity。PAT verified、浏览器 observed、
 配置 / accepted 证据不一致时账号投影暂停但公开 discovery 不停。端点不接收或保存 Cookie 值、
 页面 HTML、私信或 CSRF 字段。
+
+## 动态网站来源
+
+动态来源使用独立的 `/api/custom-sources` 命名空间。一个网站有稳定 `source_id`、
+独立占比与间隔，可持有多个发现 workflow；推荐 DTO 添加 `source_id/source_name`，
+惊喜单条、批量、手动推送和后台推送同样保留这两个字段，缺失时为兼容的空字符串；
+内容平台仍为 `source_platform="web"`。三端显示网站名，各站点与内置平台平级分配候选池。
+`/api/config` 的 `sources.web` 与其他来源一样往返并校验 `recommendation_date_preset/start/end/weight`，默认 `all`；日期策略按 Web 族统一准入，并非动态实例各自编辑。
+旧 `/api/sources` typed HTTP recipe 的兼容边界见下一节。
+
+| 方法与路径 | 契约 |
+|---|---|
+| `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；Ego 返回 `id,installed,available,platform_supported,connection_state,setup_state,phase,managed,detail,network_guarantee,dns_pinned`；纯只读状态检查不安装、不启动应用或首次设置，已安装不等于原生握手成功 |
+| `POST /api/custom-sources/executors/ego/prepare` | 显式准备或重试托管 Ego；HTTP `202` 返回准备状态，同一 worker 复用正在执行的任务，跨进程由管理器锁协调；外部宿主或不支持的系统返回 `409`；成功准备不等于网站试跑成功 |
+| `POST /api/custom-sources/executors/playwright/install` | 历史 Playwright 流程的显式维护入口，新来源 UI 不调用；接受后 HTTP `202`、`{status:"installing"}`，旧执行器状态通过 `installing/ready/failed` 表达 |
+| `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
+| `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
+| `GET /api/custom-sources/attention` | 只读返回 `{items}`；每项 `id,source_id,draft_id,name,code,title,message,action,action_label`。`action=source_login/draft_login/source_settings`；普通故障含 failure_count/next_retry_at。展示启用来源的暂停任务或连续失败达到 3 次的任务及未发布待登录草稿，同来源恢复草稿不重复。无需启动 Ego，可在重启后从数据库恢复 |
+| `GET /api/custom-sources/{source_id}/runs` | `{items}`；摘要包括 `run_id,workflow_id,version,executor,status,started_at,completed_at,discovered_count,enqueued_count,error` |
+| `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,workflow_id?,separate_source?,session_id?}`；新来源 executor 为 `auto/http/ego`，普通网页使用 Ego，明确解析为 Feed 才自动选 HTTP；更新旧流程时 auto 保留原执行器；创建待试跑草稿，尚不启用定期发现 |
+| `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
+| `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
+| `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管；同一来源已有活跃的已批准流程登录窗口时复用其草稿，返回 `draft_id,takeover_url,…` |
+| `POST /api/custom-sources/drafts/{draft_id}/takeover` | 打开或刷新人工会话；返回的 `suggested_login_origins` 是当前有界授权选项，明确验证页可包含被拒 iframe 域。可提交其中一个 `login_origin` 显式授权；普通广告、静态资源与未观察域不自动取得权限 |
+| `POST /api/custom-sources/drafts/{draft_id}/action` | 人工点击／输入／按键后刷新同一授权选项；输入不写入草稿、不进入模型。空的 `suggested_login_origins` 应清除客户端旧按钮，不能回退到旧诊断列表 |
+| `GET /api/custom-sources/drafts/{draft_id}/screenshot` | 返回实际 PNG、`Cache-Control: no-store`；Ego 先恢复人工会话的最小化窗口并等待完成。已知浏览器执行异常返回 409 和安全原因，保留同一会话供重试，不再成为未处理的 500 |
+| `POST /api/custom-sources/drafts/{draft_id}/close` | 幂等释放人工登录窗口，返回 `{ok:true}`；保留网站凭据，不试跑、不发布、不改变来源启用状态；原生页面退出时调用，异常断连由 15 分钟会话超时兜底 |
+
+草稿公开响应含 `draft_id,status,source_id?,name,intent,executor,sample_items,detail`，
+更新草稿另含 `workflow_id,base_version,requires_activation`；同时传 `source_id+workflow_id` 才更新既有流程，
+服务端校验归属、读取当前版本，拒绝未知/跨来源流程及 `separate_source=true`。
+`base_version/requires_activation` 是只读响应字段，客户端不能指定。只传 `source_id` 仍为追加流程。
+成功试跑后调用 activate 才以版本 CAS 替换流程；保留 seen 与运行历史，清除旧租约/错误/检查点。
+审批后版本若已变化则拒绝执行，需重新准备；已发布草稿重复执行保持幂等。
+登录 `/drafts/{draft_id}/resume` 会恢复试跑；更新草稿即使返回 ready 也不自动发布，
+仍须调用 activate 确认替换，原有已批准流程的重新登录恢复保留自动发布行为。
+草稿和每个 workflow 摘要另含从存储计划推导的 `kind,request_origins,content_origins`；
+`kind` 为 `feed/sitemap/listing/browser`，未编译草稿为空字符串，旧行无需迁移。
+请求域是网络权限，Feed 的文章域仅为链接接收范围。
+按草稿状态可另含 `entry_url,takeover_url,query_mode,trial_success`，不回传内部 workflow 或会话凭据。
+`status` 为 `ready/needs_login/needs_details/failed`。`health` 提供
+`status,last_error,last_success_at,next_run_at,attention_required,attention_count,attention_code,attention_action,message`；需要提醒时另含 title/action_label/failure_count/next_retry_at。前两次普通失败已有安全 message，尚不进入当前提醒。
+暂停流程不计入 `next_run_at`，没有可调度流程时为 0。草稿可带 `attention_code`，
+区别 `verification_required/login_required`；提醒不包含原始错误或凭据。workflow 摘要提供
+`workflow_id,version,executor,status,intent`；UI 根据实际健康与运行证据显示结果，
+不会把「已创建草稿」当成已启用或成功发现。
+
+聊天工具 `prepare_discovery_source/trial_discovery_source` 为 `soft_write`；
+`activate_discovery_source/manage_discovery_source` 为 `hard_write`，由聊天确认卡批准后调用。
+Ego 草稿观察可将 `intent` 中明确的空值链接模板转成有界 `requested_link_patterns`，
+链接的 `href_query_checks` 仅返回路径／参数存在及原属性分隔符布尔证据；查询值和其他
+参数名仍脱敏。该内部观察不增加 HTTP 请求字段或授权范围。托管原生连接或初始只读导航命令超时
+清理后自动重试一次，原任务身份及总预算保留；取消、外部宿主和身份错误不重试。
+
+来源列表 GET 的同步运行环境检查由 FastAPI worker 线程承载；响应字段不变，
+旧浏览器环境检查或进程查询变慢时，不再占住处理 Ego 授权和原生命令回包的事件循环。
+Ego 编制向模型提供 120 秒总预算默认建议（明确用户限制优先），单次入口观察上限
+为 120 秒；实际试跑和调度仍执行保存计划中的预算，已有 45 秒计划不会被静默加长。
+`POST /drafts` 的 `separate_source=true` 为没有显式来源／会话引用的新来源生成独立
+session ID，避免继承同站旧来源丢失、被接管或占用的 task space。追加来源／更新流程
+继续复用当前会话，显式传入的旧会话仍须属于同站。Ego profile 与 Cookie 共享规则不变。
+已知模型提供者执行失败按工作流失败处理，草稿保留为 `failed`、`trial_success=false`，
+提供可重试的模型错误说明；不会因此激活来源或返回未处理的 HTTP 500。
+
+设置页的保存、启停和「准备 Ego Lite」按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
+归档在界面确认后发送 DELETE。工具职责见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
+
+实际 CLI `start` / `serve-api` 与桌面首次启动使用
+`create_app(prepare_ego_on_startup=True)`，在 router startup 中为尚未准备完成的 macOS
+托管环境安排一次后台准备，不等待聊天，也不阻塞 HTTP/UI 就绪。该参数默认
+为 `False`，嵌入、自检或仅构建应用不安装；worker 子进程不启用。桌面入口先完成
+迁移、单实例检查与最终配置重读，准备器使用实际数据库父目录。
+上述 API、桌面和 CLI 服务启动检查在 `ready` 且 `installed=true` 时跳过，
+即使宿主 offline 也不会重下或启动；
+已有 preparing 不重复排队。单次准备内有界恢复暂时失败；最终失败后不无限排队，下次实际服务启动会再尝试；
+退出时取消并等待本进程拥有的准备任务。设置按钮与 CLI 保留显式重试入口。
+
+源码本机安装在依赖完成后、`--skip-start` 返回前使用安装环境准备 macOS Ego；
+重跑安装仍执行显式 `sources prepare-ego` 和握手验证，必要时启动离线宿主，不适用上述服务启动跳过规则。
+普通网页的聊天工具、CLI 和 `POST /drafts` 仍共用 `WorkflowService.prepare` 补救未完成
+的环境；安装与初始化发生在页面观察的 60 秒预算之外。已准备宿主离线时，实际打开
+会话才按需启动。HTTP Feed 不依赖这条准备路径；准备失败或环境不支持时返回真实原因，
+不改用 Playwright。
+
+共享设置组件展示部署准备状态；「准备 Ego Lite」用于显式准备或失败后重试。
+`setup_state` 为 `idle/preparing/ready/failed/unsupported`，`phase` 标明
+`download/verify/install/onboarding/restart/handshake/ready` 等阶段。仅准备进行中且组件
+可见时每 3 秒轮询 GET，停止显示或销毁后停止轮询；刷新不覆盖来源卡片未保存的输入。
+API 退出会取消本 worker 的准备任务；进程意外退出留下的无锁 preparing 状态被只读检查
+呈现为 failed，可重新准备。`ready` 表示初始化已完成，仍可能因宿主退出而
+`available=false`；下次实际工作再启动，GET 本身没有启动副作用。
+
+`connection_state=unverified` 表示尚需实际连接验证，聊天新增入口仍可使用。
+任一 `OPENBILICLAW_EGO_BROWSER`、`OPENBILICLAW_EGO_SERVER_NAME`、`OPENBILICLAW_EGO_PROFILE` 非空配置切换为外部宿主，
+`managed=false`，不显示托管准备按钮，也不自动改动该宿主。列表始终保留执行器的
+installed/available/platform_supported 事实；仅托管 preparing/failed/unsupported 的
+准备详情覆盖 detail，外部连接详情保持原样。HTTP Feed 不依赖 Ego。
+
+登录交互使用后端页面 `/web/source-login.html?draft_id=…`。三端来源管理只接受同后端
+origin、该路径并带 draft ID 的跳转地址。用户在接管页面登录并继续，不向聊天或来源
+配置粘贴 Cookie/密码。执行器能力由 `executors` 的 available/detail 表达；Ego 所需的
+宿主应用不能从安装 Skill 或从 CLI 可调用这一点推断为 Linux/Docker 原生可用。
+
+## 旧版公开 Web recipe 与来源状态
+
+通用 Web 是匿名、discovery-only 的 recipe 来源。只读 probe 可以从用户粘贴的公开 URL 生成
+待检查的 `feed / sitemap / listing` 草稿；正式端点仍只管理用户显式确认保存的计划。它不会把
+任意 URL 自动变成 crawl，也不会接受 Cookie、token、登录心跳或 JavaScript 执行配置。字段、
+安全传输和 parser 契约见
+[Web 来源文档](web.md)。
+
+| 方法与路径 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/sources` | ✅ | 列出 recipe；Web 行附只读 `runtime` 摘要，但不返回 ETag、Last-Modified、cursor 或 lease token |
+| `POST /api/sources/web/probe` | ✅ 只读 | body 只接受 `{url}`；按 exact origin、robots、公共 DNS/socket pin 与共享 deadline 有界识别直接 Feed/Sitemap、HTML alternate、`/sitemap.xml` 和保守静态列表，返回 `ready/no_match`、样例与 compiler-ready 草稿；不写 recipe/state/seen/candidate。guided init 与 LLM degraded recovery 中仍可使用，非法 URL/未知字段为 422 |
+| `POST /api/sources` | ✅ | `source_type="web"` 时用 typed compiler 校验可编辑字段、入口 URL、exact-origin allowlist、预算和 listing selector；未知字段及 server-owned 字段返回 422 |
+| `PUT /api/sources/{recipe_id}` | ✅ | 部分更新可编辑顶层字段；一旦携带 `config` 就必须提交可独立编译的完整 config，不支持 nested patch。执行计划 fingerprint 改变时清理该 recipe 的旧 checkpoint 与 seen，名称、cadence、权重或开关变化不伪装成计划变化 |
+| `DELETE /api/sources/{recipe_id}` | ✅ | 删除用户 recipe，并清理对应 Web state / seen；system recipe 仍不可删 |
+| `GET /api/sources/status` | ✅ | 纯本地聚合全局 Web 开关、enabled recipe 数与已观察运行健康；无 recipe 或从未成功运行时为 `discovery_state="unverified"`，不会假报 ready，也不因轮询出网 |
+| `GET /api/sources/credentials` | ✅ | Web 返回 `form.kind="none"`，明确没有凭据输入面 |
+| `POST /api/sources/web/verify` | ✅ | 固定为 `verify_method="none"`；不会借显式验证动作访问用户 recipe |
+| `POST /api/sources/web/credential` | ✅ 拒绝 | Web 不支持任何 credential kind，拒绝 Cookie、token 与 login state 写入 |
+
+`POST /api/sources/web/probe` 的候选按 `feed → sitemap → deterministic listing` 能力顺序发现；
+HTML 页面里的同源 `rel="alternate"` 是 feed 分支，`/sitemap.xml` 是 sitemap 分支。响应中的
+`recipe` 已通过当前 compiler，但仍只是客户端可检查的草稿。`ready` 不代表已创建来源，
+`no_match` 也不代表可放宽到浏览器或登录态；只有后续独立的 `POST /api/sources` 才会写入。
+该端点被精确加入 guided init 与 LLM degraded recovery 的只读 allowlist，不会因此放开其它
+recipe CRUD。
+
+请求模型只有一个去除首尾空白后的严格字符串 `url`（长度 `1..4096`），未知字段、private-IP
+literal、userinfo、非默认端口、专属平台 URL 或其它 compiler 拒绝的目标返回 422。成功响应固定为：
+
+- 顶层 `status=ready|no_match`、安全截断的 `detail`、`requested_url`、`final_url`、
+  `page_title` 与 `candidates[]`；
+- 每个 candidate 含 `strategy=feed|sitemap|listing`、`entry_url`、
+  `discovery_method=direct|html_alternate|well_known|html_structure`、
+  `confidence=high|medium`、`detail`、最多 3 条
+  `sample_items[{title,content_url,author_name,published_at}]` 与 `recipe`；
+- `recipe` 只含可编辑的 `name / strategy / config / target_share / enabled`，默认
+  `target_share=4`、`enabled=true`；最小 `config` 至少含 `entry_url`，listing 草稿另含受限 selector。
+
+安全取数失败、登录墙、challenge 或没有识别到结构都会收敛为 HTTP 200 + `no_match`，不会回传
+上游 body 或 DNS 诊断。进程内最多同时执行 2 个 probe；无排队槽时返回 429
+`web_probe_busy` 与 `Retry-After: 1`，不会建立无界内存等待队列。
+
+legacy `state="no_auth"` / `logged_in=true` 只表示无需凭据；取数是否可用必须读独立
+`discovery_state`。聚合结果可为 `disabled / unverified / partial / rate_limited / error / ready`；
+只有所有 enabled recipe 都已有完整 `ok / empty / not_modified` 成功证据时才可进入 ready。
 
 ## V2EX 浏览器任务桥
 
@@ -408,13 +627,34 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 
 抓取继续复用统一 SSRF 边界：域名白名单、每次 redirect 重验、`image/*`、10MB 上限，以及国内 CDN 直连 / 境外 CDN 继承代理。微博封面只允许域名边界匹配的 `sinaimg.cn` / `*.sinaimg.cn`，并归入国内直连；形如 `evilsinaimg.cn` 的后缀伪装仍被拒绝。真实新浪图床在共享浏览器 UA 下要求防盗链头，因此当前 redirect 目标属于 `sinaimg.cn` 时附 `Referer: https://weibo.com/`，跳到其它白名单 CDN 后立即移除。磁盘写入使用同目录临时文件 `flush + fsync + os.replace`，失败只保留旧文件或无文件，不暴露半写结果。日志只记录 host、cache hash 前缀和错误类别，不记录签名路径/query；`GET /api/runtime-status` 公开 `image_fetch_active/waiting/inflight_keys` 与 `upstream_started/singleflight_joins/peak_active/peak_background`，这些字段只含整数，不含 URL 或 token。协调器不随 `RuntimeContext` 热重载替换；新 controller 在后台任务恢复前重绑同一实例，shutdown 先停 refresh producer 再取消协调器持有的 active/queued upstream task。
 
-## 异常报警（LLM / Embedding 请求失败）
+## 异常报警与恢复历史
 
-| 方法与路径 | 状态 | 契约 |
-|---|---|---|
-| `GET /api/diagnostics/alerts?since_id=&limit=` | ✅ | 只读返回进程内异常报警环形缓冲的快照：`{"alerts":[...],"summary":{"total","errors","warnings"},"generated_at"}`。每条 alert 含 `id`（单调递增）、`category`（`llm\|embedding`）、`code`（LLM：`rate_limited/auth_failed/timeout/bad_response/provider_error/all_providers_failed`；embedding：`provider_error/breaker_open`）、`severity`（`warning\|error`）、`source`（实例名或 provider/model 标签）、`message`、`first_seen/last_seen`（epoch 秒）与 `count`（合并计数）。列表按最新在前排序；`since_id` 只返回更新行（供客户端增量拉取），`limit` 服务端上限 500。数据源是顶层模块 `openbiliclaw.diagnostics_alerts` 的进程内有界缓冲：同类别/来源/错误码在 60 秒窗口内合并为一条并累加 `count`，上限 100 条；`record()` 永不抛错、不阻塞 LLM/embedding 热路径，缓冲随进程重启清空、不落盘。 |
+| 方法与路径 | 契约 |
+| --- | --- |
+| `GET /api/diagnostics/alerts?since_id=&source_since_id=&limit=` | 合并 LLM／Embedding 进程内报警和来源持久历史，返回 `{alerts,summary,source_cursor,generated_at}`，最新在前，limit 最大 500；summary 含 total/errors/warnings/recovered |
 
-新告警在记录的同时经 event hub 以 `{"type":"diagnostics.alert",...alert 字段}` 发布到 `/api/runtime-stream`，桌面 Web 与插件设置页在日志面板可见时无需轮询即可实时刷新；拉取失败时两端都保持现状静默重试，不打扰用户。展示面为桌面 Web 与扩展 popup 两端：移动 Web 没有日志/设置面，CLI 没有运行时 feed 展示命令，均明确不在范围。
+共同字段为 `id,category,code,severity,source,message,first_seen,last_seen,count`。
+来源事件另含 `source_id,source_name,workflow_id,failure_count,source_event_id`；其 id 为
+`source:<递增数字>`，severity 为 warning 或恢复时的 info。`source_since_id` 只过滤来源历史，
+下一次传回 `source_cursor`；既有数值 `since_id` 继续只过滤内存缓冲，不混用两个游标。
+
+普通来源连续 3 次失败触发一个故障事件，登录／验证立即触发；同一故障期间的自动重试不刷屏。
+成功完成采集（包括合法 empty/not_modified）或试采成功后发布版本，会写 source_recovered。
+来源原因含 verification_required、login_required、source_timeout、source_network_error、
+source_rate_limited、source_parse_error、source_runtime_unavailable、source_access_denied、
+source_not_found、source_queue_error、source_fetch_failed；仅使用固定文案，不返回原始错误内容。
+多个 workflow 各自恢复，当前提醒由 attention 接口按来源合并，不能用某条恢复历史推断整站健康。
+
+`WorkflowStore` 在完成租约事务内保存 `custom_source_alert_events`，最多保留最近 500 条；
+来源归档和服务重启不会清空历史。API 启动一个每 2 秒读取已提交转移的任务，经既有
+`diagnostics.alert` 推到 `/api/runtime-stream`，重复启动幂等，退出取消；启动时不重放旧历史。
+因此独立采集 worker 也能进入事件流。LLM／Embedding 仍用原进程内 100 条缓冲、60 秒合并窗口，
+不落盘、不改变热路径和故障切换。
+
+Web／扩展沿用「设置 → 日志 → 异常报警」；原生 App 使用「设置 → 异常记录」及来源页历史入口。
+原生历史页前台每 15 秒刷新，打开对应来源或进入后台暂停；当前提醒前台每 30 秒及打开消息时同步。
+数据库暂不可读时响应 `source_history_available=false`，客户端保留原历史并显示刷新失败；
+这不是空历史。历史读取不启动浏览器，不新增系统推送或邮件。
 
 ## 降级配置恢复
 
@@ -517,6 +757,18 @@ durable reply 的可见终态使用 `WHERE status='pending'` compare-and-swap：
 
 popup、移动 Web 与桌面 Web 只有 durable 对话中的假设卡片保留 confirm/reject/discuss/defer 主动动作，并共享上述按需轮询 helper；同步 `200` 不启动额外轮询。三端画像/认知更新区均只读。`openbiliclaw questions` 也只发 GET 并展示列表。`POST /api/insights/feedback` 仍为旧客户端保留并转发共同队列，但新客户端不再调用它；因此“对话是唯一主动 UI 确认入口”与 legacy 兼容同时成立。
 
+带 `turn_id` 的 `POST /api/chat/agent/stream` 与 durable worker 在同一执行 lease
+内复查终态并完成落库。客户端 GET 轮询触发 worker 与 SSE 同时到达时，只执行
+一轮模型和工具；等待者及完成后的重试回放已存 `agent_events`（包括审批结局）和
+`done`，失败回合回放 `error`。没有 `turn_id` 的临时对话仍是每次独立执行。
+批准/拒绝可以先于最终回复完成；保存整轮事件时会保留并去重此前落库的
+`approval_result`，使完成后的历史与重连保持执行结局。
+
+失败结算也在同一 lease 内完成，避免排队 worker 在失败尚未落盘时重复启动工具。
+首个模型输出或工具事件会持久标记已开始；中断后的恢复只报告失败，不重放这轮执行。
+只有无输出、无工具动作的免费实例瞬时错误允许最多两次持久重试，重试判定与失败写入
+只执行一次；已取得 lease 的失败和尚未准入的等待超时分别处理。
+
 ## Runtime stream 保活与重连
 
 `GET ws://.../api/runtime-stream` 在 20 秒没有业务事件时发送 `{"type":"runtime.heartbeat","sent_at":"..."}`。心跳与普通事件共用唯一 writer，避免并发 `send_json`；鉴权撤销仍在每次发送前和 15 秒 watchdog 中 fail closed。桌面 Web 收到心跳即确认“实时连接正常”，异常 close 则显示“实时流重连中”、记录 close code/reason，并按 3 秒节奏重连；页面进入后台时仍按 visibility 生命周期主动关闭，不把该主动关闭显示成后端离线。
@@ -554,6 +806,14 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 ### 活动动态的交互隔离（2026-09-07）
 
 已实现：`GET /api/activity-feed` 的 runtime、认知和数据库聚合在工作线程完成，异步锁串行进入既有 TTL 缓存，避免并发重复扫描真实候选历史阻塞主 HTTP 事件循环。公开响应结构不变。真实验收见 [报告](../verification/2026-09-07-recommendation-live.md)。
+
+### 对话 Web 来源入口
+
+`POST /api/chat/agent/stream` 在默认口味伙伴与系统管家中暴露只读 `probe_web_source`，返回一个候选、可选策略、最多两个样例与完整 `create_source_arguments`。`create_source(source_type="web", ...)` 继续使用已有 hard-write 审批端点和三端审批卡；只有批准后才经同一 typed compiler 保存到 `/api/sources` 列表。探测与拒绝审批不写 recipe。独立 `/api/sources/web/probe` 的多候选响应契约保持不变。
+
+### Web 来源份额建议
+
+`GET /api/config/source-share-suggestion` 与 `POST /api/config/source-share-suggestion` 都按当前数据库中的 enabled Web recipe 计算有效来源；新增或停用最后一个 Web recipe 后，下一次建议立即变化。POST 仍结合尚未保存的表单来源开关，Web 总开关和有效 recipe 必须同时满足；不把只有全局开关的全新安装计为已有 Web 供给。
 
 ### Agent 网页工具与聊天笔记
 
@@ -595,7 +855,58 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
   落盘前规范化；未知值返回 `400 unsupported_language` 并列出支持值。
 - `GET /api/config` 的 `language` 始终返回规范 id（`zh-Hans` / `zh-Hant` / `en`）。
 
+## 动态来源预算与安装恢复（2026-10-23）
+
+已实现：草稿的公开 presentation 增加 `max_items/max_pages`，来自真实编译计划，
+尚无可执行计划时为 0；启用确认摘要展示该预算。HTTP 草稿输入不增加
+`request_limits` 字段，此参数仅由聊天 dispatch 的用户原话约束提供。
+`scope_limits` 随草稿和发布工作流持久化，更新／修复继承它。
+
+部署准备的一次调用内会有限恢复下载、幂等系统命令和宿主初始化超时；只有最终失败
+才落 `failed`。API 不再排队无限重试，已有 ready/installed 的环境仍跳过启动准备。
+安装预算 1200 秒，初始化与连接独立预算 300 秒，未放宽签名、监听归属和握手校验。
+
+托管 Ego 状态约定：`setup_state=ready`、`installed=true` 且 `connection_state=offline` 是环境已准备但宿主因空闲退出，`available=false` 不代表需要重新安装。来源组件显示按需后台启动；外部宿主、失败或未验证状态不适用。
+
+
+### 普通实例探测与模型切换
+
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| `POST /api/config/probe-service` | `llm_instance` 构造以目标 ID 为首项的临时 registry，其他未配置的默认实例不拦截探测；不会用备用结果冒充目标成功。Embedding 与 LLM 独立探测。 |
+| `POST /api/config/discover-models` | 免费实例直接返回两个签名目录模型 ID，不请求任意上游 URL。 |
+| `PUT /api/config` | 免费实例与向量模型、维度、凭据和地址覆盖在保存前拒绝；切换 Embedding Provider 清除旧凭据和地址，避免跨服务携带。 |
+| `RuntimeContext.try_apply_llm_instance_config(new_config)` | 完整比较配置，仅默认实例链及其兼容别名变化时即时应用，实例本身不可编辑；仍经过原保存/修订/回滚锁。PC/插件整表保存附带未修改的 Tailnet 字段也可进入此路径，不等待学习队列。实际网络/凭据修改仍走重建或重启。新请求查普通 registry，独立 worker 通过现有 generation 重启同步。 |
+
+旧 `kind=sponsored` 草稿探针保留兼容用途；新客户端统一使用普通探针。业务不再调用全局 sponsored 拦截器，内部 SDK 设置不覆盖模块路由。
+
+### 免费聊天恢复的 SSE 与持久状态契约
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| 免费实例错误链识别 | 流式入口和后台回复 worker 都通过 `find_sponsored_error()` 识别 adapter / registry / service 包装中的实际错误码；仅无输出、无工具动作的瞬时错误允许最多两次持久重试，鉴权/策略等错误立即终止。 |
+
+`POST /api/chat/agent/stream` 对尚未开始的免费请求遇到瞬时故障时返回 `event: error`，附 `retrying: true`；消息保持 `pending`，现有 `GET /api/chat/turns/{turn_id}` 最终返回 completed/failed。后台最多两次附加尝试（SDK内部另有有界重试），失败次数以 `payload.agent_events` 中的 `sponsored_retry` 错误码事件保存，重启不清零。首个delta只保存 `execution_started` 边界，不保存内容片段；语义/工具事件照常保存。已有事件的未完成Agent轮次被显式终止，防止恢复时重复执行写操作。完成消息重连只回放；HTTP订阅断开不取消API持有的执行任务。未知事件可由旧客户端忽略。Key/策略等持久故障直接终止，并沿用设置/消息通知。
+
+四端范围：插件与手机API保留 `agentRetrying` 标记，页面继续轮询而不将消息本地标为failed；桌面已有历史刷新读取权威状态并显示后台重试提示；CLI复用SDK传输重试，不创建HTTP持久消息。[验收与限制](../testing/2026-11-05-sponsored-resilience.md)。
+
+
+## 免费中继与元信息交付（v0.3.234）
+
+| 已实现能力 | 公共接口与边界 |
+| --- | --- |
+| api | 设置和连接探测识别配置的 HTTPS 免费中继，准备组件时不再下载本地 Key SDK。独立 `sponsored_relay.create_relay` 暴露 POST `/v1/session`、POST `/v1/task`、GET `/healthz`；它不挂在用户后端，不允许 URL/model/header 覆盖，不读取用户数据库。部署保持 worker loopback + Caddy HTTPS，详见 [部署](../sponsored-relay.md)。 |
+
+
+### 2026-11-09 免费实例长任务验收补充
+
+`POST /api/config/probe-service` 的 `kind=embedding` 在 provider 为 `siliconflow_free` 时沿用业务向量 180 秒预算，覆盖本地 RPM 窗口等待；Ollama 主动探测仍为 45 秒，其他远端主动探测及后台 health 的 15 秒边界不变。PC / 插件探测客户端给 Embedding 190 秒，首次设置已有 190 秒。忙碌/超时仍返回 `EMBEDDING_BUSY`、`retryable=true`，没有把失败当成功。
+
+`RuntimeContext.try_apply_llm_instance_config()` 在比较完整配置时规范等价语言标签（例如 `zh` / `zh-Hans`），避免 PC 整表保存仅切换默认链却误入后台学习排空。真实语言、端点、模块路由及向量空间变化仍不走该快捷路径；在途调用保留旧 adapter，新调用使用新链。实测与限制见[完整流程验收](../testing/2026-11-08-free-full-e2e.md)。
+
 ## Mac App Store distribution status
+
+In Store builds, `POST /api/config/sponsored/prepare` checks the bundled policy and helper. The managed Ego installation endpoint returns HTTP 409 in the Store sandbox.
 
 | Implemented feature | Status |
 |---|---|

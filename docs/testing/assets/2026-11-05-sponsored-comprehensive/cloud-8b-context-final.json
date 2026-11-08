@@ -1,0 +1,197 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "long_context_middle_record_and_model_specific_bound",
+      "status": "fail",
+      "error": "AssertionError: record_0731=普通验收记录0731",
+      "seconds": 125.402,
+      "calls": [
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5884,
+          "completion_tokens": 1175,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5982,
+          "completion_tokens": 1147,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1218,
+          "completion_tokens": 814,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1150,
+          "completion_tokens": 1002,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5608,
+          "completion_tokens": 902,
+          "success": 1
+        },
+        {
+          "caller": "discovery.temporal_repair",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 733,
+          "completion_tokens": 80,
+          "success": 1
+        },
+        {
+          "caller": "discovery.evaluate_batch",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 6043,
+          "completion_tokens": 1293,
+          "success": 1
+        }
+      ]
+    }
+  ],
+  "background_observations": [
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation mode/state pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation none mode has active fields; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class is invalid or non-neutral unknown; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    },
+    {
+      "logger": "openbiliclaw.discovery.temporal",
+      "message": "Temporal evaluation class/mode pair is invalid; using unknown",
+      "failure": false
+    }
+  ]
+}

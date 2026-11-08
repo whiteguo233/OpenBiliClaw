@@ -1,0 +1,221 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "complete": true,
+  "cases": [
+    {
+      "name": "real_server_startup_and_user_surfaces",
+      "status": "pass",
+      "result": {
+        "/api/health": {
+          "status": 200,
+          "bytes": 136
+        },
+        "/api/profile-summary": {
+          "status": 200,
+          "bytes": 7352
+        },
+        "/web/": {
+          "status": 200,
+          "bytes": 185538
+        },
+        "/m/": {
+          "status": 200,
+          "bytes": 1685
+        }
+      },
+      "seconds": 15.255,
+      "calls": []
+    },
+    {
+      "name": "real_sse_two_turn_chat_and_durable_history",
+      "status": "pass",
+      "result": {
+        "turns": [
+          {
+            "first_content_seconds": 1.138,
+            "elapsed_seconds": 2.824,
+            "reply": "Rust 借用机制允许你在不拥有数据所有权的情况下临时使用数据，确保资源安全。借用分为可变和不可变两种，分别用于修改和只读访问数据。记住代号“蓝色番茄731”已保存。",
+            "event_counts": {
+              "delta": 51,
+              "done": 1,
+              "final": 1
+            },
+            "persisted": true
+          },
+          {
+            "first_content_seconds": 16.959,
+            "elapsed_seconds": 17.246,
+            "reply": "蓝色番茄731",
+            "event_counts": {
+              "delta": 5,
+              "done": 1,
+              "final": 1
+            },
+            "persisted": true
+          }
+        ]
+      },
+      "seconds": 20.161,
+      "calls": [
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5108,
+          "completion_tokens": 53,
+          "success": 1
+        },
+        {
+          "caller": "discovery.keyword_planner",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2900,
+          "completion_tokens": 1408,
+          "success": 1
+        },
+        {
+          "caller": "agent.chat",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 5250,
+          "completion_tokens": 5,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "awareness_and_insight_cognition_cycle",
+      "status": "pass",
+      "result": {
+        "ran": true,
+        "throttled": false,
+        "awareness_generated": 0,
+        "insight_generated": 0,
+        "total_awareness_after": 3,
+        "total_insight_after": 3,
+        "errors": []
+      },
+      "seconds": 152.32,
+      "calls": [
+        {
+          "caller": "recommendation.write_expression",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4294,
+          "completion_tokens": 1429,
+          "success": 1
+        },
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1963,
+          "completion_tokens": 1101,
+          "success": 1
+        },
+        {
+          "caller": "discovery.search.queries",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1842,
+          "completion_tokens": 1124,
+          "success": 1
+        },
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4288,
+          "completion_tokens": 1120,
+          "success": 1
+        },
+        {
+          "caller": "soul.preference",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 3070,
+          "completion_tokens": 842,
+          "success": 1
+        },
+        {
+          "caller": "recommendation.write_expression",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 2077,
+          "completion_tokens": 555,
+          "success": 1
+        },
+        {
+          "caller": "soul.awareness_confusions",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 4288,
+          "completion_tokens": 968,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "post_chat_learning_queue_drained",
+      "status": "pass",
+      "result": {
+        "drained": true,
+        "dialogue_events": 3
+      },
+      "seconds": 19.063,
+      "calls": [
+        {
+          "caller": "soul.dialogue_insight",
+          "provider": "sponsored",
+          "model": "Qwen/Qwen3-8B",
+          "prompt_tokens": 1900,
+          "completion_tokens": 476,
+          "success": 1
+        }
+      ]
+    },
+    {
+      "name": "save_apply_live_probe_Qwen3.5-4B",
+      "status": "pass",
+      "result": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3.5-4B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "latency_ms": 736,
+        "apply_seconds": 0.232
+      },
+      "seconds": 1.054,
+      "calls": []
+    },
+    {
+      "name": "save_apply_live_probe_Qwen3-8B",
+      "status": "pass",
+      "result": {
+        "ok": true,
+        "service_status": {
+          "notices": [],
+          "update_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest"
+        },
+        "kind": "sponsored",
+        "instance_id": "",
+        "provider": "sponsored",
+        "model": "Qwen/Qwen3-8B",
+        "message": "流式对话和 BGE-M3 文本向量均可用",
+        "error": "",
+        "latency_ms": 713,
+        "apply_seconds": 0.186
+      },
+      "seconds": 0.984,
+      "calls": []
+    }
+  ],
+  "background_observations": []
+}

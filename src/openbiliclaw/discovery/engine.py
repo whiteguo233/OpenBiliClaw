@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import hashlib
 import inspect
 import json
 import logging
@@ -18,12 +19,14 @@ import time
 from abc import ABC, abstractmethod
 from collections import Counter, OrderedDict
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.admission import effective_admission_threshold
 from openbiliclaw.discovery.eval_payload import (
     CanonicalEvaluationBatch,
+    InputBudgetFailure,
+    InvalidEvaluationEvidence,
     build_canonical_evaluation_batch,
     render_sparse_evaluation_json,
     resolve_local_evaluation_results,
@@ -58,6 +61,7 @@ from openbiliclaw.discovery.style_keys import normalize_style_key
 from openbiliclaw.discovery.temporal import (
     TEMPORAL_POLICY_VERSION,
     TemporalEvaluation,
+    canonicalize_deadline_state,
     evaluate_temporal_eligibility,
     ground_temporal_evaluation,
     is_complete_temporal_evidence_marker,
@@ -65,7 +69,10 @@ from openbiliclaw.discovery.temporal import (
     schedule_temporal_evaluation,
 )
 from openbiliclaw.llm.base import is_reasoning_budget_exhausted
-from openbiliclaw.llm.evaluation_wire import encode_evaluation_row_wire
+from openbiliclaw.llm.evaluation_wire import (
+    encode_evaluation_row_wire,
+    project_evaluation_source_metadata,
+)
 from openbiliclaw.llm.json_utils import (
     extract_llm_json_list,
     parse_llm_json_tolerant,
@@ -167,7 +174,7 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
-_EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
+_EVAL_BATCH_CACHE_VERSION = "content-eval-v7"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
 _EVAL_SCORER_DEFAULT = "llm"
@@ -491,6 +498,17 @@ def _apply_temporal_evaluation(
     content.temporal_evaluated = temporal.evidence_complete and temporal.temporal_class != "unknown"
 
 
+def _needs_sponsored_temporal_repair(
+    content: DiscoveredContent, source: Mapping[str, object]
+) -> bool:
+    from openbiliclaw.discovery.temporal import has_explicit_deadline_hint
+
+    return not content.temporal_evidence_complete or (
+        content.temporal_validity_mode in {"none", "freshness_only"}
+        and has_explicit_deadline_hint(_temporal_evidence_text_from_prompt_item(source))
+    )
+
+
 def _decode_eval_cache_entry(
     cached: _EvalCacheEntry,
 ) -> tuple[float, str, str, str, str, TemporalEvaluation]:
@@ -623,6 +641,20 @@ _PROMPT_VISIBLE_METRIC_FIELDS: tuple[str, ...] = (
 )
 
 
+def _is_sponsored_input_too_large(exc: BaseException) -> bool:
+    """Recognize a typed input bound through service wrappers, never auth/429."""
+    from openbiliclaw.llm.sponsored_errors import SponsoredError, SponsoredRequestTooLargeError
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, SponsoredError):
+            return isinstance(current, SponsoredRequestTooLargeError)
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, object]:
     fields: dict[str, object] = {
         field_name: int(getattr(content, field_name, 0) or 0)
@@ -638,6 +670,9 @@ def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, obje
         fields["rating_count"] = rating_count
     if source_rank > 0:
         fields["source_rank"] = source_rank
+    metadata = project_evaluation_source_metadata(content.source_platform, content.source_metadata)
+    if metadata:
+        fields["source_metadata"] = metadata
     return fields
 
 
@@ -811,6 +846,7 @@ class DiscoveredContent:
     discovery_lane: str = ""
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
     relevance_reason: str = ""  # Why this is relevant to the user
+    evaluation_failure: InputBudgetFailure | InvalidEvaluationEvidence | None = None
     # Per-wave soft refusal only. Never serialized into content_cache or profile.
     semantic_filter_deferred: bool = False
     semantic_filter_review: bool = False
@@ -850,6 +886,13 @@ class DiscoveredContent:
     # identifiers and source-specific card metadata can survive the candidate
     # and content-cache pipeline without widening the shared schema per source.
     source_metadata: dict[str, object] = field(default_factory=dict)
+    # Recipe provenance is metadata, never part of Web's canonical item key.
+    # It survives candidate evaluation in raw_payload so operators can trace
+    # which explicit subscription authorized and discovered an item.
+    source_id: str = ""
+    source_name: str = ""
+    source_recipe_id: str = ""
+    source_site: str = ""
     # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
     # that produced this item (unified keyword planner). ``None`` for every
     # non-search / legacy / flag-off path — the admit-time yield backfill is a
@@ -956,6 +999,8 @@ class DiscoveredContent:
             "body_text": self.body_text,
             "content_type": self.content_type,
             "source_metadata": self.source_metadata,
+            "source_id": self.source_id,
+            "source_name": self.source_name,
             "source_keyword_id": self.source_keyword_id,
         }
 
@@ -1872,7 +1917,17 @@ class ContentDiscoveryEngine:
         contents: list[DiscoveredContent],
         requested_batch_size: int,
     ) -> int:
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
+
         batch_size = max(1, int(requested_batch_size))
+        # Real free-model runs timed out at 30 items while smaller batches
+        # completed. Preserve every item and its identity, but bound one IPC
+        # request so a slow batch cannot monopolize the background channel.
+        if (
+            uses_sponsored_route(self._llm_service, "discovery.evaluate_batch")
+            and getattr(self, "_eval_scorer", "llm") != "jev"
+        ):
+            batch_size = min(batch_size, 8)
         self.multimodal_unavailable_reason = ""
         if not bool(getattr(self, "multimodal_evaluation_enabled", False)):
             return batch_size
@@ -2443,7 +2498,11 @@ class ContentDiscoveryEngine:
             topic_group = checked_topic_group
             franchise_key = checked_franchise
             style_key = normalize_style_key(payload.get("style_key", ""))
-            temporal = parse_temporal_evaluation(payload)
+            temporal = parse_temporal_evaluation(
+                canonicalize_deadline_state(payload)
+                if getattr(response, "provider", "") == "sponsored"
+                else payload
+            )
         except Exception:
             logger.exception("Failed to evaluate discovered content: %s", content.bvid)
             return 0.0
@@ -2459,6 +2518,12 @@ class ContentDiscoveryEngine:
             evaluated_at=evaluated_at,
             evidence_text=_temporal_evidence_text_from_prompt_item(content_summary),
         )
+        if getattr(response, "provider", "") == "sponsored" and _needs_sponsored_temporal_repair(
+            content, content_summary
+        ):
+            await self._repair_sponsored_temporal_results(
+                [(0, content, content_summary)], evaluated_at=evaluated_at
+            )
         if recall.complete:
             self._set_eval_cache_entry(
                 cache_key,
@@ -3173,6 +3238,29 @@ class ContentDiscoveryEngine:
         self._negative_exemplars_cache = (time.monotonic(), latest_id, exemplars)
         return exemplars
 
+    def evaluation_context_fingerprint(self, profile: SoulProfile) -> str:
+        """Recovery identity for local input refusals; no credentials or clocks.
+
+        Evaluator namespace includes model, capacities and packing policy.
+        Full effective profile and negative examples invalidate parked refusals.
+        Explicitly switching away from Jev also permits re-evaluation.
+        """
+        mode = getattr(self, "_eval_scorer", "llm")
+        if mode != "jev":
+            return hashlib.sha256(f"scorer:{mode}".encode()).hexdigest()
+        evaluator = self._jev_evaluator
+        identity = {
+            "scorer": mode,
+            "evaluator": evaluator.cache_namespace if evaluator else "unavailable",
+            "profile": build_profile_catalog(profile),
+            "negative": self._get_negative_exemplars() or [],
+        }
+        return hashlib.sha256(
+            json.dumps(
+                identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()
+        ).hexdigest()
+
     def _evaluation_profile_digest(self, profile: SoulProfile) -> str:
         """Digest the structured profile slice and recall pool visible to evaluation."""
 
@@ -3835,6 +3923,8 @@ class ContentDiscoveryEngine:
                 return [None] * len(batch)
 
         results: list[float | None] = []
+        temporal_repairs: list[tuple[int, DiscoveredContent, dict[str, object]]] = []
+        pending_cache: list[tuple[str, DiscoveredContent]] = []
         for i, content in enumerate(batch):
             if canonical_batch is not None:
                 local_id = canonical_batch.local_ids[i]
@@ -3859,6 +3949,8 @@ class ContentDiscoveryEngine:
             if not isinstance(raw_item, dict):
                 results.append(None)
                 continue
+            if getattr(response, "provider", "") == "sponsored":
+                raw_item = canonicalize_deadline_state(raw_item)
             score = self._apply_evaluator_result(
                 content,
                 raw_item,
@@ -3871,6 +3963,11 @@ class ContentDiscoveryEngine:
                 results.append(None)
                 continue
 
+            if getattr(
+                response, "provider", ""
+            ) == "sponsored" and _needs_sponsored_temporal_repair(content, content_items[i]):
+                temporal_repairs.append((i, content, content_items[i]))
+
             cache_key = self._batch_eval_cache_key(
                 content,
                 profile_digest=profile_digest,
@@ -3879,13 +3976,90 @@ class ContentDiscoveryEngine:
                 source_context=source_context,
             )
             if normal_cache_enabled and i in recall.complete_indices:
-                self._set_eval_cache_entry(
-                    cache_key,
-                    _eval_cache_entry_for_content(content),
-                )
+                pending_cache.append((cache_key, content))
             results.append(score)
 
+        if temporal_repairs:
+            await self._repair_sponsored_temporal_results(
+                temporal_repairs, evaluated_at=evaluated_at
+            )
+        for cache_key, content in pending_cache:
+            self._set_eval_cache_entry(cache_key, _eval_cache_entry_for_content(content))
         return results
+
+    async def _repair_sponsored_temporal_results(
+        self,
+        pending: list[tuple[int, DiscoveredContent, dict[str, object]]],
+        *,
+        evaluated_at: str,
+    ) -> None:
+        """Try one narrow correction; never modify relevance or relax grounding."""
+        from openbiliclaw.llm.prompts import build_temporal_repair_prompt
+        from openbiliclaw.llm.task_options import call_accepts_keyword
+
+        items = [
+            {
+                "id": str(index),
+                **{
+                    key: source[key]
+                    for key in (
+                        "title",
+                        "description",
+                        "body_text",
+                    )
+                    if key in source
+                },
+            }
+            for index, _content, source in pending
+        ]
+        messages = build_temporal_repair_prompt(items)
+        assert self._llm_service is not None
+        complete = self._llm_service.complete_structured_task
+        kwargs: dict[str, Any] = {
+            "system_instruction": messages[0]["content"],
+            "user_input": messages[1]["content"],
+            "max_tokens": 4096,
+            "temperature": 0.0,
+            "caller": "discovery.temporal_repair",
+            **without_core_memory_kwargs(complete),
+        }
+        if call_accepts_keyword(complete, "reasoning_effort"):
+            kwargs["reasoning_effort"] = ""
+        try:
+            call = complete(**kwargs)
+            response = (
+                await self._concurrency.run_llm(call)
+                if self._concurrency is not None
+                else await call
+            )
+            rows = extract_llm_json_list(
+                str(getattr(response, "content", "")),
+                wrapper_keys=("results",),
+                allow_singleton=True,
+                item_predicate=lambda item: "id" in item,
+            )
+        except Exception:
+            logger.warning(
+                "Temporal correction unavailable; retaining unverified metadata", exc_info=True
+            )
+            return
+        if rows is None:
+            return
+        counts = Counter(str(row.get("id", "")) for row in rows)
+        by_id = {str(row.get("id", "")): row for row in rows if counts[str(row.get("id", ""))] == 1}
+        for index, content, source in pending:
+            corrected = by_id.get(str(index))
+            if corrected is None:
+                continue
+            evidence_text = _temporal_evidence_text_from_prompt_item(source)
+            temporal = ground_temporal_evaluation(
+                parse_temporal_evaluation(canonicalize_deadline_state(corrected)),
+                content_text=evidence_text,
+            )
+            if temporal.evidence_complete:
+                _apply_temporal_evaluation(
+                    content, temporal, evaluated_at=evaluated_at, evidence_text=evidence_text
+                )
 
     @classmethod
     def _apply_evaluator_result(
@@ -3941,6 +4115,7 @@ class ContentDiscoveryEngine:
             negative_examples = self._get_negative_exemplars()
         negatives = cast("list[dict[str, object]] | None", negative_examples or None)
         profile_catalog = build_profile_catalog(profile)
+        recovery_fingerprint = self.evaluation_context_fingerprint(profile)
         profile_digest = self._evaluation_profile_digest(profile)
         negative_digest = self._negative_examples_digest(negatives)
         # Keys are frozen before awaiting the provider; later item mutation
@@ -3971,15 +4146,22 @@ class ContentDiscoveryEngine:
             len(payload),
             sum(result is None for result in payload),
             sum(
-                bool(result and result.get("_jev_topic_status") == "unknown") for result in payload
+                isinstance(result, dict) and result.get("_jev_topic_status") == "unknown"
+                for result in payload
             ),
             sum(
-                bool(result and result.get("_jev_franchise_status") == "unknown")
+                isinstance(result, dict) and result.get("_jev_franchise_status") == "unknown"
                 for result in payload
             ),
         )
         results: list[float | None] = []
         for index, (content, result) in enumerate(zip(batch, payload, strict=True)):
+            if isinstance(result, InputBudgetFailure | InvalidEvaluationEvidence):
+                content.evaluation_failure = replace(
+                    result, context_fingerprint=recovery_fingerprint
+                )
+                results.append(None)
+                continue
             score = (
                 self._apply_evaluator_result(
                     content,
@@ -4111,7 +4293,7 @@ class ContentDiscoveryEngine:
         max_extra_requests: int = 6,
         valid_score_indices: set[int] | None = None,
     ) -> list[float]:
-        """Retry only missing members from successful malformed responses."""
+        """Bound retries for missing output and size-dependent free-model failures."""
         from openbiliclaw.llm.prompts import content_evaluation_clock
 
         if not evaluated_at or not evaluation_bucket:
@@ -4127,6 +4309,8 @@ class ContentDiscoveryEngine:
             # retries would reset that budget and repeat permanently oversized inputs.
             budget["remaining"] = 0
             profile = copy.deepcopy(profile)
+        for content in batch:
+            content.evaluation_failure = None
         normal_cache_enabled = normal_cache_enabled and self._batch_normal_cache_eligible(
             batch,
             source_context=source_context,
@@ -4134,6 +4318,7 @@ class ContentDiscoveryEngine:
 
         async def run(indices: list[int], depth: int) -> None:
             subset = [batch[index] for index in indices]
+            input_limit_error: Exception | None = None
             try:
                 subset_results = await self._evaluate_batch_once(
                     subset,
@@ -4145,17 +4330,25 @@ class ContentDiscoveryEngine:
                     normal_cache_enabled=normal_cache_enabled,
                 )
             except Exception as exc:
-                if not is_reasoning_budget_exhausted(exc):
+                oversized = _is_sponsored_input_too_large(exc)
+                if oversized and (
+                    len(subset) <= 1 or depth >= max_split_depth or budget["remaining"] <= 0
+                ):
+                    # A single item / exhausted split budget cannot be repaired
+                    # by repeating identical input. Preserve the actionable error.
                     raise
+                if not oversized and not is_reasoning_budget_exhausted(exc):
+                    raise
+                if oversized:
+                    input_limit_error = exc
                 # A reasoning-first model burned the whole output budget on
-                # invisible thinking and returned no final content. Unlike a
-                # timeout, the failure is size-dependent: mark every member
-                # missing so the recursive split below retries the same work
-                # in smaller batches until it fits. Rate limits / auth /
-                # transport failures keep propagating unchanged.
+                # invisible thinking, or full source text exceeded the model's
+                # input guard. Split the same members without clipping their
+                # bodies; retain the existing depth / extra-request limits.
+                # Rate limits / auth / transport failures keep propagating.
                 logger.warning(
-                    "Batch evaluation exhausted the output budget on %d item(s); "
-                    "splitting the batch",
+                    "Batch evaluation exceeded its %s budget on %d item(s); splitting the batch",
+                    "input" if oversized else "output",
                     len(subset),
                 )
                 subset_results = [None] * len(subset)
@@ -4173,7 +4366,11 @@ class ContentDiscoveryEngine:
                 midpoint = max(1, len(missing) // 2)
                 children = (missing[:midpoint], missing[midpoint:])
             for child in children:
-                if not child or budget["remaining"] <= 0:
+                if not child:
+                    continue
+                if budget["remaining"] <= 0:
+                    if input_limit_error is not None:
+                        raise input_limit_error
                     break
                 budget["remaining"] -= 1
                 await run(child, depth + 1)
@@ -4182,7 +4379,11 @@ class ContentDiscoveryEngine:
         final: list[float] = []
         for index, (content, score) in enumerate(zip(batch, results, strict=True)):
             if score is None:
-                content.relevance_reason = "evaluation_response_missing"
+                content.relevance_reason = (
+                    content.evaluation_failure.storage_reason.split(":", 1)[0]
+                    if content.evaluation_failure
+                    else "evaluation_response_missing"
+                )
                 if getattr(self, "_eval_scorer", "llm") == "jev":
                     content.relevance_score = 0.0
                 final.append(0.0)

@@ -1,0 +1,500 @@
+{
+  "code_commit": "d081d5be",
+  "browser_status": "blocked_by_work_browser_setting",
+  "real_requests": true,
+  "source": "GitHub public stars",
+  "bootstrap_limit": 40,
+  "mocked_upstream": false,
+  "results": {
+    "qwen8b": {
+      "model": "Qwen/Qwen3-8B",
+      "init_seconds": 281.84,
+      "init_final": {
+        "running": false,
+        "initialized": true,
+        "partial_success": true,
+        "reason": "github_partial",
+        "stages": [
+          {
+            "n": 1,
+            "status": "warning",
+            "reason": "github_partial",
+            "processed": null,
+            "total": null,
+            "label": "拉取数据"
+          },
+          {
+            "n": 2,
+            "status": "ok",
+            "reason": null,
+            "processed": null,
+            "total": null,
+            "label": "分析偏好"
+          },
+          {
+            "n": 3,
+            "status": "ok",
+            "reason": null,
+            "processed": null,
+            "total": null,
+            "label": "生成并保存完整画像"
+          },
+          {
+            "n": 4,
+            "status": "ok",
+            "reason": null,
+            "processed": null,
+            "total": null,
+            "label": "生成首轮可用推荐"
+          }
+        ]
+      },
+      "source_persistence": {
+        "github_enabled": true,
+        "github_username_matches": true,
+        "bangumi_enabled": false,
+        "bangumi_username_blank": true,
+        "selected_model_preserved": true
+      },
+      "profile_ready": true,
+      "recommendation_count": 4,
+      "steps": [
+        {
+          "name": "read_config",
+          "http_status": 200,
+          "seconds": 0.03,
+          "ok": true
+        },
+        {
+          "name": "automatic_free_prepare",
+          "http_status": 200,
+          "seconds": 0.02,
+          "ok": true
+        },
+        {
+          "name": "selected_llm_probe",
+          "http_status": 200,
+          "seconds": 0.59,
+          "ok": true,
+          "model": "Qwen/Qwen3-8B",
+          "error": "",
+          "latency_ms": 577
+        },
+        {
+          "name": "free_bge_probe",
+          "http_status": 200,
+          "seconds": 0.25,
+          "ok": true,
+          "model": "BAAI/bge-m3",
+          "error": "",
+          "latency_ms": 240
+        },
+        {
+          "name": "save_setup",
+          "http_status": 202,
+          "seconds": 0.06,
+          "ok": true,
+          "apply_state": "queued",
+          "apply_revision": 2
+        },
+        {
+          "name": "init_prerequisites",
+          "http_status": 200,
+          "seconds": 1.02,
+          "ok": true,
+          "reason": "none"
+        },
+        {
+          "name": "start_init",
+          "http_status": 202,
+          "seconds": 1.37,
+          "ok": true,
+          "reason": "none"
+        }
+      ],
+      "post_init_cases": [
+        {
+          "name": "profile_and_desktop_mobile_surfaces",
+          "result": {
+            "profile_ready": true,
+            "pages": {
+              "/web/": 200,
+              "/m/": 200
+            }
+          },
+          "ok": true,
+          "seconds": 0.07
+        },
+        {
+          "name": "selected_model_and_real_embedding",
+          "result": {
+            "chain": [
+              "siliconflow-free"
+            ],
+            "actual_model": "Qwen/Qwen3-8B",
+            "llm_latency_ms": 27888,
+            "embedding_ok": true,
+            "embedding_latency_ms": 10219
+          },
+          "ok": true,
+          "seconds": 38.14
+        },
+        {
+          "name": "two_turn_sse_and_durable_history",
+          "result": {
+            "turns": [
+              {
+                "turn_id": "e2e-bf2e5a18fc6c46baaf4700c537859043",
+                "session_id": "chat-a866f48550664aa8b121eed75e562199",
+                "deltas": 12,
+                "first_delta_seconds": 11.32,
+                "seconds": 11.61,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              },
+              {
+                "turn_id": "e2e-b05ee8dc69554c669a6a92ae7bf96015",
+                "session_id": "chat-a866f48550664aa8b121eed75e562199",
+                "deltas": 5,
+                "first_delta_seconds": 0.53,
+                "seconds": 0.66,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              }
+            ]
+          },
+          "ok": true,
+          "seconds": 12.35
+        },
+        {
+          "name": "three_parallel_http_chat_requests",
+          "result": {
+            "concurrent_requests": 3,
+            "turns": [
+              {
+                "turn_id": "e2e-711d91e1bd104776bcb5fc0c509141a7",
+                "session_id": "chat-39b117a03c3f4b3ab21d82e639152d66",
+                "deltas": 8,
+                "first_delta_seconds": 1.48,
+                "seconds": 1.62,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              },
+              {
+                "turn_id": "e2e-6ef4f44d49e045aa9cb3e9e3d16dcbb2",
+                "session_id": "chat-8640a094a91d4c8386af7dc3a8890251",
+                "deltas": 8,
+                "first_delta_seconds": 2.66,
+                "seconds": 2.86,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              },
+              {
+                "turn_id": "e2e-2bde1b8e5d54477e945cf290fd01eae5",
+                "session_id": "chat-f4dbcb42a15b49178fc0c00ba4223997",
+                "deltas": 8,
+                "first_delta_seconds": 2.07,
+                "seconds": 2.26,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              }
+            ]
+          },
+          "ok": true,
+          "seconds": 2.89
+        },
+        {
+          "name": "real_recommendation_cards_and_feedback_idempotency",
+          "result": {
+            "recommendation_count": 4,
+            "cards_with_expression": 4,
+            "feedback_saved": true,
+            "duplicate_idempotent": true
+          },
+          "ok": true,
+          "seconds": 0.03
+        }
+      ],
+      "initial_tool_test": {
+        "ok": true,
+        "tool_results": [
+          {
+            "event": "tool_result",
+            "tool_name": "get_profile",
+            "ok": true
+          }
+        ],
+        "durable_fallback": false,
+        "reply_chars": 123,
+        "turn_id": "e2e-tool-375b1f7a79e44365b02353d8f3f86e29",
+        "seconds": 2.91
+      }
+    },
+    "qwen4b": {
+      "model": "Qwen/Qwen3.5-4B",
+      "init_seconds": 201.36,
+      "init_final": {
+        "running": false,
+        "initialized": true,
+        "partial_success": true,
+        "reason": "github_partial",
+        "stages": [
+          {
+            "n": 1,
+            "status": "warning",
+            "reason": "github_partial",
+            "processed": null,
+            "total": null,
+            "label": "拉取数据"
+          },
+          {
+            "n": 2,
+            "status": "ok",
+            "reason": null,
+            "processed": null,
+            "total": null,
+            "label": "分析偏好"
+          },
+          {
+            "n": 3,
+            "status": "ok",
+            "reason": null,
+            "processed": null,
+            "total": null,
+            "label": "生成并保存完整画像"
+          },
+          {
+            "n": 4,
+            "status": "ok",
+            "reason": null,
+            "processed": null,
+            "total": null,
+            "label": "生成首轮可用推荐"
+          }
+        ]
+      },
+      "source_persistence": {
+        "github_enabled": true,
+        "github_username_matches": true,
+        "bangumi_enabled": false,
+        "bangumi_username_blank": true,
+        "selected_model_preserved": true
+      },
+      "profile_ready": true,
+      "recommendation_count": 2,
+      "steps": [
+        {
+          "name": "read_config",
+          "http_status": 200,
+          "seconds": 0.01,
+          "ok": true
+        },
+        {
+          "name": "automatic_free_prepare",
+          "http_status": 200,
+          "seconds": 0.02,
+          "ok": true
+        },
+        {
+          "name": "selected_llm_probe",
+          "http_status": 200,
+          "seconds": 1.07,
+          "ok": true,
+          "model": "Qwen/Qwen3.5-4B",
+          "error": "",
+          "latency_ms": 1060
+        },
+        {
+          "name": "free_bge_probe",
+          "http_status": 200,
+          "seconds": 0.26,
+          "ok": true,
+          "model": "BAAI/bge-m3",
+          "error": "",
+          "latency_ms": 245
+        },
+        {
+          "name": "save_setup",
+          "http_status": 202,
+          "seconds": 0.07,
+          "ok": true,
+          "apply_state": "queued",
+          "apply_revision": 2
+        },
+        {
+          "name": "init_prerequisites",
+          "http_status": 200,
+          "seconds": 0.58,
+          "ok": true,
+          "reason": "none"
+        },
+        {
+          "name": "start_init",
+          "http_status": 202,
+          "seconds": 2.33,
+          "ok": true,
+          "reason": "none"
+        }
+      ],
+      "post_init_cases": [
+        {
+          "name": "profile_and_desktop_mobile_surfaces",
+          "result": {
+            "profile_ready": true,
+            "pages": {
+              "/web/": 200,
+              "/m/": 200
+            }
+          },
+          "ok": true,
+          "seconds": 0.07
+        },
+        {
+          "name": "selected_model_and_real_embedding",
+          "result": {
+            "chain": [
+              "siliconflow-free-qwen35-4b"
+            ],
+            "actual_model": "Qwen/Qwen3.5-4B",
+            "llm_latency_ms": 9196,
+            "embedding_ok": true,
+            "embedding_latency_ms": 199
+          },
+          "ok": true,
+          "seconds": 9.43
+        },
+        {
+          "name": "two_turn_sse_and_durable_history",
+          "result": {
+            "turns": [
+              {
+                "turn_id": "e2e-3cb30a0000a5437dac708ccc7b162c78",
+                "session_id": "chat-6b0d012c5f4841468a258fefda072c7e",
+                "deltas": 9,
+                "first_delta_seconds": 1.11,
+                "seconds": 2.38,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              },
+              {
+                "turn_id": "e2e-e6bdb98458144ddc8b7ffbedb2ac37a2",
+                "session_id": "chat-6b0d012c5f4841468a258fefda072c7e",
+                "deltas": 5,
+                "first_delta_seconds": 0.79,
+                "seconds": 0.9,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              }
+            ]
+          },
+          "ok": true,
+          "seconds": 3.36
+        },
+        {
+          "name": "three_parallel_http_chat_requests",
+          "result": {
+            "concurrent_requests": 3,
+            "turns": [
+              {
+                "turn_id": "e2e-ec8e12097296424cbbedea5dc6c4c338",
+                "session_id": "chat-89ecdad265c84d4f9a05200748c1d379",
+                "deltas": 7,
+                "first_delta_seconds": 6.95,
+                "seconds": 7.93,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              },
+              {
+                "turn_id": "e2e-29f1186713ce404281623397fe6af418",
+                "session_id": "chat-7755bc65dd904271a3a0590c3b4e5f6b",
+                "deltas": 7,
+                "first_delta_seconds": 8.67,
+                "seconds": 8.78,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              },
+              {
+                "turn_id": "e2e-503efb91f1ee470aac0a892677b3be55",
+                "session_id": "chat-3fcbfe81929b48ba94a8682ac51bef15",
+                "deltas": 7,
+                "first_delta_seconds": 9.43,
+                "seconds": 9.62,
+                "persisted": true,
+                "marker_matches": true,
+                "durable_fallback": false,
+                "sse_errors": []
+              }
+            ]
+          },
+          "ok": true,
+          "seconds": 9.65
+        },
+        {
+          "name": "real_recommendation_cards_and_feedback_idempotency",
+          "result": {
+            "recommendation_count": 2,
+            "cards_with_expression": 2,
+            "feedback_saved": true,
+            "duplicate_idempotent": true
+          },
+          "ok": true,
+          "seconds": 0.04
+        }
+      ],
+      "initial_tool_test": {
+        "ok": false,
+        "error_type": "AssertionError",
+        "error": "Durable tool turn failed",
+        "seconds": 0.96
+      },
+      "tool_rechecks": [
+        {
+          "ok": true,
+          "tool_results": [
+            {
+              "event": "tool_result",
+              "tool_name": "get_profile",
+              "ok": true
+            }
+          ],
+          "durable_fallback": false,
+          "reply_chars": 104,
+          "turn_id": "e2e-tool-748de71e70204dc09bbc829c73df7a0a",
+          "seconds": 3.52
+        },
+        {
+          "ok": true,
+          "tool_results": [
+            {
+              "event": "tool_result",
+              "tool_name": "get_profile",
+              "ok": true
+            }
+          ],
+          "durable_fallback": false,
+          "reply_chars": 96,
+          "turn_id": "e2e-tool-57e117ec34cb40e2b5c42aba78806f2f",
+          "seconds": 39.69
+        }
+      ]
+    }
+  }
+}

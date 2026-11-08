@@ -1,0 +1,43 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "event_count": 200,
+  "calls": [
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 31466,
+      "max_tokens": 4096,
+      "effort": "low",
+      "ok": true,
+      "seconds": 32.66
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 31471,
+      "max_tokens": 4096,
+      "effort": "low",
+      "ok": true,
+      "seconds": 37.61
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 31476,
+      "max_tokens": 4096,
+      "effort": "low",
+      "ok": true,
+      "seconds": 38.14
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "input_bytes": 31477,
+      "max_tokens": 4096,
+      "effort": "low",
+      "error_type": "SponsoredUnavailableError",
+      "error": "sponsored runtime timed out",
+      "seconds": 180.0
+    }
+  ],
+  "ok": false,
+  "error_type": "PreferenceAnalysisError",
+  "error": "All providers failed (siliconflow-free). Last error: 硅基流动免费实例不可用：UNAVAILABLE",
+  "total_seconds": 288.69
+}

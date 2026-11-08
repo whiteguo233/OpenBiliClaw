@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import aclosing, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
+from openbiliclaw.diagnostics_alerts import record_diagnostics_alert
 from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
@@ -21,6 +22,7 @@ from .concurrency import (
     coerce_total_concurrency,
 )
 from .prompts import build_socratic_dialogue_prompt
+from .sponsored_errors import SponsoredError, is_fallback_allowed
 
 logger = logging.getLogger(__name__)
 DEFAULT_LLM_CONCURRENCY = DEFAULT_TOTAL_LLM_CONCURRENCY
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
     from openbiliclaw.memory.manager import MemoryManager
 
     from .base import LLMResponse
+    from .sponsored_provider import SponsoredProvider
 
 
 _BACKGROUND_ADMISSION_BYPASS: ContextVar[bool] = ContextVar(
@@ -321,6 +324,7 @@ class LLMService:
     _PRIORITY_MAP: ClassVar[dict[str, int]] = {
         "recommendation.write_expression": 1,
         "discovery.evaluate_batch": 1,
+        "discovery.temporal_repair": 1,
         "soul": 2,
         "xhs": 2,
     }
@@ -328,6 +332,7 @@ class LLMService:
     _ROUTE_BUCKET_PREFIXES: ClassVar[tuple[tuple[str, str], ...]] = (
         ("recommendation.evaluate_batch", "evaluation"),
         ("discovery.evaluate", "evaluation"),
+        ("discovery.temporal_repair", "evaluation"),
         ("discovery.eval", "evaluation"),
         ("eval", "evaluation"),
         ("discovery.keyword", "discovery"),
@@ -392,6 +397,7 @@ class LLMService:
     # prompt stays byte-identical for provider caching. Empty (default) keeps
     # the previous Chinese-only behaviour for tests and standalone callers.
     output_language: str = ""
+    sponsored_provider: SponsoredProvider | None = None
     _logged_unknown_override_keys: set[tuple[str, str]] = field(
         default_factory=set, init=False, repr=False
     )
@@ -656,7 +662,7 @@ class LLMService:
             messages.extend(history)
         messages.append({"role": "user", "content": user_content})
 
-        async def _do_llm_call() -> LLMResponse:
+        async def _do_user_call() -> LLMResponse:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return await self.registry.complete_chain(
@@ -686,6 +692,26 @@ class LLMService:
                 reasoning_effort=effective_reasoning_effort,
                 model=model,
             )
+
+        async def _do_llm_call() -> LLMResponse:
+            from .sponsored_adapter import sponsored_call
+            from .sponsored_router import try_sponsored_completion
+
+            response = None
+            if self.sponsored_provider is not None:
+                response = await try_sponsored_completion(
+                    cast("Any", messages),
+                    provider=self.sponsored_provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=json_mode,
+                    reasoning_effort=effective_reasoning_effort,
+                    caller=caller,
+                )
+            if response is not None:
+                return response
+            with sponsored_call(caller):
+                return await _do_user_call()
 
         try:
             async with self._provider_slot(
@@ -745,7 +771,7 @@ class LLMService:
             messages.extend(history)
         messages.append({"role": "user", "content": user_content})
 
-        def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+        def _route_user_stream() -> AsyncIterator[LLMStreamChunk]:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return self.registry.stream_chain(
@@ -776,6 +802,29 @@ class LLMService:
                 model=model,
             )
 
+        async def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+            from .sponsored_adapter import stream_in_sponsored_call
+            from .sponsored_router import stream_project_completion
+
+            if self.sponsored_provider is None:
+                async with aclosing(
+                    stream_in_sponsored_call(_route_user_stream(), caller)
+                ) as stream:
+                    async for chunk in stream:
+                        yield chunk
+                return
+            async for chunk in stream_project_completion(
+                cast("Any", messages),
+                provider=self.sponsored_provider,
+                fallback=_route_user_stream,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                json_mode=json_mode,
+                reasoning_effort=effective_reasoning_effort,
+            ):
+                yield chunk
+
         terminal: LLMResponse | None = None
         try:
             async with self._provider_slot(
@@ -796,6 +845,157 @@ class LLMService:
             if callable(record_fn):
                 with suppress(Exception):
                     record_fn(terminal, caller=caller)
+
+    def _resolve_sponsored_provider(self) -> SponsoredProvider | None:
+        """Return the Sponsored provider, or None when disabled.
+
+        Resolution order:
+
+        1. an explicitly injected provider (tests / official packaging);
+        2. process-wide ``[llm.sponsored]`` settings installed by config load;
+        3. the development env bootstrap.
+
+        A malformed config or command falls through to the next source instead
+        of breaking normal BYOK calls.
+        """
+
+        if self.sponsored_provider is not None:
+            return self.sponsored_provider
+        from .sponsored_router import shared_sponsored_provider
+
+        return shared_sponsored_provider()
+
+    def _record_usage(self, response: LLMResponse, *, caller: str) -> None:
+        """Best-effort usage ledger write for paths that bypass complete()."""
+
+        recorder = self.usage_recorder
+        if recorder is None:
+            return
+        record_fn = getattr(recorder, "record", None)
+        if callable(record_fn):
+            with suppress(Exception):
+                record_fn(response, caller=caller)
+
+    async def execute_sponsored_task(
+        self,
+        *,
+        caller: str,
+        payload: Mapping[str, Any],
+        fallback_system_instruction: str,
+        fallback_user_input: str,
+        user_text: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        inject_core_memory: bool = False,
+        contract_version: int | None = None,
+    ) -> LLMResponse:
+        """Run a sponsored-eligible task; fall back to the configured provider.
+
+        The caller owns both representations: the structured ``payload`` for
+        the Sponsored Runtime, and the legacy prompt pair for BYOK / Ollama.
+        A missing runtime, quota, rate limit, or auth failure falls back so the
+        feature keeps working; a contract mismatch fails loudly because it
+        means shipped prompt bytes and the signed policy disagree.
+        """
+
+        if self.sponsored_provider is None:
+            from .sponsored_adapter import sponsored_call
+
+            with sponsored_call(
+                caller,
+                task={
+                    "caller": caller,
+                    "contract_version": contract_version,
+                    "user_payload": payload,
+                    "user_text": user_text,
+                },
+            ):
+                return await self.complete_structured_task(
+                    system_instruction=fallback_system_instruction,
+                    user_input=fallback_user_input,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    caller=caller,
+                    reasoning_effort=reasoning_effort,
+                    inject_core_memory=inject_core_memory,
+                )
+
+        from .sponsored_tasks import DEFAULT_SPONSORED_REGISTRY
+
+        contract = DEFAULT_SPONSORED_REGISTRY.resolve_caller(caller)
+        provider = self._resolve_sponsored_provider()
+        if contract is not None and provider is not None:
+            try:
+                async with self._provider_slot(
+                    caller=caller, bypass_background=_BACKGROUND_ADMISSION_BYPASS.get()
+                ):
+                    response = await provider.execute_task(
+                        caller=caller,
+                        contract_version=contract_version,
+                        user_payload=payload,
+                        user_text=user_text,
+                    )
+            except SponsoredError as exc:
+                from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
+
+                if (
+                    not is_fallback_allowed(exc)
+                    or not current_sponsored_settings().fallback_to_user_provider
+                ):
+                    record_diagnostics_alert(
+                        category="llm",
+                        code=f"sponsored_{exc.code.lower()}",
+                        message=f"Sponsored task failed for {caller}: {exc.code}",
+                        source="sponsored",
+                        severity="error",
+                    )
+                    raise LLMProviderExecutionError(
+                        f"Sponsored task failed for {caller}: {exc.code}"
+                    ) from exc
+                logger.warning(
+                    "Sponsored task %s unavailable (%s); falling back to configured provider",
+                    caller,
+                    exc.code,
+                )
+                record_diagnostics_alert(
+                    category="llm",
+                    code=f"sponsored_{exc.code.lower()}",
+                    message=f"Sponsored task {caller} unavailable: {exc.code}",
+                    source="sponsored",
+                    severity="warning",
+                )
+            else:
+                self._record_usage(response, caller=caller)
+                return response
+
+        async def complete_application_prompt() -> LLMResponse:
+            return await self.complete_structured_task(
+                system_instruction=fallback_system_instruction,
+                user_input=fallback_user_input,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                reasoning_effort=reasoning_effort,
+                inject_core_memory=inject_core_memory,
+            )
+
+        if contract is None or provider is None:
+            return await complete_application_prompt()
+        from .sponsored_router import bypass_sponsored
+
+        with bypass_sponsored():
+            return await complete_application_prompt()
+
+    async def aclose(self) -> None:
+        """Release the Sponsored Runtime child process, when one exists."""
+
+        provider = self.sponsored_provider
+        if provider is not None:
+            await provider.aclose()
+        from .sponsored_router import close_shared_provider
+
+        await close_shared_provider()
 
     async def complete_structured_task(
         self,
@@ -835,6 +1035,8 @@ class LLMService:
 
     def supports_image_input(self, caller: str = "discovery.evaluate_batch") -> bool:
         """Best-effort check for OpenAI-compatible vision-capable routes."""
+        if self.sponsored_provider is not None:
+            return bool(getattr(self.sponsored_provider, "supports_image_input", False))
         routed_chain = self._resolve_module_chain(caller)
         bucket = self._route_bucket_for_caller(caller)
         module_route = self.module_overrides.get(bucket) if bucket is not None else None
@@ -947,7 +1149,7 @@ class LLMService:
             messages.extend(cast("list[dict[str, Any]]", history))
         messages.append({"role": "user", "content": user_parts})
 
-        async def _do_llm_call() -> LLMResponse:
+        async def _do_user_call() -> LLMResponse:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return await self.registry.complete_chain(
@@ -977,6 +1179,26 @@ class LLMService:
                 reasoning_effort=effective_reasoning_effort,
                 model=model,
             )
+
+        async def _do_llm_call() -> LLMResponse:
+            from .sponsored_adapter import sponsored_call
+            from .sponsored_router import try_sponsored_completion
+
+            response = None
+            if self.sponsored_provider is not None:
+                response = await try_sponsored_completion(
+                    cast("Any", messages),
+                    provider=self.sponsored_provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=True,
+                    reasoning_effort=effective_reasoning_effort,
+                    caller=caller,
+                )
+            if response is not None:
+                return response
+            with sponsored_call(caller):
+                return await _do_user_call()
 
         try:
             async with self._provider_slot(caller=caller):
@@ -1135,6 +1357,8 @@ class LLMService:
 
     def _route_supports_native_tools(self, caller: str) -> bool:
         """Return whether the first provider of the resolved route has native FC."""
+        if self.sponsored_provider is not None:
+            return True
         routed_chain = self._resolve_module_chain(caller)
         if routed_chain is not None:
             return bool(routed_chain) and self.registry.provider_supports_tool_calling(
@@ -1157,7 +1381,7 @@ class LLMService:
     ) -> LLMResponse:
         """Run one native-FC call under the provider slot and module routing."""
 
-        async def _do_llm_call() -> LLMResponse:
+        async def _do_user_call() -> LLMResponse:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return await self.registry.complete_with_tools_chain(
@@ -1187,6 +1411,26 @@ class LLMService:
                 reasoning_effort=reasoning_effort,
                 model=model,
             )
+
+        async def _do_llm_call() -> LLMResponse:
+            from .sponsored_adapter import sponsored_call
+            from .sponsored_router import try_sponsored_completion
+
+            response = None
+            if self.sponsored_provider is not None:
+                response = await try_sponsored_completion(
+                    messages,
+                    tools=tools,
+                    provider=self.sponsored_provider,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                    caller=caller,
+                )
+            if response is not None:
+                return response
+            with sponsored_call(caller):
+                return await _do_user_call()
 
         try:
             async with self._provider_slot(
@@ -1345,7 +1589,7 @@ class LLMService:
     ) -> AsyncIterator[LLMStreamChunk]:
         """Run one streaming native-FC call under the provider slot and routing."""
 
-        def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+        def _route_user_stream() -> AsyncIterator[LLMStreamChunk]:
             routed_chain = self._resolve_module_chain(caller)
             if routed_chain is not None:
                 return self.registry.stream_with_tools_chain(
@@ -1375,6 +1619,29 @@ class LLMService:
                 reasoning_effort=reasoning_effort,
                 model=model,
             )
+
+        async def _route_stream() -> AsyncIterator[LLMStreamChunk]:
+            from .sponsored_adapter import stream_in_sponsored_call
+            from .sponsored_router import stream_project_completion
+
+            if self.sponsored_provider is None:
+                async with aclosing(
+                    stream_in_sponsored_call(_route_user_stream(), caller)
+                ) as stream:
+                    async for chunk in stream:
+                        yield chunk
+                return
+            async for chunk in stream_project_completion(
+                cast("Any", messages),
+                provider=self.sponsored_provider,
+                fallback=_route_user_stream,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                tools=tools,
+                reasoning_effort=reasoning_effort,
+            ):
+                yield chunk
 
         try:
             async with self._provider_slot(
@@ -1580,7 +1847,7 @@ def _parse_simulated_tool_calls(
         parsed = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return None
-    if not isinstance(parsed, dict):
+    if not isinstance(parsed, dict) or set(parsed) not in ({"tool_call"}, {"tool_calls"}):
         return None
     raw_calls: list[Any] = []
     single = parsed.get("tool_call")

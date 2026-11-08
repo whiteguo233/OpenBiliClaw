@@ -193,6 +193,12 @@ def main():
             assert rejected.json()["reason"] == "app_store_managed"
             report["update_apply"] = 409
             cfg = client.get(base + "/api/config").json()
+            if (args.app / "Contents/Resources/sponsored").is_dir():
+                prepared = client.post(base + "/api/config/sponsored/prepare")
+                prepared.raise_for_status()
+                assert prepared.json()["ok"] is True
+                assert cfg["llm"]["sponsored"]["runtime_available"] is True
+                report["bundled_sponsored_runtime_available"] = True
             embedding = cfg["llm"]["embedding"]
             endpoint = embedding["base_url"].removesuffix("/v1").rstrip("/")
             assert urlsplit(endpoint).hostname == "127.0.0.1"

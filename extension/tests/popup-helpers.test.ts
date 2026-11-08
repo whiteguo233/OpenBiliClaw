@@ -25,6 +25,7 @@ import {
   getRecommendationCardKind,
   getNextExpandedCognitionIndex,
   getRuntimeRefreshSubmissionState,
+  getSourceStrategyLabel,
   getSubmissionProgressMessage,
   mergeDelightCandidate,
   normalizeCognitionUpdateCard,
@@ -44,6 +45,7 @@ import {
   normalizeRecommendation,
   normalizeProfileSummary,
   normalizeRuntimeStatus,
+  isPublicWebSource,
   normalizeSavedItem,
   platformDisplayName,
   resolveInitBangumiUsername,
@@ -98,10 +100,50 @@ test("platformDisplayName maps known platforms and passes through unknown", () =
   assert.equal(platformDisplayName("bgm"), "Bangumi");
   assert.equal(platformDisplayName("gh"), "GitHub");
   assert.equal(platformDisplayName("linuxdo"), "Linux.do");
+  assert.equal(platformDisplayName("web"), "网页");
   assert.equal(platformDisplayName("tiktok"), "TikTok");
   assert.equal(platformDisplayName("tt"), "TikTok");
   assert.equal(platformDisplayName("newtube"), "newtube");
   assert.equal(platformDisplayName(""), "");
+});
+
+test("public Web cards keep their URL and do not fabricate a Bilibili link", () => {
+  const url = "https://example.com/posts/public-web";
+  const item = normalizeRecommendation({
+    id: 46,
+    content_id: "sha256:cafe",
+    content_url: url,
+    source_platform: "web",
+    content_type: "article",
+    topic_label: "web-feed",
+  });
+
+  assert.equal(item.source_platform, "web");
+  assert.equal(item.topic_label, "网页订阅（RSS/Atom/JSON Feed）");
+  assert.equal(platformDisplayName(item.source_platform), "网页");
+  assert.equal(buildContentUrl(item), url);
+  assert.equal(isPublicWebSource(item), true);
+  assert.equal(
+    buildContentUrl(normalizeRecommendation({
+      content_id: "sha256:missing",
+      source_platform: "web",
+      content_type: "article",
+    })),
+    "",
+  );
+  assert.equal(
+    normalizeRecommendation({ content_url: "https://example.net/posts/1" }).source_platform,
+    "web",
+  );
+  assert.equal(
+    buildRecommendationClickPayload({
+      content_id: "sha256:inferred",
+      content_url: "https://example.net/posts/1",
+    }).source_platform,
+    "web",
+  );
+  assert.equal(getSourceStrategyLabel("web-sitemap"), "网页站点地图（Sitemap）");
+  assert.equal(getSourceStrategyLabel("web-listing"), "网页列表页");
 });
 
 test("tiktok normalizes to its own platform family, not douyin", () => {
@@ -474,14 +516,14 @@ test("normalizeRecommendation infers X source from URL when source is missing", 
   assert.equal(item.source_platform, "twitter");
 });
 
-test("normalizeRecommendation does not infer X from lookalike domains", () => {
+test("normalizeRecommendation routes X lookalikes to generic Web", () => {
   const item = normalizeRecommendation({
     id: 12,
     content_url: "https://notx.com/h/status/1790000000000000004",
     title: "not X",
   });
 
-  assert.equal(item.source_platform, "bilibili");
+  assert.equal(item.source_platform, "web");
 });
 
 test("getRecommendationCardKind renders a text card for tweet/thread items", () => {
@@ -761,6 +803,8 @@ test("normalizeDelightCandidate fills stable fallbacks and upgrades cover urls",
     cover_url: "https://i0.hdslb.com/bfs/archive/delight-cover.jpg",
     content_url: "",
     source_platform: "",
+    source_id: "",
+    source_name: "",
     published_at: "",
     published_label: "",
     content_type: "",
@@ -1236,6 +1280,7 @@ test("getPopupState shows the init CTA when uninitialized despite pending pre-in
 
 test("normalizeRuntimeStatus fills stable fallback fields", () => {
   assert.deepEqual(normalizeRuntimeStatus({ initialized: true, unread_count: "2" }), {
+    sponsored_status: {},
     initialized: true,
     recommendation_count: 0,
     pending_signal_events: 0,
@@ -1279,6 +1324,7 @@ test("normalizeRuntimeStatus preserves backend update summary fields", () => {
       initialized: true,
       recommendation_count: 5,
       pending_signal_events: 0,
+      sponsored_status: {},
       last_refresh_at: "",
       last_notification_at: "",
       unread_count: 0,
@@ -1301,6 +1347,11 @@ test("normalizeRuntimeStatus preserves backend update summary fields", () => {
       backend_update_reason: "none",
     },
   );
+});
+
+test("normalizeRuntimeStatus retains actionable free-plan notices", () => {
+  const service = { notices: [{ code: "AUTH_FAILED", requires_update: true, capabilities: ["chat"] }] };
+  assert.deepEqual(normalizeRuntimeStatus({ sponsored_status: service }).sponsored_status, service);
 });
 
 test("shouldFetchProfileSummary allows force refresh after profile is cached", () => {

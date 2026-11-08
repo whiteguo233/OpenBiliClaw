@@ -17,7 +17,7 @@ The human installer now asks for `简体中文 / 繁體中文 / English` first a
 
 Runtime recovery on this branch: saving a repaired model through the local settings API now also restarts delegated backend workers after the apply queue settles. Source, Docker and desktop entry points share this behavior; no install command or new dependency is required. On older builds, fully quit/reopen the tray app (or restart the daemon/container) after correcting the model; refreshing the browser does not update a running evaluator. See [pool recovery diagnostics](testing/2026-10-20-empty-pool-recovery.md).
 
-Source-branch dependency note (Instagram/image transport): normal Python dependency installation now requires `httpx[socks]>=0.28` and explicit `httpcore>=1.0,<2`; no extra daemon or installer step is needed. Proxied overseas cover downloads require TLS-verified `https://1.1.1.1/dns-query` reachability through the configured proxy. Only public CDN hostnames are queried; see [privacy](privacy.md). Do not disable TLS verification or public-IP validation to fix a network failure. Installer commands and their post-install summary are unchanged; this does not claim the branch has been released.
+Source-branch dependency note (Instagram/image transport): normal Python dependency installation now requires `httpx[socks]>=0.28,<1` and explicit `httpcore>=1.0,<2`; no extra daemon or installer step is needed. Proxied overseas cover downloads require TLS-verified `https://1.1.1.1/dns-query` reachability through the configured proxy. Only public CDN hostnames are queried; see [privacy](privacy.md). Do not disable TLS verification or public-IP validation to fix a network failure. Installer commands and their post-install summary are unchanged; this does not claim the branch has been released.
 
 Pick the command for the user's shell — **detect the platform from the user's environment, do not let them choose if you can tell**:
 
@@ -67,10 +67,10 @@ Either command:
    - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses the full LLM instance registry, ordered chains, API keys, and Bilibili cookie** so same-type relay endpoints are not collapsed and the user never has to retype them
 3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks language first, then LLM provider, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source. Bangumi and GitHub remain default-off in this installer wizard; after startup they can be enabled in `/setup/` or settings. GitHub anonymous repository discovery needs no login; a public username enables public starred bootstrap, and an optional PAT may be supplied only through its source credential form/config or `OPENBILICLAW_GITHUB_TOKEN`. Do not invent `agent_bootstrap.py` GitHub flags—the installer does not expose them.
-4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli` and Reddit discovery's `rdt-cli` packages are part of the default dependency set, so AI one-line installs do not need an extra flag for either one
+4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli`, Reddit discovery's `rdt-cli`, and Public Web's bounded `httpx[socks]>=0.28,<1` + direct `httpcore>=1,<2` socket backend are part of the default dependency set, so AI one-line installs need no extra flag or browser service for them
 5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN over available IPv4 or IPv6; the backend creates separate `0.0.0.0` and `[::]` listeners while the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
-   - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
-   - **Optional app-embedded Tailnet for native Android / iOS**: do this only when the user explicitly asks to use the `OpenBiliClaw-mobile` Android or iOS native App away from the LAN; do not claim support for its Web / Linux / macOS / Windows Flutter builds. Those mobile Apps already embed tsnet; the source-installed computer side must have **Go 1.26.6**, then run `openbiliclaw tailnet build-helper`, `openbiliclaw tailnet enable --hostname openbiliclaw-host`, and fully restart the backend. Complete the first browser login, verify with `openbiliclaw tailnet status`, and enable `openbiliclaw set-password` as defense in depth. The helper follows the effective startup port (normally `[api].port`, but `start` / `serve-api --port` overrides it); status distinguishes configured and recent listen ports. The computer does not need system Tailscale. For Tailnet-only + local access, prefer `[api].host="127.0.0.1"`; `localhost` / `0.0.0.0` also work, but a specific LAN-interface IP does not because the helper upstream is fixed to loopback. `OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` explicitly override local/base config and make the CLI reject shadowed writes; Auth Key / helper-path variables are runtime-only. Do not enable Funnel / Serve, do not claim the browser extension supports `http://100.x`, and do not persist `OPENBILICLAW_TAILNET_AUTH_KEY` in config or command arguments; if unattended enrollment is explicitly required, pass a short-lived key in the parent process environment and let the supervisor deliver it over stdin. Desktop installers already bundle the helper, but their tray executable does not expose the Tailnet CLI in the first version; packaged users quit the app, edit `[tailnet]` in the runtime `config.toml`, relaunch, and use the local Web settings—not `set-password` CLI—to enable the password. macOS 10.15 / 11 still run the local app but cannot use the helper, whose measured minimum is macOS 12. **Docker images do not bundle it in the first version**; use the HTTPS paths below for Docker. See [`docs/modules/tailnet.md`](modules/tailnet.md).
+   - **Required LAN authentication**: exposing `0.0.0.0` makes the UI reachable by any device on the network. Private APIs reject remote access until a password is configured (trusted local callers keep their existing bypass). To enable LAN/remote access, run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, configure `[api.auth].trusted_proxies` for forwarding; proxy authentication does not replace the application password. Docker bridge users must set the password inside the container and pair the extension before cookie sync; see the first-time authentication steps in `docs/docker-deployment.md`. Explicitly pass authentication environment variables into the container when using the environment-based setup.
+   - **Optional app-embedded Tailnet for native Android / iOS**: do this only when the user explicitly asks to use the `OpenBiliClaw-mobile` Android or iOS native App away from the LAN; do not claim support for its Web / Linux / macOS / Windows Flutter builds. Those mobile Apps already embed tsnet; the source-installed computer side must have **Go 1.26.6**, then run `openbiliclaw tailnet build-helper`, `openbiliclaw tailnet enable --hostname openbiliclaw-host`, and fully restart the backend. Complete the first browser login, verify with `openbiliclaw tailnet status`, and set the application password with `openbiliclaw set-password` before remote access. The helper follows the effective startup port (normally `[api].port`, but `start` / `serve-api --port` overrides it); status distinguishes configured and recent listen ports. The computer does not need system Tailscale. For Tailnet-only + local access, prefer `[api].host="127.0.0.1"`; `localhost` / `0.0.0.0` also work, but a specific LAN-interface IP does not because the helper upstream is fixed to loopback. `OPENBILICLAW_TAILNET_ENABLED/HOSTNAME` explicitly override local/base config and make the CLI reject shadowed writes; Auth Key / helper-path variables are runtime-only. Do not enable Funnel / Serve, do not claim the browser extension supports `http://100.x`, and do not persist `OPENBILICLAW_TAILNET_AUTH_KEY` in config or command arguments; if unattended enrollment is explicitly required, pass a short-lived key in the parent process environment and let the supervisor deliver it over stdin. Desktop installers already bundle the helper, but their tray executable does not expose the Tailnet CLI in the first version; packaged users quit the app, edit `[tailnet]` in the runtime `config.toml`, relaunch, and use the local Web settings—not `set-password` CLI—to enable the password. macOS 10.15 / 11 still run the local app but cannot use the helper, whose measured minimum is macOS 12. **Docker images do not bundle it in the first version**; use the HTTPS paths below for Docker. See [`docs/modules/tailnet.md`](modules/tailnet.md).
    - **Optional public-domain HTTPS**: the installer intentionally keeps the default HTTP deployment. If the user explicitly asks for public HTTPS and already controls a DNS name pointing to the Docker host, use Compose `2.24.4+`, download / use `docker-compose.https.yml`, set `OPENBILICLAW_DOMAIN=<dns-name>`, and layer it over the selected source or prebuilt compose. Confirm TCP 80/443 reachability, then enable `set-password` and the remote extension `ext-key` flow and restart backend + Caddy; never expose bare `8420` publicly. The overlay pins Caddy, persists certificates, restricts `8420` to host loopback, and waits without binding public ports until `/api/auth/status` reports the password gate enabled. Follow [`docs/https-deployment.md`](https-deployment.md) exactly.
    - **Optional LAN/self-managed HTTPS**: the installer intentionally leaves the TLS proxy disabled and does not add the local-mode `[tls]` extra. Only enable it after asking which exact IP/hostname clients will use. Local source installs run `uv sync --extra tls`, then `uv run openbiliclaw tls-proxy enable --san <IP_OR_HOST>` and start with `uv run openbiliclaw serve-api`. Source Docker installs set comma-separated `OPENBILICLAW_TLS_SAN_NAMES` before `docker compose --profile tls up -d --build`. No remote SAN means localhost-only; this is not a public-Internet production proxy. Do not combine it with the public Caddy overlay. Follow [`docs/https-deployment.md`](https-deployment.md).
 6. Verifies the configured global LLM instance chain and embedding service with real lightweight calls before init; any healthy chat instance satisfies the chain check, while embedding remains an independent check. If either service is unavailable, bootstrap blocks init with `status=service_check_failed`.
@@ -305,6 +305,8 @@ embedding choice is instead pointed at the compose sidecar
 `http://ollama:11434/v1` before config is copied into `/app/runtime`.
 
 ### Step 1 — Pick an LLM service
+
+First offer the free Qwen3-8B / Qwen3.5-4B + BGE-M3 scheme. Use the backend's `/setup/` page or `openbiliclaw init` interactive guide; do not invent a `--provider sponsored` bootstrap flag. The guide prepares and verifies the runtime, probes the selected model and embedding, and saves the normal config. An unpublished runtime catalog is a real blocker for that option; report it and preserve the user's current configuration. The BYOK menu below applies when the user selects their own provider. For free chat, skip the shared-key question and offer two vector modes: cloud BGE-M3 (recommended default) or existing/local Ollama. Local mode still requires preparing and checking the selected model before initialization.
 
 Tell the user, in plain Chinese (or the conversation's language):
 
@@ -960,9 +962,138 @@ as configured, not calibrated: only the user's real calibration record can justi
 - `scripts/install.sh` — the installer itself (the command above)
 - `scripts/agent_bootstrap.py` — the Python contract core invoked by install.sh
 
+### Dynamic website discovery browser runtime
+
+Managed Ego routing defaults to native system proxy discovery. An explicit `GET/PUT /api/custom-sources/executors/ego/network` preference stores exact direct DNS hosts in private `ego-managed/network.json`; it is retained across upgrades and idle stops. Manual system proxies and their exclusions are read at each cold start; unsupported PAC/WPAD is reported instead of silently routing every site directly. Updating routes requires no live session or setup operation and never changes OS proxy settings. This preference adds no installation dependency or new TOML field.
+
+New dynamic websites use the official Ego Lite host through its native Node/CDP API.
+On macOS, deployment prepares Ego automatically, without waiting for the first chat.
+When concurrent work wakes an already initialized idle host, tasks wait within the
+connection budget for the startup owner and reuse its readiness result. Cancelling
+a waiter does not stop the owner, and a busy startup is not treated as an unavailable
+executor. The explicit preparation endpoint remains nonblocking when setup is busy.
+Local source bootstrap runs preparation with the installed runtime after dependency
+installation and before returning for `--skip-start`. The desktop app prepares on its
+first launch after installation: a drag-installed DMG has no post-install script to run
+at copy time. Actual `openbiliclaw start` / `serve-api` entry points also schedule one
+background preparation for an unfinished environment, while HTTP and the UI start normally.
+
+Preparation downloads and verifies the official app, installs it in
+`<active database directory>/ego-managed`, initializes a private profile and named host,
+and verifies its native connection. It uses the effective runtime data directory after
+migration and configuration resolution. No separate user onboarding is required.
+All managed launches use the official Ego application's own headless mode, including
+first-run setup, collection and manual-takeover screenshots. They do not display a local
+browser window. Users open the existing in-app takeover page when login or verification
+needs attention; detection alone does not open it. No extra browser, dependency or user
+setting is required. An already-running older host adopts this mode at its next normal
+cold start, without interrupting active sessions. Explicit external hosts remain unmanaged.
+API, desktop and CLI service-start checks skip a ready, installed environment even when
+its host is offline: those checks do not redownload or wake it. Rerunning local source
+installation still invokes explicit `sources prepare-ego` and verifies the native handshake,
+starting the host if needed. Transient download failures and safe command timeouts recover
+inside the same preparation call (up to three attempts, 1/3-second backoff; command budgets
+scale to 1/2/3 times their initial values). Installation has a 1200-second deadline; initialization and the native connection have a separate 300-second deadline.
+Within that connection deadline, the native readiness CLI can wait up to 120 seconds. A measured cold host remained alive and completed its handshake after about 70 seconds; the previous 20-second cap repeatedly interrupted that valid startup. Readiness still requires the actual version and Default profile marker, and cancellation or the overall deadline still cleans up the owned host.
+If chat authoring begins while deployment preparation is still running, it waits for that owner's result within the installation plus connection budget (1500 seconds), then continues the real website observation. It does not mark progress as a failed draft or start a duplicate installation. Cancelling this waiting chat leaves the preparation owner running; the settings preparation endpoint still returns progress immediately.
+A timed-out setup action is not replayed: the owned host is stopped, then a fresh connection
+observes the actual page and resumes. Explicit signature/trust refusals and unknown screens
+remain failures. Exhausted failures can retry explicitly or at the next service start.
+Successful preparation and completed workflows share a 120-second idle grace, even if no
+workflow was opened. Reusing an online host also schedules reclamation. The source-install
+CLI reclaims an unused managed host when it exits; the printed success describes the
+completed handshake, not a permanently running browser. Active session leases prevent cleanup.
+The API owns and cancels its preparation task on shutdown.
+Once a host is prepared, opening a workflow session uses that plan's existing time budget
+for the combined native initialization steps. Individual native commands keep their
+30-second limit; startup, page navigation and collection remain capped by the whole run.
+
+The settings action **Prepare Ego Lite** and the command below remain explicit retry paths.
+Chat, `sources prepare`, and the source-draft API can still complete an unfinished setup;
+that work happens before the bounded 60-second page observation. Actual website tasks start
+a prepared host on demand, so the user need not keep it running. Status reads do not install
+or launch it. Embedded `create_app()` defaults to no deployment preparation; selftests and
+worker children do not install. No new user configuration switch is required. Browser
+preparation never activates a source: trial samples and activation approval still follow.
+
+```bash
+openbiliclaw sources ego-status   # read-only managed setup state
+openbiliclaw sources prepare-ego  # explicit preparation / retry
+```
+
+The manager uses the [official Ego Lite distribution](https://lite.ego.app/download),
+checks the app signature and identity, and drives only the known onboarding page through
+a temporary loopback CDP endpoint. It skips browser-data import and disables the default
+browser, Dock and crash-report options (including the observed 0.6.2.7 Chinese replacement,
+“加入用户体验计划”). All three known options must be unchecked before finishing; unknown
+or duplicate options still stop preparation. It restarts the owned host without that debugging
+port before native discovery. It does not sign in to websites or import the user's daily
+browser profile. Unknown setup screens or trust failures stop preparation with an error.
+
+Setting any nonempty `OPENBILICLAW_EGO_BROWSER`, `OPENBILICLAW_EGO_SERVER_NAME` or
+`OPENBILICLAW_EGO_PROFILE` selects an externally managed host and disables all automatic
+installation, initialization and restart for it. In external mode, the executable defaults
+to `ego-browser` on PATH and the profile ID to `Default`; the operator owns that host's
+setup and availability. The managed preparation button is hidden for external hosts.
+An Ego task space isolates pages, while cookies belong to the selected profile; tasks
+within one profile can share login state. Secrets are never serialized into workflow plans.
+Installed, prepared and currently connected are distinct states, and none proves a
+particular website trial will succeed.
+
+Managed preparation and the native adapter currently support macOS only. The upstream
+Windows beta is not supported here, and Linux/Docker has no native Ego integration or
+remote-host bridge. A Mac running Docker does not change the Linux container's capability.
+
+RSS/Atom/JSON Feed uses the default HTTP dependencies. New ordinary webpages never
+silently fall back to Playwright. Existing HTTP Sitemap/static-list recipes and saved
+Playwright workflows remain compatible. The following commands maintain only that
+legacy Playwright runtime; the `browser` extra remains a backwards-compatible alias:
+
+```bash
+pip install -e .
+openbiliclaw browser install
+# Linux only, when OS libraries are missing and the operator has package-manager privileges:
+openbiliclaw browser install --with-system-deps
+```
+
+Workflows launch the same full Chromium executable reported by the readiness check,
+including in headless mode; a separate headless-shell installation is not required.
+
+The desktop build bundles Playwright's Node driver; the command downloads Chromium
+without invoking a system Python interpreter.
+Docker builds install the default driver, Chromium and its Linux dependencies, storing
+browser binaries at `/opt/openbiliclaw-browsers`. Browser-capable Docker images support
+`linux/amd64` and `linux/arm64`; 32-bit `arm/v7` and `386` are not supported.
+Login profiles remain in the application's persistent data directory. No real account
+credentials are copied from the installer or the agent's personal browser.
+
+These legacy dependencies do not install Ego Lite; managed Ego preparation is a separate
+macOS runtime path. The native Ego adapter checks exact
+origins, methods and public DNS; it does not pin the host's socket resolution. See the
+[browser workflow module](modules/browser-workflows.md) for executor-specific boundaries.
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
+
+macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行传输；逐段校验后才缓存，服务器忽略范围时回到单流。签名、系统信任及原生握手验证仍必须全部通过。Linux/Docker 的原生 Ego 支持范围未扩大。
+
+
+## 免费模型安装与切换
+
+初始化与原有 LLM 实例列表预填“硅基流动（免费）”，Embedding Provider 下拉也提供独立选项。桌面新安装在随包组件验证通过后默认启用8B和云端BGE-M3；已有配置保持用户选择。后端打包和Docker构建必须成功纳入当前平台固定的已签名SDK，缺失或版本不符会中止。更新应用时优先使用新包固定版本，旧active缓存不会遮住新凭据；源码安装仍可通过初始化页准备组件。
+
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件/PC模型设置把免费实例加入默认链或模块链；手机可选择主实例。模型在该实例中选择8B/4B，Embedding 在原下拉框独立选择，保存并等待应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+
+源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
+
+固定组件目录为 `sponsored-runtime-2026-11-06.2`（兼容 Core0.3.234）；本次实例统一改动尚需随应用发布，旧版应用不会因为 SDK 已发布自动获得新的统一入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+
+默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。
+
+
+### 免费中继发行模式
+
+默认兼容模式继续纳入固定验签的 Rust SDK。已部署并验收的官方中继地址写入发行默认后，安装包/镜像不携带上游 Key SDK，首次使用创建独立设备身份。手工配置 `llm.sponsored.relay_url` 仅改变调用路由，不会移除旧包中的凭据；生产迁移必须发布不含 Key 的包并由供应商撤销旧 Key。[部署顺序及限制](sponsored-relay.md)。
 
 ## Mac App Store 发行通道
 

@@ -286,7 +286,11 @@ def test_preference_prompt_explains_cross_platform_signal_strength() -> None:
     assert "view / history" in system_prompt
     assert "hover / scroll / snapshot" in system_prompt
     assert "负向反馈" in system_prompt
-    assert "不能被 signal_strength 抵消" in system_prompt
+    # Contract update (2026-11-04): conflicting evidence now resolves by
+    # recency instead of "negative always wins"; signal_strength stays a
+    # per-event magnitude and must not be inflated into a topic-level verdict.
+    assert "以更近的一次为准" in system_prompt
+    assert "signal_strength 只描述这一次动作的强度" in system_prompt
 
 
 def test_compact_event_for_prompt_preserves_signal_strength() -> None:
@@ -1773,7 +1777,11 @@ async def test_analyze_events_default_drops_quick_exit_but_keeps_explicit_dislik
     assert "标题党" not in user_input, "quick-exit rows must be filtered out"
     assert "低质混剪" in user_input, "explicit dislikes must remain dislike evidence"
     assert "没写 reason 的点踩" in user_input, "metadata-level explicit dislikes must be kept"
-    assert "不要把负向事件提取为 interests" in str(system_instruction)
+    # Contract update (2026-11-04): the prompt no longer coerces negative
+    # evidence into disliked_topics; it still forbids raising interest weights
+    # from a negative event and now states the evidence scope explicitly.
+    assert "不能用来提高 interests" in str(system_instruction)
+    assert "它说明的是「这一次」，不是「这个题材」" in str(system_instruction)
 
 
 def test_maybe_filter_events_keeps_bangumi_view_and_dislike() -> None:

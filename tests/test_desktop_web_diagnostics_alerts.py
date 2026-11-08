@@ -25,7 +25,7 @@ def test_settings_logging_panel_mounts_diagnostics_alerts_section() -> None:
         assert f'id="{element_id}"' in html, f"index.html must expose #{element_id}"
 
     # 空态文案、实时区域语义与初始隐藏的列表。
-    assert "暂无异常报警" in html
+    assert "暂无异常记录" in html
     assert 'aria-live="polite"' in html
     assert 'id="diagnosticsAlertList" hidden' in html
 
@@ -83,4 +83,5 @@ def test_backend_registers_diagnostics_alerts_endpoint() -> None:
     app_py = API_APP.read_text(encoding="utf-8")
 
     assert '@app.get("/api/diagnostics/alerts")' in app_py
-    assert "get_diagnostics_alert_buffer().snapshot(since_id=since_id, limit=limit)" in app_py
+    assert "get_diagnostics_alert_buffer().snapshot(since_id=since_id, limit=500)" in app_py
+    assert "source_since_id=source_since_id" in app_py

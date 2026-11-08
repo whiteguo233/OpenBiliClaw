@@ -16,6 +16,53 @@ def test_main_recommendation_card_cover_is_a_real_link_when_url_exists() -> None
     assert "后端没有返回可打开链接；点击信号会在后台记录。" in app_js
 
 
+def test_public_web_cards_use_direct_urls_and_truthful_metadata() -> None:
+    app_js = APP_JS.read_text(encoding="utf-8")
+
+    assert '{ key: "web", label: "Web" }' in app_js
+    assert 'web: "Web"' in app_js
+    assert 'web: "web"' in app_js
+    assert "if (item.content_url) return item.content_url;" in app_js
+    assert 'if (platform === "web") return "";' in app_js
+    assert 'if (normalizeSourcePlatform(item) === "web") return "";' in app_js
+    assert '"web-feed": "网页订阅（RSS/Atom/JSON Feed）"' in app_js
+    assert '"web-sitemap": "网页站点地图（Sitemap）"' in app_js
+    assert '"web-listing": "网页列表页"' in app_js
+    assert "topic: formatSourceStrategyLabel(" in app_js
+
+
+def test_desktop_settings_can_manage_bounded_public_web_recipes() -> None:
+    app_js = APP_JS.read_text(encoding="utf-8")
+    app_css = APP_CSS.read_text(encoding="utf-8")
+    index_html = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert 'data-source-status="web"' in index_html
+    assert '<div id="webRecipeForm"' in index_html
+    assert '<form id="webRecipeStandaloneForm" hidden></form>' in index_html
+    assert '<form id="webRecipeForm"' not in index_html
+    assert 'id="webRecipeStrategy"' in index_html
+    assert 'id="webRecipeItemSelector"' in index_html
+    assert "仅访问你批准的公开 origin，遵守 robots.txt" in index_html
+    assert "不带 Cookie、不登录，也不执行网页脚本" in index_html
+    assert 'sources: "/sources"' in app_js
+    assert 'source_type: "web"' in app_js
+    assert 'control.setAttribute("form", form.id);' in app_js
+    assert 'el.closest("#webRecipeForm")' in app_js
+    assert 'method: "POST"' in app_js
+    assert 'method: "PUT"' in app_js
+    assert 'method: "DELETE"' in app_js
+    assert 'if (typeof details.detail === "string") return details.detail;' in app_js
+    assert 'web: "webEnabled"' in app_js
+    assert 'web: "shareWeb"' in app_js
+    assert 'request_timeout_seconds: getIntInput("webRequestTimeout", 15)' in app_js
+    assert 'max_response_bytes: getIntInput("webMaxResponseBytes", 2097152)' in app_js
+    assert 'web: getIntInput("shareWeb", 1)' in app_js
+    assert 'web: $("#webEnabled").value === "on"' in app_js
+    assert 'if (shares.web !== undefined) setInput("shareWeb", shares.web);' in app_js
+    assert ".web-recipe-item" in app_css
+    assert ".web-recipe-listing-fields[hidden]" in app_css
+
+
 def test_recommendation_click_tracking_uses_click_and_auxclick_without_window_open() -> None:
     app_js = APP_JS.read_text(encoding="utf-8")
 

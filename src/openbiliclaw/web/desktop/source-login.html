@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>来源登录 · OpenBiliClaw</title>
+<style>
+*{box-sizing:border-box}body{font:16px system-ui,sans-serif;background:#f6f7fb;color:#202635;margin:0;padding:24px}main{max-width:1100px;margin:auto}h1{font-size:24px}p{line-height:1.6}button,input,select{font:inherit;padding:10px;border:1px solid #ccd2dd;border-radius:8px;max-width:100%;min-width:0}button{cursor:pointer;background:white;overflow-wrap:anywhere}button.primary{background:#405ddd;color:white;border-color:#405ddd}button:disabled{opacity:.5;cursor:wait}button,input,select{min-height:44px}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #405ddd;outline-offset:3px}.controls{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}#screen{display:block;width:100%;border-radius:12px;border:1px solid #ccd2dd;background:white}#screen[hidden]{display:none}#status{min-height:24px}#fields{width:360px;max-width:100%}a{color:#405ddd}.hint{color:#616b7c;font-size:14px}
+</style>
+<main><h1>登录这个内容来源</h1>
+<p>在下方网站画面点击、扫码或完成验证。登录状态保存在运行 OpenBiliClaw 的设备上，完成后继续试跑发现流程。</p>
+<p id="status" role="status" aria-live="polite">正在打开登录窗口…</p>
+<div class="controls"><button id="refresh">刷新画面</button><button id="reopen" hidden>重新打开登录窗口</button><button data-key="Tab">下一个输入框</button><button data-key="Enter">回车</button><button id="resume" class="primary">登录完成，继续试跑</button></div>
+<div id="login-origins" class="controls" aria-label="网站请求的登录页面"></div>
+<img id="screen" alt="网站登录画面，点击可操作" hidden>
+<div class="controls"><select id="fields" aria-label="选择网站输入框"></select><input id="value" type="password" autocomplete="off" aria-label="输入内容" placeholder="在此输入选中字段的内容"><button id="fill">填入网站</button></div>
+<p class="hint">输入内容只发送到当前网站窗口。窗口最多保持 15 分钟；过期后可重新打开。</p>
+<p><a id="return-to-app" href="/web/">返回 OpenBiliClaw</a></p></main>
+<script src="/shared/i18n.js"></script>
+<script type="module">
+if(globalThis.OpenBiliClawI18n){let locale='zh-Hans';try{locale=localStorage.getItem('openbiliclaw.locale')||locale}catch{}void globalThis.OpenBiliClawI18n.init({locale,basePath:'/i18n/ui/'})}
+// Fixed destinations only: never accept an arbitrary return URL from the query.
+const mobile=location.pathname.endsWith('/m/desktop/source-login.html');
+const suffix=mobile?'/m/desktop/source-login.html':'/web/source-login.html';
+const prefix=location.pathname.endsWith(suffix)?location.pathname.slice(0,-suffix.length):'';
+if(prefix.startsWith('//'))throw new Error('Invalid backend path');
+const returnLink=document.querySelector('#return-to-app');
+returnLink.href=prefix+(mobile?'/m/#/chat':'/web/');
+returnLink.textContent=mobile?'返回手机对话':'返回 OpenBiliClaw';
+const draftId=new URLSearchParams(location.search).get('draft_id');
+const status=document.querySelector('#status'),screen=document.querySelector('#screen'),fields=document.querySelector('#fields');
+const base=`${prefix}/api/custom-sources/drafts/${encodeURIComponent(draftId||'')}`;
+const reopen=document.querySelector('#reopen');
+let lastImage='',busy=false,closed=!draftId,resumePending=false;
+const operations=[];
+async function request(path,body){const r=await fetch(base+path,{method:body===undefined?'GET':'POST',credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(!r.ok){let message='操作失败';try{message=(await r.json()).detail||message}catch{}if(r.status===401)message='请先在此浏览器登录 OpenBiliClaw，再重新打开来源登录。';const error=new Error(message);error.status=r.status;throw error}return r}
+function loginOrigins(snapshot){return snapshot.suggested_login_origins??snapshot.blocked_navigation_origins??[]}
+function renderOrigins(origins){const container=document.querySelector('#login-origins');container.replaceChildren();for(const origin of origins||[]){const button=document.createElement('button');button.textContent=`允许此登录或验证页面：${origin}`;button.addEventListener('click',()=>operate(()=>open(origin)));container.append(button)}}
+function render(snapshot){renderOrigins(loginOrigins(snapshot));const selected=fields.value;fields.replaceChildren();for(const e of snapshot.elements||[]){if(e.tag?.toLowerCase()!=='input'||!e.selector||['hidden','submit','button'].includes(e.type))continue;const option=document.createElement('option');option.value=e.selector;option.textContent=e.text||e.selector;fields.append(option)}if([...fields.options].some(o=>o.value===selected))fields.value=selected}
+async function screenshot(){if(closed)return;const blob=await(await request('/screenshot')).blob();if(lastImage)URL.revokeObjectURL(lastImage);lastImage=URL.createObjectURL(blob);screen.src=lastImage;screen.hidden=false}
+function operate(fn,{background=false}={}){
+  if(background&&(busy||closed))return Promise.resolve();
+  return new Promise(resolve=>{operations.push({fn,resolve});void drain()});
+}
+async function drain(){
+  if(busy)return;
+  busy=true;
+  while(operations.length){
+    const operation=operations.shift();
+    try{await operation.fn()}catch(error){
+      if(error.status===409){closed=true;reopen.hidden=false;screen.hidden=true;status.textContent=`${error.message}。请重新打开登录窗口后继续。`}
+      else status.textContent=error.message;
+    }finally{operation.resolve()}
+  }
+  busy=false;
+}
+async function act(action){render(await(await request('/action',action)).json());await screenshot()}
+screen.addEventListener('click',event=>{const bounds=screen.getBoundingClientRect();const action={action:'click',x:(event.clientX-bounds.left)*screen.naturalWidth/bounds.width,y:(event.clientY-bounds.top)*screen.naturalHeight/bounds.height};void operate(()=>act(action))});
+document.querySelectorAll('[data-key]').forEach(button=>button.addEventListener('click',()=>operate(()=>act({action:'key',key:button.dataset.key}))));
+document.querySelector('#fill').addEventListener('click',()=>{const input=document.querySelector('#value');const action={action:'fill',selector:fields.value,value:input.value};input.value='';void operate(()=>act(action))});
+document.querySelector('#refresh').addEventListener('click',()=>operate(async()=>{render(await(await request('/takeover',{})).json());await screenshot()}));
+reopen.addEventListener('click',()=>operate(open));
+document.querySelector('#resume').addEventListener('click',()=>{if(resumePending)return;resumePending=true;document.querySelector('#resume').disabled=true;void operate(async()=>{closed=true;status.textContent='正在试跑…';let result;try{result=await(await request('/resume',{})).json()}catch(error){closed=false;try{await open()}catch{}throw error}status.textContent=result.status==='ready'?(result.requires_activation===true?'试跑成功，请返回聊天确认更新。':'试跑成功。已有来源已恢复；新来源请返回聊天确认启用。'):result.detail||'仍需完成网站验证。';if(result.status!=='ready'){closed=false;await open()}}).finally(()=>{resumePending=false;document.querySelector('#resume').disabled=false})});
+async function open(loginOrigin=''){if(!draftId)throw new Error('缺少来源草稿 ID');const draft=await(await request('')).json();renderOrigins(draft.suggested_login_origins);const snapshot=await(await request('/takeover',loginOrigin?{login_origin:loginOrigin}:{})).json();render(snapshot);closed=false;reopen.hidden=true;status.textContent=loginOrigins(snapshot).length?'网站需要打开登录或验证页面，请确认下方地址后继续。':'请在网站画面完成登录或验证。';await screenshot()}
+await operate(open);setInterval(()=>void operate(screenshot,{background:true}),4000);
+</script></html>

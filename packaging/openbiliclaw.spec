@@ -31,6 +31,10 @@ application_icon = (
     else None
 )
 
+# Browser discovery works in frozen desktop builds using its bundled Node driver.
+# Chromium itself is installed per-user on demand by browser-install.
+_browser_datas, _browser_binaries, _browser_hiddenimports = collect_all("playwright")
+
 # --- X (Twitter) discovery dependency collection ---
 # packaging/build.py ensures twitter-cli is installed and sets OPENBILICLAW_BUNDLE_X=1 when
 # the desktop bundle should ship X discovery (the default; spec §8 = always
@@ -118,10 +122,11 @@ else:
 a = Analysis(
     [str(project_root / "packaging" / "entry.py")],
     pathex=[str(project_root / "src")],
-    binaries=[] + _tailnet_binaries + _x_binaries + _reddit_binaries,
+    binaries=[] + _tailnet_binaries + _x_binaries + _reddit_binaries + _browser_binaries,
     datas=[
         (str(project_root / "config.example.toml"), "."),
         (str(project_root / "LICENSE"), "."),
+        (str(project_root / "src/openbiliclaw/runtime/sponsored_release.json"), "openbiliclaw/runtime"),
         (str(project_root / "THIRD_PARTY_NOTICES.md"), "."),
         # Web UI + first-run setup wizard. app.py serves these via StaticFiles
         # at /web, /m, /setup; without bundling them those routes 404 in the
@@ -132,6 +137,17 @@ a = Analysis(
         # catalogs served at /i18n/ui. Without this the packaged app raises
         # CatalogError on config-show and the web UI stays in Chinese.
         (str(project_root / "src" / "openbiliclaw" / "i18n"), "openbiliclaw/i18n"),
+        # Ego's native host imports its sibling DOM module at runtime. Preserve
+        # their __file__-relative location; Python module analysis cannot collect
+        # JavaScript files referenced through file:// imports.
+        (
+            str(project_root / "src" / "openbiliclaw" / "sources" / "ego_host.mjs"),
+            "openbiliclaw/sources",
+        ),
+        (
+            str(project_root / "src" / "openbiliclaw" / "sources" / "ego_dom.mjs"),
+            "openbiliclaw/sources",
+        ),
         # Builtin chat skills (M4): SKILL.md files loaded via
         # agent/skill.py's __file__-relative builtin_skills_dir().
         (
@@ -140,7 +156,8 @@ a = Analysis(
         ),
     ]
     + _x_datas
-    + _reddit_datas,
+    + _reddit_datas
+    + _browser_datas,
     hiddenimports=[
         # --- FastAPI / Uvicorn ---
         "uvicorn",
@@ -232,7 +249,8 @@ a = Analysis(
     ]
     + _tray_hiddenimports
     + _x_hiddenimports
-    + _reddit_hiddenimports,
+    + _reddit_hiddenimports
+    + _browser_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

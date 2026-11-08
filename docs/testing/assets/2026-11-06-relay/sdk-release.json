@@ -1,0 +1,82 @@
+{
+  "tag": "sponsored-runtime-2026-11-06.2",
+  "assets": [
+    {
+      "name": "obc-sponsored-runtime-linux-arm64.tar.gz",
+      "sha256": "67750a2f20b0066f402b282c5d7c3d526c8e70ba3c12344fc52e605a3a7bf759",
+      "size": 1248832
+    },
+    {
+      "name": "obc-sponsored-runtime-linux-x86_64.tar.gz",
+      "sha256": "2d5e2ba6c5c46d6123200feab1a14eff94533b700a96e1f7bb755822840803e7",
+      "size": 1354615
+    },
+    {
+      "name": "obc-sponsored-runtime-macos-arm64.tar.gz",
+      "sha256": "530bd5d0afdac52fc4209e7998f52236f08c596900db47e58fc87ae216a048ba",
+      "size": 1150681
+    },
+    {
+      "name": "obc-sponsored-runtime-macos-x86_64.tar.gz",
+      "sha256": "ff607e0321ff26b04fffce4daac627331114831d3349332cc842a5491ccff82f",
+      "size": 1319855
+    },
+    {
+      "name": "obc-sponsored-runtime-windows-x86_64.tar.gz",
+      "sha256": "ee737cd0aacd2118ca7b23c58fecb09774a41e9f1299bbd7da98f18193caed68",
+      "size": 1187843
+    },
+    {
+      "name": "sponsored_release.json",
+      "sha256": "0873004bb82fa7ac631da4460784c162c80b818f959e51fedd6e7bf3a282705f",
+      "size": 1914
+    }
+  ],
+  "manifests": [
+    {
+      "platform": "linux-arm64",
+      "runtime_sha": "2414cb1f0d9ad084e1694d44da2911956dd8548f",
+      "core_sha": "a135ff8c05fe52a2751fa63a826ebd13c3650eda",
+      "core_min": "0.3.234",
+      "core_max": "0.3.234",
+      "platform_signing": "manifest-only",
+      "notarization_id": null
+    },
+    {
+      "platform": "linux-x86_64",
+      "runtime_sha": "2414cb1f0d9ad084e1694d44da2911956dd8548f",
+      "core_sha": "a135ff8c05fe52a2751fa63a826ebd13c3650eda",
+      "core_min": "0.3.234",
+      "core_max": "0.3.234",
+      "platform_signing": "manifest-only",
+      "notarization_id": null
+    },
+    {
+      "platform": "macos-arm64",
+      "runtime_sha": "2414cb1f0d9ad084e1694d44da2911956dd8548f",
+      "core_sha": "a135ff8c05fe52a2751fa63a826ebd13c3650eda",
+      "core_min": "0.3.234",
+      "core_max": "0.3.234",
+      "platform_signing": "macos-notarized",
+      "notarization_id": "0ceac784-598c-4277-b3e8-306e82754f7f"
+    },
+    {
+      "platform": "macos-x86_64",
+      "runtime_sha": "2414cb1f0d9ad084e1694d44da2911956dd8548f",
+      "core_sha": "a135ff8c05fe52a2751fa63a826ebd13c3650eda",
+      "core_min": "0.3.234",
+      "core_max": "0.3.234",
+      "platform_signing": "macos-notarized",
+      "notarization_id": "85297ab6-7148-4266-a814-fd295c431b85"
+    },
+    {
+      "platform": "windows-x86_64",
+      "runtime_sha": "2414cb1f0d9ad084e1694d44da2911956dd8548f",
+      "core_sha": "a135ff8c05fe52a2751fa63a826ebd13c3650eda",
+      "core_min": "0.3.234",
+      "core_max": "0.3.234",
+      "platform_signing": "manifest-only",
+      "notarization_id": null
+    }
+  ]
+}
