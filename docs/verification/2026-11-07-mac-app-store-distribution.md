@@ -113,3 +113,12 @@ build 3 的出口合规问卷选「与 Apple 操作系统加密并用的标准�
 - Xcode 命令行上传报 `Failed to Use Accounts`。商店安装包已准备好，待在解锁的 Xcode Organizer 中上传。App Store Connect 的上传列表仍只有 build 2 和 build 3。
 
 本机归档目录为 `2026-11-09/OpenBiliClaw-1.0.0-4-Store.xcarchive`，安装包和验证记录分别保存在同日的 `OpenBiliClaw-1.0.0-4-Store-export/` 和 `OpenBiliClaw-1.0.0-4-evidence/`。
+
+### 2026-11-09 基于最新主干的 build 5
+
+- 基线为主干 `8b760446`。首轮 ARM64 沙盒验证发现首启的免费组件准备请求被 degraded 路由守卫拦为 503。回归复现后补齐恢复入口，定向打包、语言和运行时测试 285 passed / 2 skipped，degraded 路由组 22 passed。Ruff、Swift 类型检查和源码 MyPy 通过。
+- 发行源码为 `7333a6d7`。[GitHub Actions](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42522818585) 完成了沙盒启动、9 项 HTTP、免费组件准备、同机 LAN 手机网页、内置 Ollama 384 维向量、IPv6 双启动和退出清理。测试归档按 GitHub SHA-256 校验。
+- 最终发行包换入同一主干对应的新版 ARM64 Rust 组件。私有构建完成原生编译和策略自检，组件原始签名清单、Core/Rust 提交及 SHA-256 另行核验。打包后解包确认 244 个 Mach-O 均为 arm64，App 与安装包签名、发行描述文件和 helper 沙盒继承均通过。GitHub 完整 App 运行测试使用固定的公开 SDK，最新私有 SDK 通过独立原生构建和最终安装包验签。
+- Apple 官方命令行于北京时间 05:17 完成上传。实际上传包为 265,064,526 字节，SHA-256 `946000f4146354c6b169d40f34077ce5fc0cb1004ecef1552d539ce7bbe5f5eb`，交付 ID `0722aa10-587a-4341-b29e-5a5ccc76f7ba`。同一交付的 Apple 状态为 `VALID`、`VALID_BINARY`、`APP_STORE_ELIGIBLE`，构建号为 5。待选入 macOS 1.0.0 重新提审。
+
+本机证据保存在 `2026-11-09/OpenBiliClaw-1.0.0-5-evidence/`，签名安装包位于 `OpenBiliClaw-1.0.0-5-Store-export/`。

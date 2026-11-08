@@ -171,4 +171,4 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 - [免费中继部署与抓包边界](sponsored-relay.md)
 - [2026-11-06 中继与主应用验收](testing/2026-11-06-relay-delivery.md)
 
-- [Mac App Store 桌面版](mac-app-store.md)记录独立沙盒构建、进程与数据边界、`1.0.0 (3)` 二进制失效和 Apple Silicon 构建流程。
+- [Mac App Store 桌面版](mac-app-store.md)记录独立沙盒构建、进程与数据边界和 Apple Silicon build 5 的上传及审核状态。

@@ -123,7 +123,7 @@ Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runn
 
 | Implemented feature | Status | Boundary |
 |---|---|---|
-| Separate sandboxed native host + frozen helpers | Build 5 candidate | The Apple Silicon candidate includes main at `8b760446`. Store listing `OpenBiliClaw Hub`, installed app `OpenBiliClaw`, bundle `com.openbiliclaw.backend`, container profile, host lifetime supervision, optional SMAppService login item and App Store managed updates. |
+| Separate sandboxed native host + frozen helpers | Build 5 validated | App Store Connect processed Apple Silicon build `1.0.0 (5)` as `VALID_BINARY`. It includes main at `8b760446`. Store listing `OpenBiliClaw Hub`, installed app `OpenBiliClaw`, bundle `com.openbiliclaw.backend`, container profile, host lifetime supervision, optional SMAppService login item and App Store managed updates. |
 | Bundled free-model runtime | Implemented | Verify the signed upstream bundle before staging it. Place the runtime in `Contents/MacOS` for Store signing and keep the signed model policy in Resources. The host verifies nested code at launch. |
 | Apple Silicon Store payload | Implemented | The embed phase thins universal code to arm64, removes Intel-only sidecars for Ollama's Intel runner, and rejects any other Mach-O without an arm64 slice. The archive smoke exercises a real embedding on the bundled runner. |
 | Store app display name | Candidate | The installed app, native window, menu accessibility label and localized Quit action use `OpenBiliClaw`; the archive contains `OpenBiliClaw.app`. |

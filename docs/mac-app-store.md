@@ -1,6 +1,6 @@
 # Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 在提交后被 Apple 标记为「二进制文件无效」。build 5 以主干 `8b760446` 为基础重新构建 Apple Silicon 包，取代已验签的 build 4 候选。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。Apple Silicon 的 `1.0.0 (5)` 基于主干 `8b760446`，已上传且 Apple 返回 `VALID_BINARY`、`APP_STORE_ELIGIBLE`。待在 App Store Connect 选入 1.0.0 并重新提审。
 
 安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 

@@ -5,6 +5,7 @@
 ## v0.3.235：统一免费 Provider 与动态来源（2026-11-08）
 
 - Mac App Store build 5 合入主干 `8b760446`，打包签名免费模型运行组件；商店版由宿主校验嵌套代码，并关闭运行时下载 Ego Lite 的入口。
+- Mac App Store build 5 已上传，Apple 处理结果为 `VALID_BINARY` 和 `APP_STORE_ELIGIBLE`，待重新提审。[构建及上传验收](verification/2026-11-07-mac-app-store-distribution.md#2026-11-09-基于最新主干的-build-5)
 - 修复首启无模型配置时准备免费组件返回 503 的问题。配置写入鉴权继续作用于该路由。
 
 - 免费初始化修复合入收尾：Core 合并前回归 707 passed，Rust 81 passed，静态检查通过；临时后端停止，保留验收证据及 4B 工具协议 / 浏览器实测缺口。此次不发安装包或 SDK，后续需同步构建。[合入验证](testing/2026-11-09-setup-progressive-options.md#2026-11-09-合入验证与清理)。

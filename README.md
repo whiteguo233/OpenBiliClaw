@@ -1000,4 +1000,4 @@ OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站
 
 请求预算数据流（2026-11-08，待发布）：`llm.timeout → LLM 注册表 / 免费适配器 → Rust IPC timeout_ms → HTTP 剩余预算`。初始化根据注册表预算计算阶段期限；组件边界和签名模型输入不变。
 
-Mac App Store 桌面版 `OpenBiliClaw Hub 1.0.0 (3)` 被 Apple 标记为「二进制文件无效」，下一构建面向 Apple Silicon。独立沙盒构建和提审记录见 [商店版说明](docs/mac-app-store.md)。
+Mac App Store 桌面版 `OpenBiliClaw Hub 1.0.0 (5)` 面向 Apple Silicon，已上传并通过 Apple 二进制处理，待重新提审。[商店版说明](docs/mac-app-store.md)
