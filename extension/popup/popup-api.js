@@ -1291,10 +1291,9 @@ export async function fetchSourceShareSuggestion(overrides = null) {
 export async function probeConfigService(kind, config, instanceId = "") {
   return requestJson("/config/probe-service", {
     method: "POST",
-    // Keep the popup alive beyond the backend's bounded 120s LLM cold-start
-    // probe window; otherwise the browser aborts a request the backend still
-    // legitimately owns.
-    timeoutMs: kind === "sponsored" ? 370_000 : 125_000,
+    // Outlive the backend's 120s LLM and 180s free embedding probe budgets,
+    // including one local RPM recovery window.
+    timeoutMs: kind === "sponsored" ? 370_000 : kind === "embedding" ? 190_000 : 125_000,
     headers: {
       "Content-Type": "application/json",
     },

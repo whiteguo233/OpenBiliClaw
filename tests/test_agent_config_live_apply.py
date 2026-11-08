@@ -35,11 +35,13 @@ if TYPE_CHECKING:
 
 @pytest.mark.parametrize("separate_worker", [False, True])
 @pytest.mark.parametrize("echo_tailnet", [False, True])
+@pytest.mark.parametrize("echo_locale", [False, True])
 async def test_free_model_switch_applies_while_learning_is_running(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     separate_worker: bool,
     echo_tailnet: bool,
+    echo_locale: bool,
 ) -> None:
     import sys
 
@@ -81,6 +83,9 @@ async def test_free_model_switch_applies_while_learning_is_running(
                     "default_chain": [alternate_id, "siliconflow-free"],
                 },
             }
+            if echo_locale:
+                # Desktop serializes the equivalent canonical language tag.
+                update["language"] = "zh-Hans"
             if echo_tailnet:
                 # Both settings UIs echo unchanged Tailnet settings on save.
                 update["tailnet"] = (await client.get("/api/config")).json()["tailnet"]
@@ -437,3 +442,20 @@ async def test_cookie_settings_keep_full_rebuild_even_when_coalesced_with_agent_
     assert ctx.account_sync_service.x_client._cookie == new_cookie
     if mode != "direct":
         assert ctx.agent_loop.max_steps == 63
+
+
+@pytest.mark.parametrize("language", ["en-US", "zh-Hant"])
+def test_chain_switch_with_real_language_change_still_requires_rebuild(
+    monkeypatch: pytest.MonkeyPatch, language: str
+) -> None:
+    from openbiliclaw.llm.base import LLMRegistry
+
+    config = Config(language="zh", llm=LLMConfig(instance_routing=True, default_chain=["old"]))
+    registry = LLMRegistry()
+    monkeypatch.setattr(registry, "is_chat_capable", lambda _instance: True)
+    ctx = RuntimeContext(config=config, llm_registry=registry)
+    candidate = copy.deepcopy(config)
+    candidate.llm.default_chain = ["new"]
+    candidate.language = language
+    assert not ctx.try_apply_llm_instance_config(candidate)
+    assert ctx.config is config

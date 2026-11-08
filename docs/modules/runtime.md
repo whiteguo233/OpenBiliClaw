@@ -1001,3 +1001,8 @@ Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安
 ## Core 0.3.235 免费组件发行
 
 固定目录更新为 `sponsored-runtime-2026-11-08.1`，五平台以 Core `484308bf8f1a7b42ac38565b61e1c838b3423a9d` 生成任务策略并签名，兼容范围严格为 0.3.235。SDK 的公开 API、任务协议、模型和额度保持，Mac 双架构完成 Apple Accepted 公证，Windows 仍使用独立 manifest 验签。发行和真实请求结果见[发布记录](../testing/2026-11-08-release-v0.3.235.md)。
+
+
+### 2026-11-09 默认链热切换边界
+
+`RuntimeContext.try_apply_llm_instance_config(new_config)` 对完整配置比较时，将 `data_dir` 解析为相同绝对路径，并通过 `normalize_locale` 比较语言；只有同一语言别名规范化与默认实例链变化可原地应用。真实语言、Embedding、端点及模块路由变化继续完整重建，不跳过后台写入安全交接。PC 真实保存暴露的 `zh` → `zh-Hans` 误排空由此修复；模型调用保持同一稳定 registry/gate，活动任务不被取消。

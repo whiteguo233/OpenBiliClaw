@@ -154,3 +154,31 @@ def test_local_probe_allows_cold_loading_and_preserves_retryable_timeout(
     assert result["error_code"] == "EMBEDDING_BUSY" and result["retryable"]
     assert "加载" in result["error"] and "修复 Ollama" not in result["error"]
     assert budgets and 30 <= budgets[0] <= 60
+
+
+def test_free_embedding_config_probe_covers_local_rate_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class ReadyEmbedding:
+        async def probe(self) -> bool:
+            return True
+
+    cfg = configured()
+    cfg.llm.embedding.provider = "siliconflow_free"
+    cfg.llm.embedding.model = "BAAI/bge-m3"
+    client = _client(monkeypatch, tmp_path, cfg)
+    monkeypatch.setattr(
+        "openbiliclaw.llm.registry.build_embedding_service", lambda *_a: ReadyEmbedding()
+    )
+    budgets = []
+    original_wait = asyncio.wait_for
+
+    async def tracked_wait(coro: Any, timeout: float | None) -> Any:
+        if getattr(coro, "__qualname__", "").endswith("ReadyEmbedding.probe"):
+            budgets.append(timeout)
+        return await original_wait(coro, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", tracked_wait)
+    result = client.post("/api/config/probe-service", json={"kind": "embedding"}).json()
+    assert result["ok"]
+    assert budgets == [180.0]

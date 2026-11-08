@@ -35,6 +35,7 @@ from .sponsored_errors import (
     SponsoredError,
     SponsoredPolicyInvalidError,
     SponsoredProtocolError,
+    SponsoredRateLimitedError,
     SponsoredRequestTooLargeError,
     SponsoredStartupBusyError,
     SponsoredUnavailableError,
@@ -61,11 +62,24 @@ DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 10.0
 # Allow queued/cold chat five minutes within the configured overall deadline.
 # Explicit thinking keeps the full request budget. Recheck after model swaps.
 INTERACTIVE_FIRST_DELTA_TIMEOUT_SECONDS = 300.0
+# Rust quota.rs uses a 60s sliding RPM window shared by chat and embeddings.
+# A 1,055-event live initialization filled it during the post-profile embedding
+# burst (2026-11-08). Wait once, within the original operation deadline; never
+# bypass the signed cap or replay an upstream request / visible stream.
+LOCAL_RATE_WINDOW_SECONDS = 60.0
 _STDERR_TAIL_BYTES = 4096
 
 SPONSORED_ENABLED_ENV = "OPENBILICLAW_SPONSORED_ENABLED"
 SPONSORED_RUNTIME_ENV = "OPENBILICLAW_SPONSORED_RUNTIME"
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _is_local_rate_rejection(frame: Mapping[str, Any]) -> bool:
+    error = frame.get("error")
+    if frame.get("ok") is not False or not isinstance(error, Mapping):
+        return False
+    mapped = error_from_payload(error)
+    return isinstance(mapped, SponsoredRateLimitedError) and mapped.is_local
 
 
 class SponsoredProvider:
@@ -286,6 +300,9 @@ class SponsoredProvider:
                 **self._transport_budget(self._operation_timeout(contract.operation)),
             }
 
+            deadline = asyncio.get_running_loop().time() + self._operation_timeout(
+                contract.operation
+            )
             try:
                 await write_frame_async(process.stdin, request)
             except (SponsoredError, OSError) as exc:
@@ -296,10 +313,19 @@ class SponsoredProvider:
                 ) from exc
 
             try:
-                response = await asyncio.wait_for(
-                    read_frame_async(process.stdout),
-                    self._operation_timeout(contract.operation),
-                )
+                async with asyncio.timeout_at(deadline):
+                    response = await read_frame_async(process.stdout)
+                    if response.get("id") == request_id and _is_local_rate_rejection(response):
+                        logger.info("Waiting for sponsored local RPM window before one retry")
+                        await asyncio.sleep(LOCAL_RATE_WINDOW_SECONDS)
+                        request_id = uuid.uuid4().hex
+                        request = {
+                            **request,
+                            "id": request_id,
+                            **self._transport_budget(deadline - asyncio.get_running_loop().time()),
+                        }
+                        await write_frame_async(process.stdin, request)
+                        response = await read_frame_async(process.stdout)
             except TimeoutError as exc:
                 self._cancel_in_flight(process, request_id)
                 await self._stop_process()
@@ -307,7 +333,7 @@ class SponsoredProvider:
                     "sponsored runtime timed out",
                     task_id=contract.task_id,
                 ) from exc
-            except SponsoredError as exc:
+            except (SponsoredError, OSError) as exc:
                 await self._stop_process()
                 raise SponsoredUnavailableError(
                     "sponsored runtime IPC failed",
@@ -633,19 +659,22 @@ class SponsoredProvider:
             if process is None or process.stdin is None or process.stdout is None:
                 raise SponsoredUnavailableError("runtime pipes are unavailable")
             request_id = uuid.uuid4().hex
+            request = {
+                "type": "execute_stream",
+                "id": request_id,
+                "task_id": contract.task_id,
+                "contract_version": contract.contract_version,
+                "input": json.loads(payload_text),
+                **self._transport_budget(self._operation_timeout(contract.operation)),
+            }
+            deadline = asyncio.get_running_loop().time() + self._operation_timeout(
+                contract.operation
+            )
+            local_retried = False
+            emitted = False
             try:
-                async with asyncio.timeout(self._operation_timeout(contract.operation)):
-                    await write_frame_async(
-                        process.stdin,
-                        {
-                            "type": "execute_stream",
-                            "id": request_id,
-                            "task_id": contract.task_id,
-                            "contract_version": contract.contract_version,
-                            "input": json.loads(payload_text),
-                            **self._transport_budget(self._operation_timeout(contract.operation)),
-                        },
-                    )
+                async with asyncio.timeout_at(deadline):
+                    await write_frame_async(process.stdin, request)
                     while True:
                         frame = await read_frame_async(process.stdout)
                         if frame.get("id") != request_id:
@@ -654,11 +683,30 @@ class SponsoredProvider:
                             delta = frame.get("content")
                             if not isinstance(delta, str):
                                 raise SponsoredProtocolError("invalid stream delta")
+                            emitted = True
                             yield LLMStreamChunk(delta=delta)
                             continue
                         if frame.get("type") != "result":
                             raise SponsoredProtocolError("invalid stream terminal")
                         if frame.get("ok") is not True:
+                            if (
+                                not emitted
+                                and not local_retried
+                                and _is_local_rate_rejection(frame)
+                            ):
+                                logger.info("Waiting for sponsored local RPM window before stream")
+                                await asyncio.sleep(LOCAL_RATE_WINDOW_SECONDS)
+                                local_retried = True
+                                request_id = uuid.uuid4().hex
+                                request = {
+                                    **request,
+                                    "id": request_id,
+                                    **self._transport_budget(
+                                        deadline - asyncio.get_running_loop().time()
+                                    ),
+                                }
+                                await write_frame_async(process.stdin, request)
+                                continue
                             error = frame.get("error")
                             if not isinstance(error, Mapping):
                                 raise SponsoredProtocolError("invalid stream error")

@@ -23556,6 +23556,7 @@ def create_app(
     async def _probe_embedding_config(cfg: Any) -> ConfigServiceProbeResponse:
         from openbiliclaw.llm.base import LLMRegistry
         from openbiliclaw.llm.registry import build_embedding_service
+        from openbiliclaw.sponsored_runtime_state import SPONSORED_EMBEDDING_TIMEOUT_SECONDS
 
         started = time.perf_counter()
         emb_cfg = getattr(getattr(cfg, "llm", None), "embedding", None)
@@ -23564,6 +23565,10 @@ def create_app(
         timeout_s = (
             _LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS
             if provider == "ollama"
+            # User-triggered free probes must cover the same bounded local RPM
+            # wait as business embeddings. Keep background health polls short.
+            else SPONSORED_EMBEDDING_TIMEOUT_SECONDS
+            if provider == "siliconflow_free"
             else _EMBEDDING_PROBE_TIMEOUT_SECONDS
         )
         if not provider:

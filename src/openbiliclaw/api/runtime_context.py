@@ -1183,8 +1183,19 @@ class RuntimeContext:
             or not new_config.llm.instance_routing
         ):
             return False
-        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
-        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
+        # Settings canonicalize legacy language aliases (zh -> zh-Hans).
+        # Equivalent tags must not turn a chain-only switch into a full drain.
+        # A real language change still differs and requires rebuilding prompts.
+        before = replace(
+            current,
+            data_dir=str(current.data_path.expanduser().resolve()),
+            language=normalize_locale(current.language),
+        )
+        after = replace(
+            new_config,
+            data_dir=str(new_config.data_path.expanduser().resolve()),
+            language=normalize_locale(new_config.language),
+        )
         chain = after.llm.default_chain
         if not chain or any(not registry.is_chat_capable(i) for i in chain):
             return False

@@ -13720,9 +13720,9 @@ ${cardFeedbackBarHtml()}`;
     async function probeConfigService(kind, config, instanceId = "") {
       return await requestJsonStrict(ENDPOINTS.configProbe, {
         method: "POST",
-        // Backend allows a bounded 120s probe so cold local Ollama models can
-        // finish their startup retry window. The browser must outlive it.
-        timeoutMs: kind === "sponsored" ? 370000 : 125000,
+        // Outlive backend budgets: 120s LLM, 180s free embeddings including
+        // local RPM recovery; the combined legacy probe keeps its own bound.
+        timeoutMs: kind === "sponsored" ? 370000 : kind === "embedding" ? 190000 : 125000,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind, instance_id: String(instanceId || ""), config })
       });

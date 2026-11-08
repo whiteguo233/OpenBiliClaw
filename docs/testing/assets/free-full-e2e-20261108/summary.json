@@ -1,0 +1,447 @@
+{
+  "scope": "real Bilibili + SiliconFlow HTTPS + signed-policy Rust candidate; isolated data",
+  "models": {
+    "qwen8b": {
+      "model": "Qwen/Qwen3-8B",
+      "real_events": {
+        "view": 500,
+        "favorite": 455,
+        "follow": 100
+      },
+      "planned_preference_batches": 39,
+      "completed_preference_batches": 39,
+      "max_observed_preference_elapsed_seconds": 1480,
+      "first_run_stages": [
+        {
+          "stage": 1,
+          "status": "ok",
+          "reason": null
+        },
+        {
+          "stage": 2,
+          "status": "ok",
+          "reason": null
+        },
+        {
+          "stage": 3,
+          "status": "ok",
+          "reason": null
+        },
+        {
+          "stage": 4,
+          "status": "warning",
+          "reason": "discovery_partial"
+        }
+      ],
+      "first_run_partial_success": true,
+      "post_fix_cases": [
+        {
+          "name": "profile_and_desktop_mobile_surfaces",
+          "ok": true,
+          "seconds": 15.07
+        },
+        {
+          "name": "selected_model_and_real_embedding",
+          "ok": false,
+          "seconds": 43.31,
+          "error": "Embedding probe failed"
+        },
+        {
+          "name": "two_turn_sse_and_durable_history",
+          "ok": true,
+          "seconds": 53.8,
+          "turns": [
+            {
+              "deltas": 17,
+              "first_delta_seconds": 49.94,
+              "seconds": 50.21,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            },
+            {
+              "deltas": 5,
+              "first_delta_seconds": 3.44,
+              "seconds": 3.55,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            }
+          ]
+        },
+        {
+          "name": "three_parallel_http_chat_requests",
+          "ok": true,
+          "seconds": 112.99,
+          "turns": [
+            {
+              "deltas": 8,
+              "first_delta_seconds": 26.82,
+              "seconds": 27.6,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            },
+            {
+              "deltas": 0,
+              "first_delta_seconds": null,
+              "seconds": 112.93,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": true
+            },
+            {
+              "deltas": 8,
+              "first_delta_seconds": 93.11,
+              "seconds": 94.0,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            }
+          ]
+        },
+        {
+          "name": "real_recommendation_cards_and_feedback_idempotency",
+          "ok": true,
+          "seconds": 0.11,
+          "recommendation_count": 10,
+          "cards_with_expression": 10,
+          "feedback_saved": true,
+          "duplicate_idempotent": true
+        }
+      ],
+      "tool_test": {
+        "ok": true,
+        "tool_results": [
+          {
+            "event": "tool_result",
+            "tool_name": "get_profile",
+            "ok": true
+          }
+        ],
+        "durable_fallback": false,
+        "reply_chars": 127,
+        "seconds": 29.16
+      },
+      "restart": {
+        "label": "qwen8b",
+        "ok": true,
+        "profile_ready": true,
+        "preserved_chain": [
+          "siliconflow-free"
+        ],
+        "preserved_turns": 6,
+        "persisted_recommendations": 12,
+        "actual_model": "Qwen/Qwen3-8B",
+        "embedding_ok": true
+      },
+      "final_embedding_probe_passed": true
+    },
+    "qwen35-4b": {
+      "model": "Qwen/Qwen3.5-4B",
+      "real_events": {
+        "view": 500,
+        "favorite": 455,
+        "follow": 100
+      },
+      "planned_preference_batches": 39,
+      "completed_preference_batches": 39,
+      "max_observed_preference_elapsed_seconds": 960,
+      "first_run_stages": [
+        {
+          "stage": 1,
+          "status": "ok",
+          "reason": null
+        },
+        {
+          "stage": 2,
+          "status": "ok",
+          "reason": null
+        },
+        {
+          "stage": 3,
+          "status": "ok",
+          "reason": null
+        },
+        {
+          "stage": 4,
+          "status": "warning",
+          "reason": "discovery_partial"
+        }
+      ],
+      "first_run_partial_success": true,
+      "post_fix_cases": [
+        {
+          "name": "profile_and_desktop_mobile_surfaces",
+          "ok": true,
+          "seconds": 1.17
+        },
+        {
+          "name": "selected_model_and_real_embedding",
+          "ok": true,
+          "seconds": 78.47,
+          "actual_model": "Qwen/Qwen3.5-4B",
+          "embedding_ok": true
+        },
+        {
+          "name": "two_turn_sse_and_durable_history",
+          "ok": true,
+          "seconds": 32.49,
+          "turns": [
+            {
+              "deltas": 5,
+              "first_delta_seconds": 0.79,
+              "seconds": 0.99,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            },
+            {
+              "deltas": 5,
+              "first_delta_seconds": 31.26,
+              "seconds": 31.47,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            }
+          ]
+        },
+        {
+          "name": "three_parallel_http_chat_requests",
+          "ok": true,
+          "seconds": 25.78,
+          "turns": [
+            {
+              "deltas": 7,
+              "first_delta_seconds": 1.33,
+              "seconds": 1.54,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            },
+            {
+              "deltas": 7,
+              "first_delta_seconds": 25.52,
+              "seconds": 25.75,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            },
+            {
+              "deltas": 7,
+              "first_delta_seconds": 23.46,
+              "seconds": 23.75,
+              "persisted": true,
+              "marker_matches": true,
+              "durable_fallback": false
+            }
+          ]
+        },
+        {
+          "name": "real_recommendation_cards_and_feedback_idempotency",
+          "ok": true,
+          "seconds": 0.1,
+          "recommendation_count": 3,
+          "cards_with_expression": 3,
+          "feedback_saved": true,
+          "duplicate_idempotent": true
+        }
+      ],
+      "tool_test": {
+        "ok": true,
+        "tool_results": [
+          {
+            "event": "tool_result",
+            "tool_name": "get_profile",
+            "ok": true
+          }
+        ],
+        "reply_chars": 188,
+        "seconds": 30.04
+      },
+      "restart": {
+        "label": "qwen35-4b",
+        "ok": true,
+        "profile_ready": true,
+        "preserved_chain": [
+          "siliconflow-free-qwen35-4b"
+        ],
+        "preserved_turns": 6,
+        "persisted_recommendations": 15,
+        "actual_model": "Qwen/Qwen3.5-4B",
+        "embedding_ok": true
+      },
+      "final_embedding_probe_passed": true
+    }
+  },
+  "regressions": {
+    "sponsored": {
+      "passed": 331,
+      "skipped": 1
+    },
+    "api_ui_config": {
+      "passed": 51
+    },
+    "real_language_change_guard": {
+      "passed": 2
+    },
+    "ruff": "passed",
+    "mypy_source_files": 413,
+    "javascript_syntax": "passed",
+    "config_show": "passed"
+  },
+  "business_limit_recovery": {
+    "requests": 330,
+    "embedding_ok": 330,
+    "failures": [],
+    "peak_signed_rate_window": 300,
+    "local_wait_count": 3,
+    "wait_messages": [
+      "Waiting for sponsored local RPM window before one retry",
+      "Waiting for sponsored local RPM window before stream",
+      "Waiting for sponsored local RPM window before one retry"
+    ],
+    "max_embedding_seconds": 60.75,
+    "stream_during_limit": {
+      "ok": true,
+      "deltas": 4,
+      "seconds": 60.53
+    },
+    "seconds": 114.28
+  },
+  "config_probe_stress_before": {
+    "real_embedding_requests": 330,
+    "ok": 318,
+    "failed": [
+      {
+        "i": 297,
+        "ok": false,
+        "seconds": 15.03,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 298,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 299,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 300,
+        "ok": false,
+        "seconds": 15.03,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 301,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 302,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 303,
+        "ok": false,
+        "seconds": 15.03,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 304,
+        "ok": false,
+        "seconds": 15.03,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 305,
+        "ok": false,
+        "seconds": 15.04,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 307,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 308,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      },
+      {
+        "i": 311,
+        "ok": false,
+        "seconds": 15.05,
+        "error_code": "EMBEDDING_BUSY"
+      }
+    ],
+    "max_seconds": 15.05,
+    "calls_over_50s": 0,
+    "peak_signed_rate_window": 300,
+    "elapsed_seconds": 64.71,
+    "policy_rpm_unchanged": 300
+  },
+  "config_probe_stress_after": {
+    "real_embedding_requests": 330,
+    "ok": 330,
+    "failed": [],
+    "max_seconds": 60.93,
+    "calls_over_50s": 8,
+    "peak_signed_rate_window": 300,
+    "elapsed_seconds": 94.96,
+    "policy_rpm_unchanged": 300
+  },
+  "ui": {
+    "free_llm_instances": 2,
+    "edit_delete_buttons": 0,
+    "embedding_model_readonly": true,
+    "embedding_dimensions_readonly": true,
+    "embedding_provider": "siliconflow_free",
+    "embedding_button_during_limit": {
+      "ok": true,
+      "latency_ms": 45341
+    },
+    "switches": [
+      {
+        "chain": [
+          "siliconflow-free"
+        ],
+        "apply_state": "applied",
+        "probe": {
+          "ok": true,
+          "model": "Qwen/Qwen3-8B",
+          "error_code": "",
+          "latency_ms": 12448
+        }
+      },
+      {
+        "chain": [
+          "siliconflow-free-qwen35-4b"
+        ],
+        "apply_state": "applied",
+        "probe": null
+      }
+    ]
+  },
+  "cleanup": [
+    {
+      "label": "qwen8b",
+      "graceful_stop": true
+    },
+    {
+      "label": "qwen35-4b",
+      "graceful_stop": true
+    }
+  ]
+}
