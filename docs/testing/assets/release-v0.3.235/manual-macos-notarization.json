@@ -1,0 +1,26 @@
+[
+  {
+    "artifact": "OpenBiliClaw-macos-v0.3.235.0e3d9bd-arm64.dmg",
+    "arch": "arm64",
+    "id": "a0c9f503-14c4-4a83-8701-e33255ba6071",
+    "status": "Accepted"
+  },
+  {
+    "artifact": "OpenBiliClaw-notary.zip",
+    "arch": "arm64",
+    "id": "8bb174d0-3701-41b7-a142-2fb4a52ee7bb",
+    "status": "Accepted"
+  },
+  {
+    "artifact": "OpenBiliClaw-macos-v0.3.235.0e3d9bd-x64.dmg",
+    "arch": "x64",
+    "id": "5136a4c4-6847-4c8e-9eda-40514346bb05",
+    "status": "Accepted"
+  },
+  {
+    "artifact": "OpenBiliClaw-notary.zip",
+    "arch": "x64",
+    "id": "cbd6372d-1dc6-44eb-a77f-f9b81ecfb5e8",
+    "status": "Accepted"
+  }
+]

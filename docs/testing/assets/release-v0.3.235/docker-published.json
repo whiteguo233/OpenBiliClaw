@@ -1,0 +1,36 @@
+[
+  {
+    "image": "ghcr.io/whiteguo233/openbiliclaw-backend:0.3.235",
+    "digest": "sha256:351e842952a1291397633c0565bbab4784a9c0c9d379ea14ad7d74aab8b09886",
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "platforms": [
+      {
+        "os": "linux",
+        "architecture": "amd64",
+        "digest": "sha256:7e0484e348c8b062be469a455002c55c3a53976f8fdc238d0ff8a4f7a43f90dd"
+      },
+      {
+        "os": "linux",
+        "architecture": "arm64",
+        "digest": "sha256:b728349a964471ed01cb7ce90fcf97abf2ca5830679162a11ca060c001b0e847"
+      }
+    ]
+  },
+  {
+    "image": "ghcr.io/whiteguo233/openbiliclaw-ollama:0.3.235",
+    "digest": "sha256:27bc242994c50e69e52854f61127251139d769fe7ed1e1a5680947e9e7139cc4",
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "platforms": [
+      {
+        "os": "linux",
+        "architecture": "amd64",
+        "digest": "sha256:d547a57e39e643e204330f001e05d0a0cf8787b33fb70118e78453de19210561"
+      },
+      {
+        "os": "linux",
+        "architecture": "arm64",
+        "digest": "sha256:3288364b8749f04a6838dc88e778812097ed6ffd5ab1810eee598365a5a152f3"
+      }
+    ]
+  }
+]
