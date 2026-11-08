@@ -22,7 +22,7 @@ Provider 统一验证：[2026-11-06 实例、Embedding 与 Rust 接入](testing/
 
 
 - [手机扫码连接](mobile-connection.md) — Web / 插件生成局域网、Tailscale、公网二维码，原生 App 扫码导入后端；[真实环境复测](verification/2026-11-05-mobile-qr-full-e2e.md)。
-- [v0.3.234 发布记录](testing/2026-11-08-release-v0.3.235.md) — 画像时间溯源、「用工具≠口味」、Codex 订阅修复与存量画像修复命令；扩展源码无变更，商店已提审同版本 `0.3.234` 复审。
+- [v0.3.235 发布记录](testing/2026-11-08-release-v0.3.235.md) — 固定免费 Provider、网站／RSS 来源与发布验证；安装包和商店状态以记录为准。
 - [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md) — 抖音发现与后台静音、首屏体验、搜索灵感修复；仓库产物和浏览器商店状态分别记录。
 - [技术合作伙伴](partners.md) — 硅基流动（SiliconFlow）为项目提供免费模型额度，「Powered by SiliconFlow」同时出现在 GitHub 项目首页、文档站与 README
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
@@ -171,4 +171,3 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 - [免费中继部署与抓包边界](sponsored-relay.md)
 - [2026-11-06 中继与主应用验收](testing/2026-11-06-relay-delivery.md)
 
-- [v0.3.235 发布与商店提交记录](testing/2026-11-08-release-v0.3.235.md)

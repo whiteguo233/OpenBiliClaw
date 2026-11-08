@@ -110,3 +110,7 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runner对cryptography 50.0.2进行了源码编译，动态链接Homebrew OpenSSL；PyInstaller同时收集Python自己的旧libssl，导致已公证应用启动时报 `_SSL_get0_group_name` 缺失。两条Mac构建工作流现在以 `OPENSSL_STATIC=1` 安装依赖并禁用wheel缓存，构建入口在PyInstaller之前用otool拒绝动态libssl/libcrypto。已有环境需先执行 `OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography`；该配置只作用于构建，不改变用户配置或SDK签名。依据：[cryptography静态构建说明](https://cryptography.io/en/latest/installation/#building-cryptography-on-macos)。
 
 安全SDK目录更新为 `sponsored-runtime-2026-11-06.1`，后端/桌面/Docker沿用固定目录强制验签暂存流程；五个平台发行、Mac旧账本兼容、公开下载与损坏包拒绝的证据见[安全验收](../testing/2026-11-06-security-metadata.md)。SDK发行不等于主应用整包已发布。
+
+### v0.3.235 组件兼容发行
+
+正式桌面与 Docker 构建继续自动纳入已验签 Rust SDK。本版固定 `sponsored-runtime-2026-11-08.1`，manifest 严格支持 Core 0.3.235；旧版 0.3.234 的组件不能直接复用。构建入口与配置不变，Mac 两架构组件均已签名公证，Windows 保持 manifest 验签；整包构建结果单独记入[发行验收](../testing/2026-11-08-release-v0.3.235.md)。

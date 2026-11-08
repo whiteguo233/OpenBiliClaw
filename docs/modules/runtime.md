@@ -997,3 +997,7 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 | runtime | 官方默认中继地址经过部署验收后，`stage_runtime_bundle` 不再下载/复制含供应商 Key 的 SDK，并拒绝旧目录混入；冻结安装包自检验证此边界。兼容模式继续验证固定 SDK，两个模式不可静默互相回退。设备认证错误与组件策略到期分开提示。公开 API `official_relay_url()`、`stage_runtime_bundle(destination)`；部署条件见 [中继说明](../sponsored-relay.md)。 |
 
 Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安装包；五平台签名/版本匹配及Mac公证已验证。中继生产地址仍未设置。[实测与发行记录](../testing/2026-11-06-relay-delivery.md)。
+
+## Core 0.3.235 免费组件发行
+
+固定目录更新为 `sponsored-runtime-2026-11-08.1`，五平台以 Core `484308bf8f1a7b42ac38565b61e1c838b3423a9d` 生成任务策略并签名，兼容范围严格为 0.3.235。SDK 的公开 API、任务协议、模型和额度保持，Mac 双架构完成 Apple Accepted 公证，Windows 仍使用独立 manifest 验签。发行和真实请求结果见[发布记录](../testing/2026-11-08-release-v0.3.235.md)。
