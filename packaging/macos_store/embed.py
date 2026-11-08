@@ -6,6 +6,7 @@ import os
 import shutil
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -32,6 +33,34 @@ def macho_kind(path: Path) -> int | None:
             return None
         header = stream.read(12)
         return struct.unpack(endian + "III", header)[2] if len(header) == 12 else None
+
+
+def prepare_arm64_payload(contents: Path) -> None:
+    """Keep Apple Silicon code and fail on unexpected incompatible binaries."""
+    resources = contents / "Resources"
+    for path in sorted(contents.rglob("*")):
+        if macho_kind(path) is None:
+            continue
+        archs = subprocess.check_output(["lipo", "-archs", str(path)], text=True).split()
+        # Ollama's universal download includes shared libraries for Intel only.
+        # Its arm64 llama-server and llama-quantize link those components statically.
+        if (
+            archs == ["x86_64"]
+            and path.parent == resources
+            and path.name.startswith(("libggml", "libllama", "libmtmd"))
+            and path.suffix in (".dylib", ".so")
+        ):
+            path.unlink()
+        elif "arm64" not in archs:
+            raise ValueError(f"Missing arm64 in {path.relative_to(contents)}: {archs}")
+        elif archs != ["arm64"]:
+            with tempfile.TemporaryDirectory(dir=path.parent) as temp:
+                native = Path(temp) / path.name
+                subprocess.run(
+                    ["lipo", str(path), "-thin", "arm64", "-output", str(native)], check=True
+                )
+                shutil.copymode(path, native)
+                native.replace(path)
 
 
 def relocate_native_tools(contents: Path) -> None:
@@ -94,6 +123,8 @@ def main() -> None:
     macos = contents / "MacOS"
     macos.mkdir(exist_ok=True)
     shutil.copy2(payload / "MacOS/OpenBiliClaw", macos / "OpenBiliClawBackend")
+    if os.environ["ARCHS"].split() == ["arm64"]:
+        prepare_arm64_payload(contents)
     relocate_native_tools(contents)
     resources = contents / "Resources"
     for language in ("en", "zh-Hans"):

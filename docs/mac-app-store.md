@@ -1,6 +1,6 @@
 # Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 已于 **2026-11-08 02:55（北京时间）提交 Apple 审核，当前状态为「等待审核」**，尚未上架。原有 Developer ID / 公证 DMG 继续使用 `packaging/build.py`，不切换为商店版。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。`1.0.0 (3)` 于 2026-11-08 02:55（北京时间）提交后被 Apple 标记为「二进制文件无效」。build 4 的商店归档面向 Apple Silicon。原有 Developer ID / 公证 DMG 使用 `packaging/build.py`。
 
 安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
@@ -45,6 +45,8 @@ uv pip install --python .venv/bin/python -e '.[dev,packaging]'
 
 构建要求完整官方 Ollama 运行时（含 runner 和动态库），并强制编译包内 Tailnet。输出 `dist/mac-app-store/OpenBiliClawStore.xcarchive`，Xcode 工程位于 `packaging/macos_store/OpenBiliClawStore.xcodeproj`。
 
+Apple Silicon 归档在签名前提取通用二进制的 arm64 切片，移除仅供 Intel runner 使用的 Ollama 侧载库，并拒绝其余缺少 arm64 的 Mach-O。Ollama v0.40.14 的 arm64 `llama-server` 和 `llama-quantize` 静态链接了相应组件。[Ollama 构建脚本](https://github.com/ollama/ollama/blob/v0.40.14/scripts/build_darwin.sh)
+
 本机 QA 可以显式加 `--local` 使用 Development / Developer ID 签名；**这不是可上传商店的发行归档**。`--provisioning-profile NAME_OR_UUID` 可指定已安装的手动 distribution profile。`--reuse-backend` 只适用于宿主 UI 改动或相同源代码/依赖的重试；改了 Python、Web 或语言包必须重新冻结后端。
 
 App 宿主只有 sandbox、network.client、network.server 三项权限。可执行 helper 只有 sandbox 与 inherit；动态库单独签名，不加 helper 权限。所有资源修改均在 Xcode 最终签名前完成，Mach-O 不作为 Resources 的普通文件打包。最终运行 `codesign --verify --deep --strict`。
@@ -68,7 +70,7 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
 - [真实环境验收记录](verification/2026-11-05-mac-app-store.md)
 - [OpenBiliClaw 1.0.0 (3) 上传、签名与版本草稿状态](verification/2026-11-07-mac-app-store-distribution.md)
 - [中英文商店文案与审核备注草稿](mac-app-store-listing.md)
-- `.github/workflows/build-mac-app-store.yml`：只读的 arm64 QA 构建与真实 HTTP 冒烟，不含 Apple 发布凭据，也不上传商店。
+- `.github/workflows/build-mac-app-store.yml` 在 Apple Silicon runner 上归档，执行真实 HTTP、私有 Ollama 向量推理和重启检查。手动触发时可传 `build_number`，下载归档后用本机发行证书签名和导出。
 
 本机实测入口：
 
@@ -77,6 +79,7 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
   "dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw.app" \
   --output /tmp/obc-store-smoke
 # 可选 --models-root ~/.ollama/models：经 HTTP 将已有公开权重导入隔离容器，验证真实推理。
+# 可选 --test-local-embedding：在隔离容器拉取 all-minilm:22m，并验证真实向量推理。
 # --crash-host：验证宿主异常退出后的 EOF 清理。
 .venv/bin/python packaging/macos_store/restart_smoke.py \
   "dist/mac-app-store/OpenBiliClawStore.xcarchive/Products/Applications/OpenBiliClaw.app" \

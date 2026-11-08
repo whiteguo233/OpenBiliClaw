@@ -63,12 +63,25 @@ def import_model(client, endpoint, root, model, tag):
     response.raise_for_status()
 
 
+def check_embedding(client, endpoint, model, dimensions):
+    response = client.post(
+        endpoint + "/api/embed",
+        json={"model": model, "input": ["沙盒中的真实向量请求"]},
+    )
+    response.raise_for_status()
+    vector = response.json()["embeddings"][0]
+    assert len(vector) == dimensions and any(vector)
+    return len(vector)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=18550)
-    parser.add_argument("--models-root", type=Path)
+    models = parser.add_mutually_exclusive_group()
+    models.add_argument("--models-root", type=Path)
+    models.add_argument("--test-local-embedding", action="store_true")
     parser.add_argument("--crash-host", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -192,18 +205,18 @@ def main():
                 owned
             )  # API + four workers + private Ollama
             print("Web, mobile, LAN, store boundaries and private Ollama HTTP passed", flush=True)
+            if args.test_local_embedding:
+                model = "all-minilm:22m"
+                pulled = client.post(endpoint + "/api/pull", json={"model": model, "stream": False})
+                pulled.raise_for_status()
+                assert pulled.json()["status"] == "success"
+                report["embedding_dimensions"] = check_embedding(client, endpoint, model, 384)
+                print("private Ollama completed a real embedding request", flush=True)
             if args.models_root:
                 for model, tag in (("bge-m3", "latest"), ("qwen2.5", "0.5b")):
                     import_model(client, endpoint, args.models_root, model, tag)
                 print("public model blobs imported into isolated sandbox via HTTP", flush=True)
-                vectors = client.post(
-                    endpoint + "/api/embed",
-                    json={"model": "bge-m3", "input": ["沙盒中的真实向量请求"]},
-                )
-                vectors.raise_for_status()
-                vector = vectors.json()["embeddings"][0]
-                assert len(vector) == 1024 and any(vector)
-                report["embedding_dimensions"] = len(vector)
+                report["embedding_dimensions"] = check_embedding(client, endpoint, "bge-m3", 1024)
                 reply = client.post(
                     endpoint + "/api/generate",
                     json={

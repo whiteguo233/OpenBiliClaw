@@ -918,4 +918,4 @@ OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站
 
 </details>
 
-Mac App Store 桌面版 `OpenBiliClaw Hub 1.0.0 (3)` 已提交审核，当前等待审核，尚未上架。独立沙盒构建、能力边界和提审记录见 [商店版说明](docs/mac-app-store.md)。
+Mac App Store 桌面版 `OpenBiliClaw Hub 1.0.0 (3)` 被 Apple 标记为「二进制文件无效」，下一构建面向 Apple Silicon。独立沙盒构建和提审记录见 [商店版说明](docs/mac-app-store.md)。

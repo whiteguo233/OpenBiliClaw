@@ -907,4 +907,4 @@ Default data flow: browser extension → your configured local OpenBiliClaw back
 
 </details>
 
-The separate sandboxed Mac App Store app, `OpenBiliClaw Hub 1.0.0 (3)`, has been submitted and is waiting for review; it is not published yet. See [build, limitations and submission records](docs/mac-app-store.md).
+Apple marked `OpenBiliClaw Hub 1.0.0 (3)` Invalid Binary. The next Mac App Store build targets Apple Silicon. See [sandbox build and submission records](docs/mac-app-store.md).
