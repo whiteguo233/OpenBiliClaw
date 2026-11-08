@@ -1,0 +1,46 @@
+name: Publish verified Intel installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (X.Y.Z)"
+        required: true
+      build_run_id:
+        description: "Successful Build Desktop Installers run at the desktop tag commit"
+        required: true
+      asset_sha256:
+        description: "SHA-256 of the reviewed, signed and notarized Intel DMG"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-intel-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      ASSET_SHA256: ${{ inputs.asset_sha256 }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify installer build provenance
+        run: python .github/scripts/promote-intel-installer.py verify-source
+      - uses: actions/download-artifact@v7
+        with:
+          name: openbiliclaw-macos-installer-x64
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: intel-artifact
+      - name: Verify bytes and publish the same installer to both releases
+        run: python .github/scripts/promote-intel-installer.py publish

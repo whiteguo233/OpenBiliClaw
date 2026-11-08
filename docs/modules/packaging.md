@@ -114,3 +114,7 @@ Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runn
 ### v0.3.235 组件兼容发行
 
 正式桌面与 Docker 构建继续自动纳入已验签 Rust SDK。本版固定 `sponsored-runtime-2026-11-08.1`，manifest 严格支持 Core 0.3.235；旧版 0.3.234 的组件不能直接复用。构建入口与配置不变，Mac 两架构组件均已签名公证，Windows 保持 manifest 验签；整包构建结果单独记入[发行验收](../testing/2026-11-08-release-v0.3.235.md)。
+
+### Intel 已验证产物发布
+
+`publish-intel-installer.yml` 手动接收版本、成功的 `build-installers.yml` run ID 和已复核 DMG SHA-256。先确认构建提交等于对应 desktop tag，再下载该次 Intel 产物、校验版本／架构／提交后缀与字节摘要，将同一包附到 desktop 和 aggregate release。不会重新构建，不替换已有不同摘要的资产；仅移除文件名的构建 SHA 后缀，包内签名、公证和字节保持。脚本接口是 `.github/scripts/promote-intel-installer.py verify-source|publish`，仅供发布 CI 使用，不新增用户 CLI／配置。
