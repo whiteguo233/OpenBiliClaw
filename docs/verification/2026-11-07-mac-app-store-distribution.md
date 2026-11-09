@@ -1,6 +1,6 @@
 # OpenBiliClaw 商店发行归档验证（2026-11-07）
 
-当前商店提交为 `1.0.0 (3)`：2026-11-08 02:55（北京时间）已完成最终提审，状态为「等待审核」。下方保留 build 2 和前期预检查历史，最新进展见文末。
+当前商店提交为 `1.0.0 (5)`，于 2026-11-10 00:08（北京时间）重新提审。App Store Connect 显示「等待审核」。[重新提审回执](#2026-11-10-build-5-重新提审)
 
 代码提交：`00bb7c3cadd2833adacd3ce135a2ee10629809b5`。商店营销版本为 `1.0.0`、build `2`；共享后端仍为 `0.3.233`。本轮只修改原生产品名称与对应构建、冒烟入口，复用上一轮同源冻结后端。
 
@@ -110,7 +110,7 @@ build 3 的出口合规问卷选「与 Apple 操作系统加密并用的标准�
 - GitHub Actions 以提交 `593db6e4` 生成 `1.0.0 (4)`，9 项真实 HTTP、同机局域网的手机页面请求、内置 Ollama 384 维向量请求、Tailnet 二进制自检、IPv6 重启和退出清理均通过。[GitHub 构建及测试](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42500305550)
 - GitHub 归档按发布的 SHA-256 校验后，用本机已有的 Apple Distribution 证书重新签名，并用 Mac App Store Installer 证书生成安装包。解包复验了全部 241 个 Mach-O 的 arm64 切片、App 签名、安装包签名、沙盒权限和发行描述文件。签名安装包为 220,018,915 字节，SHA-256 `333d322208d8a1c590dcbfde729d431c7a28d80a0c3b68719c2fbafcbbfa24ea`。本机为 Intel，运行测试使用 GitHub 的 Apple Silicon 沙盒归档。
 - 打包相关 pytest 为 138 passed / 2 skipped，修改文件的 Ruff 与 `git diff --check` 通过。
-- Xcode 命令行上传报 `Failed to Use Accounts`。商店安装包已准备好，待在解锁的 Xcode Organizer 中上传。App Store Connect 的上传列表仍只有 build 2 和 build 3。
+- Xcode 命令行上传报 `Failed to Use Accounts`，当时 App Store Connect 的上传列表只有 build 2 和 build 3。后续上传的是 build 5。
 
 本机归档目录为 `2026-11-09/OpenBiliClaw-1.0.0-4-Store.xcarchive`，安装包和验证记录分别保存在同日的 `OpenBiliClaw-1.0.0-4-Store-export/` 和 `OpenBiliClaw-1.0.0-4-evidence/`。
 
@@ -119,6 +119,14 @@ build 3 的出口合规问卷选「与 Apple 操作系统加密并用的标准�
 - 基线为主干 `8b760446`。首轮 ARM64 沙盒验证发现首启的免费组件准备请求被 degraded 路由守卫拦为 503。回归复现后补齐恢复入口，定向打包、语言和运行时测试 285 passed / 2 skipped，degraded 路由组 22 passed。Ruff、Swift 类型检查和源码 MyPy 通过。
 - 发行源码为 `7333a6d7`。[GitHub Actions](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42522818585) 完成了沙盒启动、9 项 HTTP、免费组件准备、同机 LAN 手机网页、内置 Ollama 384 维向量、IPv6 双启动和退出清理。测试归档按 GitHub SHA-256 校验。
 - 最终发行包换入同一主干对应的新版 ARM64 Rust 组件。私有构建完成原生编译和策略自检，组件原始签名清单、Core/Rust 提交及 SHA-256 另行核验。打包后解包确认 244 个 Mach-O 均为 arm64，App 与安装包签名、发行描述文件和 helper 沙盒继承均通过。GitHub 完整 App 运行测试使用固定的公开 SDK，最新私有 SDK 通过独立原生构建和最终安装包验签。
-- Apple 官方命令行于北京时间 05:17 完成上传。实际上传包为 265,064,526 字节，SHA-256 `946000f4146354c6b169d40f34077ce5fc0cb1004ecef1552d539ce7bbe5f5eb`，交付 ID `0722aa10-587a-4341-b29e-5a5ccc76f7ba`。同一交付的 Apple 状态为 `VALID`、`VALID_BINARY`、`APP_STORE_ELIGIBLE`，构建号为 5。待选入 macOS 1.0.0 重新提审。
+- Apple 官方命令行于北京时间 05:17 完成上传。实际上传包为 265,064,526 字节，SHA-256 `946000f4146354c6b169d40f34077ce5fc0cb1004ecef1552d539ce7bbe5f5eb`，交付 ID `0722aa10-587a-4341-b29e-5a5ccc76f7ba`。同一交付的 Apple 状态为 `VALID`、`VALID_BINARY`、`APP_STORE_ELIGIBLE`，构建号为 5。
 
 本机证据保存在 `2026-11-09/OpenBiliClaw-1.0.0-5-evidence/`，签名安装包位于 `OpenBiliClaw-1.0.0-5-Store-export/`。
+
+### 2026-11-10 build 5 重新提审
+
+在 macOS 1.0.0 版本中换入 Apple Silicon build 5，按包内 TLS / WireGuard 标准加密算法和中国大陆发行范围填写出口合规问卷。Apple 清除合规缺项后，通过「更新审核」及「重新提交至 App 审核」提交。
+
+Apple 在审核详情中显示提交时间为 **2026-11-10 00:08（北京时间）**，提交 ID 为 `3f87d5f8-bab3-4a64-9a4a-7d2de420dbb1`。唯一审核项目为 macOS App `1.0.0 (5)`，状态为「等待审核」。重新打开分发页后，版本仍显示「正在等待审核」。[App Store Connect 版本页](https://appstoreconnect.apple.com/apps/6831698888/distribution/macos/version/inflight)
+
+本机 build 5 evidence 目录保存了 `asc-review-submitted.json` 和 `asc-review-build5.jpg`。

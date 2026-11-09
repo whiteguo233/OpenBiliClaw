@@ -985,4 +985,4 @@ Default data flow: browser extension → your configured local OpenBiliClaw back
 
 Request budget flow (pending release, 2026-11-08): `llm.timeout → LLM registry / free adapter → Rust IPC timeout_ms → HTTP remaining budget`. Guided initialization derives its watchdog from the registry budget; component boundaries and signed model input are unchanged.
 
-`OpenBiliClaw Hub 1.0.0 (5)` targets Apple Silicon. App Store Connect processed and validated the uploaded binary. Resubmission is pending. [Mac App Store build and review record](docs/mac-app-store.md)
+`OpenBiliClaw Hub 1.0.0 (5)` targets Apple Silicon. Apple validated the binary, and the resubmitted build is waiting for review. [Mac App Store build and review record](docs/mac-app-store.md)

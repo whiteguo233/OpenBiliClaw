@@ -1,12 +1,12 @@
 # Mac App Store 桌面版
 
-商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。Apple Silicon 的 `1.0.0 (5)` 基于主干 `8b760446`，已上传且 Apple 返回 `VALID_BINARY`、`APP_STORE_ELIGIBLE`。待在 App Store Connect 选入 1.0.0 并重新提审。
+商店版是独立的 **OpenBiliClaw** macOS App，bundle ID 为 `com.openbiliclaw.backend`，与手机 App `com.openbiliclaw.mobile` 分开。Apple Silicon 的 `1.0.0 (5)` 基于主干 `8b760446`，已上传且 Apple 返回 `VALID_BINARY`、`APP_STORE_ELIGIBLE`。2026-11-10 00:08（北京时间）已重新提审，App Store Connect 显示「等待审核」。[审核回执](verification/2026-11-07-mac-app-store-distribution.md#2026-11-10-build-5-重新提审)
 
 安装后的桌面 App 名称为 `OpenBiliClaw`，商店名称为 `OpenBiliClaw Hub`，中文副标题为「你的 AI 内容中枢」。同账号手机 App 已占用 `OpenBiliClaw`，Apple 后台拒绝独立 macOS 记录同名，现名称已通过校验并保存。发行定价为免费，不设置 App 内购买；用户自行配置的第三方模型服务费用由对应服务决定。
 
-本次按发行方要求仅供应中国大陆，已重新打开后台核验：1 个供应地区，中国大陆为「App 发布时供应」，法国、美国及其余地区均为「未供应」，不自动加入未来地区。build 3 的加密问卷按标准算法（包内 TLS / WireGuard）及不在法国分发填写，出口合规缺项已消除。发行方确认具备第三方内容所需使用权后，内容版权选择「是」并保存、重新载入核验；随后完成「添加以供审核」和最终「提交以供审核」。手机 App 的地区设置和账号级欧盟 DSA 声明保持原有配置。
+本次按发行方要求仅供应中国大陆，已重新打开后台核验：1 个供应地区，中国大陆为「App 发布时供应」，法国、美国及其余地区均为「未供应」，不自动加入未来地区。build 5 的出口合规问卷按包内 TLS / WireGuard 标准算法和发行地区填写，Apple 已清除缺项。内容版权依据发行方确认的第三方内容使用权填写。
 
-2026-11-08 已上传并重新载入核验 6 张 2880×1800 RGB 真实使用截图，顺序为推荐、收藏、稍后再看、模型配置、平台源、手机连接二维码，随 build 3 一并提交。图片来自 build 3 独立 QA 实例及其原版 Web 资源，已逐张检查；旧低分辨率二维码已从当前版本移除，原件仍在素材库。新二维码图片识别得到实际局域网地址，同机访问手机网页返回 HTTP 200。素材与清单位于 build 3 evidence 的 `store-screenshots/selected/`，提审结果见[发行验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-内容版权确认与正式提审)。
+2026-11-08 已上传并重新载入核验 6 张 2880×1800 RGB 真实使用截图，顺序为推荐、收藏、稍后再看、模型配置、平台源、手机连接二维码，随 macOS 1.0.0 提交。图片来自 build 3 独立 QA 实例及其原版 Web 资源，已逐张检查。新二维码图片识别得到实际局域网地址，同机访问手机网页返回 HTTP 200。素材与清单位于 build 3 evidence 的 `store-screenshots/selected/`，提审结果见[发行验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-内容版权确认与正式提审)。
 
 ## 运行与数据
 
@@ -92,6 +92,6 @@ App 宿主只有 sandbox、network.client、network.server 三项权限。可执
 
 本轮实际构建环境中的 `bilibili-api-python 17.4.2` 为 `GPL-3.0-or-later`，`browser-cookie3 0.20.1` 随包许可证为 LGPLv3；冻结 TOC 还包含 `pystray 0.19.5`（LGPLv3）。项目自身的 MIT 许可证不会替代这些上游许可；现有 `THIRD_PARTY_NOTICES.md` 主要记录 Tailnet 的 Go 依赖，不能视为 Python 依赖已经核对完毕。
 
-构建器在最终签名前把上述三个依赖的许可证原文、实际版本及项目来源写入 `Contents/Resources/ThirdPartyLicenses`，复用冻结 payload 时也会更新；缺少许可证原文即构建失败。扫描包括 `COPYING.LGPL` 等 `COPYING.*` / `LICENSE*` 补充文本，避免只保留通用 GPL 正文而漏掉 LGPL 补充条款。build 2 上传后核对发现 pystray 原文遗漏，现已将补齐后的 build 3 上传并选入版本草稿，build 2 不再用于提审。这个有限记录不等于完整 SBOM、对应源码提供或已确认商店兼容。
+构建器在最终签名前把上述三个依赖的许可证原文、实际版本及项目来源写入 `Contents/Resources/ThirdPartyLicenses`，复用冻结 payload 时也会更新；缺少许可证原文即构建失败。扫描包括 `COPYING.LGPL` 等 `COPYING.*` / `LICENSE*` 补充文本，避免只保留通用 GPL 正文而漏掉 LGPL 补充条款。build 2 上传后发现 pystray 许可原文遗漏，自 build 3 起已补齐。这个有限记录不等于完整 SBOM、对应源码提供或已确认商店兼容。
 
 正式分发前还需确认这些组件的分发条件、对应源码的提供方式，以及与适用商店协议的兼容性。Apple 的[标准 EULA](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/)包含开源组件许可的例外，也允许自定义 EULA；FSF 曾针对[2010 年的 App Store 条款](https://www.fsf.org/blogs/licensing/more-about-the-app-store-gpl-enforcement)提出冲突意见。旧案例不足以单独判定当前 macOS 候选能否分发，本次没有取得上游额外授权，也没有完成这一许可结论。不要把技术验证通过解释为许可问题已经解决；候选保持未提交状态，不擅自修改上游许可或删去核心 B 站功能。

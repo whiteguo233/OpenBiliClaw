@@ -1,16 +1,16 @@
 # Mac App Store 商店资料
 
-名称、中文版本资料、截图、免费价格、年龄分级和隐私标签已保存。`1.0.0 (5)` 已由 Apple 处理为有效的 Apple Silicon 商店构建，待重新提审。
+名称、中文版本资料、截图、免费价格、年龄分级和隐私标签已保存。`1.0.0 (5)` 已通过 Apple 的二进制检查，于 2026-11-10 00:08（北京时间）重新提审，当前等待审核。
 
 截图进度（2026-11-08）：后台现保存 6 张新上传的 2880×1800 RGB 真实界面图，已重新载入确认数量、文件名、缩略图加载及顺序。内容依次为推荐、收藏、稍后再看、模型配置、平台源、手机二维码，随版本一起提交；旧低分辨率二维码已从当前版本移除，素材库原件保留。内容版权已按发行方的使用权确认填写并保存。详见[验证记录](verification/2026-11-07-mac-app-store-distribution.md#2026-11-08-内容版权确认与正式提审)。
 
 - 平台：macOS；bundle ID：`com.openbiliclaw.backend`
 - App Store Connect 记录：`6831698888`
 - 商店名称：OpenBiliClaw Hub（已通过后台名称校验并保存）；安装后的 App 仍为 OpenBiliClaw。
-- 初版 1.0.0，类别 Productivity。Apple Silicon build 5 已上传并处理完成。
+- 初版 1.0.0，类别 Productivity，提交 Apple Silicon build 5。
 - 定价：免费下载，无 App 内购买；用户选择的外部模型服务可能自行收费。
 - 发行地区：仅中国大陆，已保存并重新打开核验；不自动加入未来地区。此设置只针对独立 macOS 记录。
-- 出口合规：build 3 已按标准加密算法、不在法国分发保存，缺项已消除。
+- Build 5 的出口合规已按包内标准加密算法和仅在中国大陆发行的范围填写，Apple 已清除缺项。[Apple 出口合规说明](https://developer.apple.com/help/app-store-connect/manage-app-information/determine-and-upload-app-encryption-documentation/)
 - 中文副标题：你的 AI 内容中枢
 - English subtitle: Your local AI discovery server
 - 支持 URL：`https://github.com/whiteguo233/OpenBiliClaw/issues`
