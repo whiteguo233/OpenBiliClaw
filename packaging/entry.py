@@ -1421,6 +1421,12 @@ def main() -> None:
     # image proxy, matching `openbiliclaw start` with OPENBILICLAW_WORKER=1.
     # Set the flag before create_app() so the API process skips its own
     # periodic/event-processing loops and delegates them to the children.
+    from openbiliclaw.runtime.autostart.guards import snapshot_startup_env
+
+    # Freeze the caller-supplied OPENBILICLAW_* set before the worker flags below
+    # land in os.environ; the autostart guard must not mistake its own runtime
+    # wiring for user config a login session would lose.
+    snapshot_startup_env()
     worker_requested = _worker_mode_requested()
     if worker_requested:
         os.environ["OPENBILICLAW_FULL_WORKER"] = "1"

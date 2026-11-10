@@ -580,7 +580,7 @@ warning = autostart.reconcile(config)
 
 - `AutostartStatus(supported, registered, platform, mechanism, reason, detail)`：API、CLI 和插件 UI 共享的状态模型。`mechanism` 固定为 `launchd` / `windows_run` / `xdg_autostart` / `none`。
 - `build_launch_spec(config)`：生成登录项执行命令，固定为当前 Python 解释器执行 `-m openbiliclaw.cli start`，并注入 `OPENBILICLAW_PROJECT_ROOT`；如果能找到 `ollama`，会把其目录加入登录项 `PATH`。
-- `active_env_managed_inputs(config)`：检测会在桌面登录会话里丢失的环境变量来源（`OPENBILICLAW_*`、provider API key env、抖音 Cookie env），用于拒绝开启自启动。仅冻结程序中与实际随包目录一致且存在的 `OPENBILICLAW_SPONSORED_BUNDLE` 被视为可重建的内部路径；任意外部路径仍阻止注册。
+- `active_env_managed_inputs(config)`：检测会在桌面登录会话里丢失的环境变量来源（`OPENBILICLAW_*`、provider API key env、抖音 Cookie env），用于拒绝开启自启动。判定基准是 `snapshot_startup_env()` 在进程启动、写入任何运行时变量之前记录的 `OPENBILICLAW_*` 集合：`start` 与冻结桌面入口随后自己注入的 `OPENBILICLAW_FULL_WORKER`、`OPENBILICLAW_RECOMMENDATION_SOCK` / `_PORT`、`OPENBILICLAW_IMAGE_SERVICE_URL`、`OPENBILICLAW_RUNTIME_DATA_DIR` 等每次都重建，不算用户配置；调用方真正导出的同名变量仍在快照里，照常阻止注册。快照未建立（例如单测直接调用）时退回保守行为，所有已设置的 `OPENBILICLAW_*` 都计入。仅冻结程序中与实际随包目录一致且存在的 `OPENBILICLAW_SPONSORED_BUNDLE` 被视为可重建的内部路径；任意外部路径仍阻止注册。
 - `autostart_shadowed(intended)`：写后 reload effective config，检测 `config.local.toml` 或环境变量是否覆盖了 `[autostart].enabled`。
 - `reconcile(config)`：让配置 intent 与当前用户 OS 登录项对账；`enabled=false` 时移除残留项，`enabled=true` 且登录项缺失时在 env guard 通过后补注册。CLI daemon 与冻结桌面入口使用同一实现，失败返回可记录的警告而不阻断启动。
 

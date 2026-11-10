@@ -1298,7 +1298,12 @@ def _run_api_server(*, host: str = "0.0.0.0", port: int = 8420) -> None:
         backend_child_env,
         backend_config_generation,
     )
+    from openbiliclaw.runtime.autostart.guards import snapshot_startup_env
 
+    # Freeze the caller-supplied OPENBILICLAW_* set before the worker flags below
+    # land in os.environ; the autostart guard must not mistake its own runtime
+    # wiring for user config a login session would lose.
+    snapshot_startup_env()
     worker_requested = _worker_mode_requested()
     if worker_requested:
         # The API process must also know that a full background worker is
