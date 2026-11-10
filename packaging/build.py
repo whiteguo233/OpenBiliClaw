@@ -717,16 +717,20 @@ def _make_macos_drag_dmg(app_bundle: Path, dmg_path: Path) -> None:
             ["codesign", "--verify", "--deep", "--strict", str(Path(mount_point) / app_bundle.name)]
         )
 
-    # dmgbuild assumes 4 KiB allocation blocks. Reserve room for larger blocks
-    # and HFS metadata when the bundle includes the full local model seed.
+    # dmgbuild assumes 4 KiB allocation blocks. Its size parameter also includes
+    # partition and HFS metadata that do not become usable file space.
     allocation = 16 * 1024
     mebibyte = 1024**2
-    volume_bytes = 256 * mebibyte
+    payload_bytes = 0
     for directory, _, filenames in os.walk(app_bundle):
-        volume_bytes += allocation
+        payload_bytes += allocation
         for filename in filenames:
             size = (Path(directory) / filename).lstat().st_size
-            volume_bytes += max(allocation, ((size + allocation - 1) // allocation) * allocation)
+            payload_bytes += max(allocation, ((size + allocation - 1) // allocation) * allocation)
+    # A real full-model app can exhaust a multi-GiB volume with the small-app
+    # margin. The writable image is compacted before the final DMG is produced.
+    overhead_mib = 1024 if payload_bytes >= 1024 * mebibyte else 256
+    volume_bytes = payload_bytes + overhead_mib * mebibyte
     volume_mib = (volume_bytes + mebibyte - 1) // mebibyte
     free_mib = shutil.disk_usage(dmg_path.parent).free // mebibyte
     print(f"[build] Writable DMG volume: {volume_mib} MiB, host free space: {free_mib} MiB")

@@ -36,7 +36,7 @@ def test_large_macos_dmg_reserves_volume_overhead(tmp_path: Path, monkeypatch) -
     def verify_capacity(_dmg_path, _volume_name, *, settings):
         size = settings.get("size", "0m")
         assert size.endswith("m")
-        assert int(size[:-1]) * 1024**2 >= seed_size + 256 * 1024**2
+        assert int(size[:-1]) * 1024**2 >= seed_size + 1024 * 1024**2
 
     monkeypatch.setitem(sys.modules, "dmgbuild", types.SimpleNamespace(build_dmg=verify_capacity))
     monkeypatch.setitem(sys.modules, "dmgbuild.core", types.SimpleNamespace(DMGError=RuntimeError))
