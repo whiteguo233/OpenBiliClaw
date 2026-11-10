@@ -1,0 +1,35 @@
+{
+  "os": "15.7.9",
+  "arch": "x86_64",
+  "commit": "a9ffe6b14f11dbc316f656a6c454fb4b596f552a",
+  "dmg_sha256": "21bb808bbf83dac2f60ecfd1e70e5387b5d8d4b0e4fffce9ef8ea81035d4bec1",
+  "checks": {
+    "dmg_signature_notary_gatekeeper": true,
+    "mounted_finder_layout": {
+      "visible": [
+        "Applications",
+        "OpenBiliClaw.app"
+      ],
+      "application": [
+        164,
+        166
+      ],
+      "destination": [
+        456,
+        166
+      ]
+    },
+    "installed_app_signature_notary_gatekeeper": true,
+    "normal_launch_seconds": 9.34,
+    "normal_setup_and_embedding": true,
+    "normal_real_sse": {
+      "seconds": 12.14,
+      "events": {
+        "delta": 7,
+        "final": 1,
+        "done": 1
+      }
+    },
+    "normal_relaunch_persisted_seconds": 7.7
+  }
+}
