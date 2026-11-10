@@ -225,7 +225,7 @@ ${asset_list}
 
 - Chrome Web Store updates can lag GitHub releases because Google review is asynchronous.
 - The Safari \`.dmg\` is signed and notarized when Apple credentials are configured in CI; otherwise it is an unsigned experimental build and requires Safari Settings → Developer → Allow Unsigned Extensions after first launch.
-- macOS desktop installers use Developer ID signing and Apple notarization. Quit the old app, drag the new app into Applications, then launch; no quarantine-removal command is required. The desktop app remains a pre-release.
+- macOS desktop installers use Developer ID signing and Apple notarization. Quit the old app, follow the arrow in the DMG to drag OpenBiliClaw into Applications, then open it from Applications; no quarantine-removal command is required. The desktop app remains a pre-release.
 - Automation channel releases remain available as \`backend-v*\`, \`extension-v*\`, and \`desktop-v*\`; Docker images ride \`backend-v*\` tags to GHCR automatically.
 
 Synced by channel: \`${channel}\`

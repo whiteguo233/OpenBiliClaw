@@ -536,13 +536,13 @@ def test_desktop_release_workflow_uses_official_macos_ollama_bundle() -> None:
     assert "brew install ollama" not in workflow
 
 
-def test_desktop_release_workflow_mentions_macos_installer_and_first_launch_guide() -> None:
+def test_desktop_release_workflow_explains_macos_drag_installation() -> None:
     workflow = (
         Path(__file__).resolve().parent.parent / ".github" / "workflows" / "release-desktop.yml"
     ).read_text(encoding="utf-8")
 
     assert "Developer ID 签名和 Apple 公证" in workflow
-    assert "拖到 Applications 后启动" in workflow
+    assert "箭头将 OpenBiliClaw 拖到 Applications，再从 Applications 打开" in workflow
     assert build_module.MACOS_INSTALLER_COMMAND_NAME not in workflow
     assert "xattr -dr" not in workflow
     assert "codesign --force" not in workflow
@@ -719,32 +719,6 @@ def test_incomplete_or_development_signing_configuration_is_rejected(
     monkeypatch.setattr(build_module.platform, "system", lambda: "Darwin")
     with pytest.raises(ValueError, match="Developer ID Application"):
         build_module.validate_macos_signing(identity, profile)
-
-
-def test_notarized_dmg_uses_drag_install_without_gatekeeper_bypass(tmp_path, monkeypatch):
-    app = tmp_path / "OpenBiliClaw.app"
-    app.mkdir()
-    monkeypatch.setattr(build_module.subprocess, "check_call", lambda cmd: None)
-
-    def run(cmd, **kwargs):
-        stage = Path(cmd[cmd.index("-srcfolder") + 1])
-        guide = (stage / build_module.MACOS_FIRST_LAUNCH_GUIDE_NAME).read_text()
-        assert "Apple 公证" in guide
-        assert "Applications" in guide
-        assert "xattr" not in guide and "仍要打开" not in guide
-        assert not (stage / build_module.MACOS_INSTALLER_COMMAND_NAME).exists()
-        assert not (stage / build_module.MACOS_FIRST_LAUNCH_IMAGE_NAME).exists()
-        Path(cmd[-1]).touch()
-        return subprocess.CompletedProcess(cmd, 0, "", "")
-
-    monkeypatch.setattr(build_module.subprocess, "run", run)
-    result = build_module.make_macos_dmg(
-        app_bundle=app,
-        output_dir=tmp_path / "release",
-        version="v1-x64",
-        notarized=True,
-    )
-    assert result.exists()
 
 
 @pytest.mark.parametrize(

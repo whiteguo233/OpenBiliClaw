@@ -97,13 +97,13 @@ def test_readmes_explain_notarized_macos_installation() -> None:
     readme_en = _read("README_EN.md")
 
     assert "macOS 签名与公证" in readme
-    assert "拖入「应用程序」" in readme
+    assert "按窗口里的箭头将 OpenBiliClaw 拖到「应用程序」" in readme
     assert "Apple 公证" in readme
     assert "xattr -dr com.apple.quarantine" not in readme
     assert "codesign --force" not in readme
 
     assert "macOS signing and notarization" in readme_en
-    assert "drag the app into Applications" in readme_en
+    assert "Follow the arrow to drag OpenBiliClaw into Applications" in readme_en
     assert "Apple notarization" in readme_en
     assert "xattr -dr com.apple.quarantine" not in readme_en
     assert "codesign --force" not in readme_en

@@ -1,0 +1,20 @@
+{
+  "os": "26.5.1 (25F80)",
+  "arch": "x86_64",
+  "dmg_sha256": "21bb808bbf83dac2f60ecfd1e70e5387b5d8d4b0e4fffce9ef8ea81035d4bec1",
+  "dmg_and_installed_app_signature_notary_gatekeeper": true,
+  "normal_startup_timeout_seconds": 185,
+  "normal_sample_symbols": [
+    "PyObjC_RegisterStructType",
+    "ffi_closure_alloc"
+  ],
+  "foreground_embedding_ready": true,
+  "foreground_sse": {
+    "seconds": 2.97,
+    "delta": 10,
+    "final": 1,
+    "done": 1
+  },
+  "foreground_relaunch_persisted": true,
+  "finder_screenshot": "blocked by lockscreen"
+}
