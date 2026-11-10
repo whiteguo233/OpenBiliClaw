@@ -2,7 +2,9 @@
 
 ## 默认本机边界（2026-11-06）
 
-关闭密码不再等于开放远程访问。`GET /api/auth/status` 在关闭时返回 `authenticated=trusted_local` 与 `setup_required=!trusted_local`。桌面和手机 Web 为远程用户显示本机设置指引，设置完成后重新检查并进入密码登录；插件继续使用独立设备密钥。已启用认证的 token、Origin、CSRF 和撤销策略不变。
+首次安装默认关闭访问密码。桌面用户在本机 Web「设置 → 通用」勾选「局域网访问密码」并保存后才开启，初始化只处理监听地址等初始化选项。密码关闭时，仅可信本机可访问私有 API。`GET /api/auth/status` 在关闭时返回 `authenticated=trusted_local` 与 `setup_required=!trusted_local`。桌面和手机 Web 为远程用户显示本机设置指引，设置完成后重新检查并进入密码登录；插件继续使用独立设备密钥。已启用认证的 token、Origin、CSRF 和撤销策略不变。
+
+桌面和手机 Web 收到认证错误后会重新读取主 API 的状态，只有 `authenticated=false` 才显示登录或设置引导。
 
 公开 API 增量：`setup_required` 是仅在未启用密码时返回的布尔提示；私有 HTTP 的 `auth_setup_required` 稳定错误码供其他客户端显示相同指引。
 
@@ -20,6 +22,7 @@
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 总开关 | ✅ | `[api.auth].enabled=false` 时只有可信本机可以访问私有 HTTP/WS；远程返回 `401 auth_setup_required` / WS `4401`。`true` 且无密码视为配置错误（blocking）。公开健康探针和静态登录壳保留。迁移的四个端点在关闭密码时仍交给自身更严格的真实 loopback + 同源 + X-OBC-Auth 检查，远程保持403，确保 trust_loopback=false 时本机恢复不被锁死。 |
+| 独立推荐进程 | ✅ | 主 API 对原始推荐请求鉴权并检查 CSRF，随后用随机启动凭据向独立进程证明请求已获授权。受管理的进程在 Unix socket 和回环 TCP 上都要求该凭据，外部提供的同名请求头会被替换。密码保存、禁用和撤销立即作用于推荐 API。 |
 | B 站凭据接口特权化 | ✅ | `POST /api/bilibili/auth/import`、`POST /api/bilibili/auth/export`、`DELETE /api/bilibili/auth/session` 无论门禁开关都要求 trusted-local 或已认证会话：门禁关闭时远程调用在中间件返回 `401 auth_setup_required`，杜绝默认部署（0.0.0.0 + 门禁关闭）下局域网零鉴权导出登录 Cookie 接管账号（issue #299）。移动 App 远程使用这三接口前需先开启密码门禁并登录。 |
 | 配置写 / 探测接口特权化 | ✅ | `PUT /api/config`、`POST /api/config/probe-service`、`POST /api/config/discover-models` 同样无论门禁开关都要求 trusted-local 或已认证会话（与 B 站凭据接口共用 `_local_or_authenticated_gate`）。门禁关闭时远程调用在中间件返回 `401 auth_setup_required`，堵住默认部署下篡改 `llm.*.base_url` 劫持 LLM 流量（连带泄露存储的 API Key）与植入 `bilibili.browser_executable` 任意执行（issue #300）；probe / discover 不写盘也会把存储的 Key 发往提交的 base_url，故一并收口。桌面 / 移动 Web 与扩展在门禁关闭时跨设备改设置会被拒，需先开启门禁。 |
 | 信任模型 | ✅ | `trust_loopback=true`（默认）下，loopback 且无 `X-Forwarded-For` / `X-Real-IP` / `Forwarded` 头的请求免登录；带转发头的 loopback fail-closed（要求登录），防同机反代绕过。 |

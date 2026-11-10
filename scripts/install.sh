@@ -529,7 +529,7 @@ PY
     fi
     echo "Health URL:  $health_url"
     echo "Phone:       Web / extension → 手机版 → LAN / Tailscale / public QR"
-    echo "Remote API:  Set an access password on the backend first; disabled auth is local-only."
+    echo "Remote API:  Access password is off on fresh installs. Enable it in local Web Settings → General for remote access."
     echo "             Use HTTPS or an encrypted private network when connecting from other devices."
     echo "             Phone camera opens Web; App Scan to connect imports the backend."
     echo "Setup wizard: $setup_url"

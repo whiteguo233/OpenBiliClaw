@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_RECOMMENDATION_PORT = 8423
 RECOMMENDATION_SOCK_ENV = "OPENBILICLAW_RECOMMENDATION_SOCK"
 RECOMMENDATION_PORT_ENV = "OPENBILICLAW_RECOMMENDATION_PORT"
+RECOMMENDATION_PROXY_TOKEN_ENV = "OPENBILICLAW_RECOMMENDATION_PROXY_TOKEN"
+RECOMMENDATION_PROXY_HEADER = "x-obc-recommendation-proxy"
 
 # Number of consecutive ports probed when selecting the loopback TCP port
 # (base port plus 20 increments).  Bounded so an exhausted range fails fast

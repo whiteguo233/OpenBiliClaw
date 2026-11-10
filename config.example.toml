@@ -29,7 +29,7 @@ port = 8420
 # 从手机、局域网或反向代理连接前，请先在本机设置页启用访问密码，
 # 或执行 `openbiliclaw set-password`；远程扩展还需单独配对设备密钥。
 enabled = false
-# 密码哈希（scrypt）。请勿手填明文；用 `openbiliclaw set-password` 或 init 设置。
+# 密码哈希（scrypt）。在本机 Web 的「设置 → 通用」设置；无界面部署可用 set-password。
 password_hash = ""
 # 登录态签名密钥，首次启用自动生成，请勿外泄。
 session_secret = ""

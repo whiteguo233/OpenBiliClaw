@@ -136,6 +136,7 @@ def test_recommendation_server_windows_binds_tcp(monkeypatch) -> None:
             "host": "127.0.0.1",
             "port": DEFAULT_RECOMMENDATION_PORT,
             "log_level": "info",
+            "proxy_headers": False,
         }
     ]
 
@@ -161,7 +162,7 @@ def test_recommendation_server_posix_binds_unix_socket(monkeypatch, tmp_path: Pa
 
     recommendation_server.main()
 
-    assert calls == [{"app": fake_app, "uds": sock, "log_level": "info"}]
+    assert calls == [{"app": fake_app, "uds": sock, "log_level": "info", "proxy_headers": False}]
 
 
 def test_unix_socket_path_too_long_boundary() -> None:
@@ -246,6 +247,7 @@ def test_recommendation_server_and_proxy_share_tcp_fallback_on_long_path(
             "host": "127.0.0.1",
             "port": DEFAULT_RECOMMENDATION_PORT,
             "log_level": "info",
+            "proxy_headers": False,
         }
     ]
 
@@ -281,6 +283,7 @@ def test_recommendation_server_standalone_long_path_binds_tcp(monkeypatch, tmp_p
             "host": "127.0.0.1",
             "port": DEFAULT_RECOMMENDATION_PORT,
             "log_level": "info",
+            "proxy_headers": False,
         }
     ]
 

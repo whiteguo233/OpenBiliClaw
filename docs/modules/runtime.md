@@ -926,6 +926,7 @@ Expression copy 与 candidate evaluation 对 rate-limit、timeout、connection�
 
 | 已实现能力 | 行为 |
 | --- | --- |
+| 推荐进程鉴权交接 | 主 API 为已授权的推荐请求附上随机启动凭据。桌面包和 CLI 通过 `proc.backend_child_env(app, **overrides)` 将凭据交给独立推荐进程，子进程重启时沿用父进程的凭据。Unix socket 和回环 TCP 均核验凭据及实际对端。无用户配置项。 |
 | 主 API 事件桥接 | 主 API 转发独立推荐进程成功响应时校验 `pool_status`，清理本进程 runtime/recommendation 缓存，并向本进程 WebSocket 订阅者广播 `refresh.pool_updated`。 |
 | 后台补货同步 | 配置推荐 socket 的主 API 持有一个库存观察任务，仅在有订阅者时每 2 秒读取一次 canonical 平台库存，变化时广播；任务随 app 启停，异常读取保留旧状态。独立推荐进程不启动观察任务。 |
 | 遗留队列恢复 | `ServeOutbox.append()` 用独立原子发布的 batch 文件；`claim_batches()` 将旧 JSONL 纳入独立批次，`acknowledge(batch)` 只删除该已提交批次。失败保留待重试，处理中新增批次不会被清空。升级时需一起重启旧 API / worker，不能混跑仍写旧 JSONL 的旧版本。 |

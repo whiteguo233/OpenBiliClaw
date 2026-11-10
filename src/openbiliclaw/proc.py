@@ -46,6 +46,12 @@ def backend_child_env(app: Any, **overrides: str) -> dict[str, str]:
     active_path = getattr(getattr(app, "state", None), "active_runtime_data_path", None)
     if active_path is not None:
         env["OPENBILICLAW_RUNTIME_DATA_DIR"] = str(active_path)
+    if overrides.get("OPENBILICLAW_RECOMMENDATION_ONLY") == "1":
+        from openbiliclaw.recommendation_runtime import RECOMMENDATION_PROXY_TOKEN_ENV
+
+        token = getattr(getattr(app, "state", None), "recommendation_proxy_token", "")
+        if token:
+            env[RECOMMENDATION_PROXY_TOKEN_ENV] = token
     return env
 
 

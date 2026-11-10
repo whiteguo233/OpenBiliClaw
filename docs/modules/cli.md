@@ -650,7 +650,7 @@ $ openbiliclaw set-password --rotate-secret
 - `--logout-all`：自增 SQLite `auth_state` 的 `auth_epoch`，使此前签发的全部登录态（含被复制 / 嗅探走的 token）立即失效，所有设备需重新登录。
 - `--rotate-secret`：轮换 `session_secret` 并撤销所有登录态；新密钥需重启后端进程才完全生效。
 
-> 改密码（无论走本命令、`init`、直接改 TOML、env、还是 `PUT /api/config`）都会在下次启动 / 重载时按密码指纹变化自动撤销旧登录态。永不过期（`session_ttl_hours=0`，「记住登录」）的会话不会因重启被误撤销。
+> 改密码（无论走本命令、配置页、直接改 TOML、env、还是 `PUT /api/config`）都会在下次启动 / 重载时按密码指纹变化自动撤销旧登录态。永不过期（`session_ttl_hours=0`，「记住登录」）的会话不会因重启被误撤销。
 
 ### `openbiliclaw ext-key`
 
@@ -1056,7 +1056,7 @@ Cookie 只存在你本机 data/bilibili_cookie.json，不会上传任何地方�
 
 引导完成后会继续当前初始化流程，不需要再单独执行 `auth login` 或手动改配置。
 
-交互式 `init` 在询问「是否允许局域网设备访问」之后，**仅当启用了局域网访问时**会追加一次「是否为局域网访问设置密码」（默认 `No`）。选 `Yes` 即走与 `set-password` 相同的交互设置流程，写入 `[api.auth]`；选 `No` 可随后再用 `openbiliclaw set-password` 设置。
+交互式 `init` 的「监听局域网地址」只设置 `[api].host`。新装默认关闭访问密码，初始化保留现有密码设置。要让其他设备访问，请在本机 Web「设置 → 通用」开启「局域网访问密码」并保存。无界面部署可显式运行 `openbiliclaw set-password`。
 
 > **「OpenAI 官方」≠「OpenAI 协议兼容服务」**：向导把这俩拆成独立菜单项。选 3 时只问 API Key，base_url 走 `https://api.openai.com/v1`；选 2 时进入协议兼容 preset 子菜单（中转站 / Kimi / MiniMax / 通义 / 智谱 / Yi / Azure / vLLM / 自定义）。向导会复用同类型且配置一致的现有实例，否则创建新的 `[llm.instances.<id>]`，并把它提升到 `default_chain` 首位；不会删除用户已经配置的其他渠道。
 >

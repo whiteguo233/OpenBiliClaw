@@ -39,7 +39,7 @@
 2. **2/4 分析偏好**:`await soul_engine.analyze_events(events, event_chunk_size=200)`(`soul/engine.py:215`,async)。
 3. **历史实现：3/4 生成画像 + 4/4 发现首轮池并行**。该实现会让发现读取 draft / 缺省画像，现已由上方 2026-07-15 增补替代：阶段 3 完整落盘后才允许阶段 4 启动。
 - 构建对象:`_prepare_init_runtime()`(`cli.py:2011`)、`_build_bilibili_client()`、`_build_memory_manager()`、`_build_soul_engine()`。常量:历史 300 / 收藏 300 / 关注 100(`cli.py:168-170`)。**注:本 spec 的行号在 R1 校正了几处明显错位(见 Interview Log),实现计划须对全部引用再 grep 核一遍。**
-- **混入大量 CLI 专属交互**:网络绑定 `_ask_network_binding`、`_maybe_setup_password_in_init`、收藏/关注上限、xhs/dy/yt 的 y/n、`_persist_init_source_enabled_flags`。**这些是安装期设置,不属于 init 核心四阶段**,GUI 路径不复刻(网络绑定/密码已由 `/setup` 或设置页单独管)。
+- **混入大量 CLI 专属交互**:网络绑定 `_ask_network_binding`、收藏/关注上限、xhs/dy/yt 的 y/n、`_persist_init_source_enabled_flags`。**这些是安装期设置，不属于 init 核心四阶段**。访问密码默认关闭，用户在本机 Web 设置页单独开启。
 
 **没有触发 init 的 API**:只有 `POST /api/init-completed`,它**广播 `init_completed` 事件 _并_ 通过 `request_replenishment(reason="init_completed", force=True)` 触发补货**，**不执行 init**——GUI init 故意不复用它(避免 stage 4 已发现后再跑一轮重复补货)。
 

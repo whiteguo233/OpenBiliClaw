@@ -42,8 +42,8 @@ config save → safe API handoff → committed generation (wait for settings que
 
 local embedding provider / diagnosis → automatic acceleration → valid vector
                                      └ runner failure → shared CPU mode → validated vector / failure
-recommendation request → main API → optional Unix-socket recommendation process
-                                  （socket 路径超过 AF_UNIX sun_path 上限时自动回退 loopback TCP）
+recommendation request → main API auth → optional recommendation process
+                                       → authorized request + startup proof over Unix socket / loopback TCP
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory
 main API ← validated response inventory / 2s active-client inventory watcher

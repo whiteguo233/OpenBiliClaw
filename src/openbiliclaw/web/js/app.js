@@ -731,11 +731,13 @@ function showLogin(setupRequired = false) {
 }
 
 // Session lost mid-use (token expired / revoked) → drop the stream and re-gate.
-window.addEventListener("obc:auth-required", () => {
+window.addEventListener("obc:auth-required", async () => {
   if (state.needsLogin) return;
+  const status = await fetchAuthStatus();
+  if (state.needsLogin || status.authenticated !== false) return;
   try { stream.disconnect(); } catch { /* ignore */ }
   patchState({ authenticated: false });
-  fetchAuthStatus().then((status) => showLogin(Boolean(status.setup_required)));
+  showLogin(Boolean(status.setup_required));
 });
 
 (async function boot() {

@@ -715,7 +715,7 @@ TikTok account flow: `manual init / explicitly enabled incremental sync → sour
 
 Local embedding: `requests / diagnostics → Ollama automatic acceleration → valid vector; runner failure → CPU retry → validated result`. CPU selection is shared for the backend process lifetime; restarting retries automatic acceleration.
 
-Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
+Recommendation requests: `main API auth → private connection → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
 Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → tool-protocol text guard → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
 

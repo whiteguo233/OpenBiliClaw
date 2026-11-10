@@ -8687,7 +8687,7 @@ def _ask_network_binding() -> bool:
 
     Returns True if the user confirms all-interface binding, False for
     localhost-only.  Non-interactive terminals default to True (the new
-    default keeps mobile web accessible).
+    default lets the listener serve Mobile Web once the user enables access).
     """
     if not _is_interactive_terminal():
         return True
@@ -8695,7 +8695,8 @@ def _ask_network_binding() -> bool:
     console.print()
     console.print("[bold]📱 移动端访问[/bold]")
     console.print(
-        "OpenBiliClaw 自带移动端 Web（[bold cyan]/m/[/bold cyan]），同一局域网的手机扫码即可打开。"
+        "如需从手机使用移动端 Web（[bold cyan]/m/[/bold cyan]），"
+        "请在本机 Web 的「设置 → 通用」开启「局域网访问密码」。"
     )
     console.print()
     console.print(
@@ -8706,7 +8707,7 @@ def _ask_network_binding() -> bool:
     console.print()
     console.print("[dim]后续可在 config.toml 的 [api].host 随时切换。[/dim]")
     console.print()
-    return typer.confirm("允许局域网设备访问（推荐）?", default=True)
+    return typer.confirm("监听局域网地址?", default=True)
 
 
 def _persist_api_host_choice(*, allow_lan: bool) -> None:
@@ -8721,43 +8722,6 @@ def _persist_api_host_choice(*, allow_lan: bool) -> None:
             save_config(cfg)
     except Exception:
         return
-
-
-def _maybe_setup_password_in_init(*, allow_lan: bool) -> None:
-    """Offer to set a LAN access password during init (only when LAN is enabled)."""
-    if not allow_lan or not _is_interactive_terminal():
-        return
-    console.print()
-    console.print("[bold]🔒 远程访问密码（仅本机使用可跳过）[/bold]")
-    console.print(
-        "为局域网/远程设备访问设置登录密码？[bold]可信本机默认免登录[/bold]。"
-        "跳过后仅允许本机访问；手机和其他电脑需设置密码后才能连接。"
-    )
-    console.print("[dim]后续可用 `openbiliclaw set-password` 设置或修改。[/dim]")
-    console.print()
-    if not typer.confirm("为局域网访问设置登录密码?", default=False):
-        return
-    password = str(
-        typer.prompt("设置访问密码", hide_input=True, confirmation_prompt=True) or ""
-    ).strip()
-    if not password:
-        console.print("[dim]密码为空，已跳过。[/dim]")
-        return
-    try:
-        import secrets as _secrets
-
-        from openbiliclaw.auth_core import hash_password
-        from openbiliclaw.config import load_config, save_config
-
-        cfg = load_config()
-        cfg.api.auth.password_hash = hash_password(password)
-        cfg.api.auth.enabled = True
-        if not cfg.api.auth.session_secret.strip():
-            cfg.api.auth.session_secret = _secrets.token_urlsafe(32)
-        save_config(cfg)
-        console.print("[green]已设置访问密码，局域网访问将需要登录。[/green]")
-    except Exception:
-        console.print("[yellow]密码设置失败，可稍后用 `openbiliclaw set-password` 重试。[/yellow]")
 
 
 def _persist_init_source_enabled_flags(
@@ -11721,11 +11685,8 @@ def init(
             f"({'命令行 --no-bilibili' if no_bilibili else 'OPENBILICLAW_NO_BILIBILI=1'})。[/dim]"
         )
 
-    # v0.3.89+: ask user whether the backend should be reachable from
-    # the local network (0.0.0.0) so mobile /m/ works out of the box.
-    allow_lan = _ask_network_binding()
-    _persist_api_host_choice(allow_lan=allow_lan)
-    _maybe_setup_password_in_init(allow_lan=allow_lan)
+    # Network binding is separate from the access password in Web settings.
+    _persist_api_host_choice(allow_lan=_ask_network_binding())
 
     if include_bili:
         (

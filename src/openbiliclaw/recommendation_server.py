@@ -78,9 +78,9 @@ def wait_for_buildable_llm(
 
 
 def _run_tcp(app: FastAPI, port: int) -> None:
-    """Bind the recommendation API on loopback TCP with a clear failure log."""
+    """Bind the recommendation API on TCP and preserve the physical IPC peer."""
     try:
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", proxy_headers=False)
     except OSError as exc:
         logger.error(
             "Recommendation server failed to bind TCP 127.0.0.1:%d: %s. The port "
@@ -119,7 +119,8 @@ def main() -> None:
             _run_tcp(app, fallback_port)
             return
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
-    uvicorn.run(app, uds=sock, log_level="info")
+    # Keep the actual IPC peer in the ASGI scope for the proxy proof check.
+    uvicorn.run(app, uds=sock, log_level="info", proxy_headers=False)
 
 
 if __name__ == "__main__":

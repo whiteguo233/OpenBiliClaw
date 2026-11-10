@@ -4108,9 +4108,6 @@ def test_init_guides_missing_runtime_config_interactively(
 
     monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
     monkeypatch.setattr(
-        cli_module, "_maybe_setup_password_in_init", lambda **_: None, raising=False
-    )
-    monkeypatch.setattr(
         cli_module,
         "_save_runtime_provider_config",
         fake_save_runtime_config,
@@ -4205,6 +4202,10 @@ def test_init_guides_missing_runtime_config_interactively(
     assert captured["api_key"] == "gemini-key"
     assert "初始化前配置引导" in result.stdout
     assert "DeepSeek" in result.stdout  # menu now leads with DeepSeek (v0.3.20+)
+    assert "为局域网访问设置登录密码" not in result.stdout
+    auth = config_module.load_config().api.auth
+    assert auth.enabled is False
+    assert not auth.password_hash
     assert "历史为空" in result.stdout
 
 
@@ -4244,9 +4245,6 @@ def test_init_guides_missing_auth_interactively(
 
     fake_auth = FakeAuthManager()
     monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
-    monkeypatch.setattr(
-        cli_module, "_maybe_setup_password_in_init", lambda **_: None, raising=False
-    )
     monkeypatch.setattr(
         cli_module,
         "_load_runtime_config_error",
@@ -8458,7 +8456,7 @@ def test_fetch_xhs_handles_timeout_status(monkeypatch: pytest.MonkeyPatch) -> No
     assert "超时" in result.output
 
 
-# ── Password gate CLI (set-password / init prompt) ──────────────────────────
+# ── Password gate CLI (set-password) ──────────────────────────
 
 
 def _extension_key_runtime(
@@ -8750,44 +8748,6 @@ def test_set_password_logout_all_fails_loudly_when_unavailable(
     monkeypatch.setattr(cli_module, "_bump_auth_epoch", lambda _cfg: False, raising=False)
     result = runner.invoke(app, ["set-password", "--logout-all"])
     assert result.exit_code == 1  # must not report success when revocation failed
-
-
-def test_init_password_prompt_sets_password(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from openbiliclaw import auth_core as ac
-    from openbiliclaw.config import Config, load_config, save_config
-
-    root = tmp_path / "runtime"
-    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
-    save_config(Config(), root / "config.toml")
-    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
-    monkeypatch.setattr(cli_module.typer, "confirm", lambda *a, **k: True)
-    monkeypatch.setattr(cli_module.typer, "prompt", lambda *a, **k: "lanpass")
-
-    cli_module._maybe_setup_password_in_init(allow_lan=True)
-
-    cfg = load_config()
-    assert cfg.api.auth.enabled is True
-    assert ac.verify_password("lanpass", cfg.api.auth.password_hash)
-
-
-def test_init_password_prompt_skipped_when_lan_disabled(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from openbiliclaw.config import Config, load_config, save_config
-
-    root = tmp_path / "runtime"
-    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
-    save_config(Config(), root / "config.toml")
-    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
-
-    def _boom(*_a: object, **_k: object) -> bool:
-        raise AssertionError("should not prompt when LAN access is disabled")
-
-    monkeypatch.setattr(cli_module.typer, "confirm", _boom)
-    cli_module._maybe_setup_password_in_init(allow_lan=False)
-    assert load_config().api.auth.enabled is False
 
 
 def test_set_password_rotate_secret_rebases_fingerprint(
@@ -9491,7 +9451,6 @@ def test_init_command_rejects_no_sources_at_all(monkeypatch) -> None:
     )
     monkeypatch.setattr(cli_module, "_ask_network_binding", lambda: False)
     monkeypatch.setattr(cli_module, "_persist_api_host_choice", lambda **kwargs: None)
-    monkeypatch.setattr(cli_module, "_maybe_setup_password_in_init", lambda **kwargs: None)
 
     result = runner.invoke(
         app,
@@ -9606,7 +9565,6 @@ def test_init_command_rejects_bangumi_only_without_username(monkeypatch) -> None
     )
     monkeypatch.setattr(cli_module, "_ask_network_binding", lambda: False)
     monkeypatch.setattr(cli_module, "_persist_api_host_choice", lambda **kwargs: None)
-    monkeypatch.setattr(cli_module, "_maybe_setup_password_in_init", lambda **kwargs: None)
     monkeypatch.setattr("openbiliclaw.config.load_config", lambda: Config())
 
     result = runner.invoke(
@@ -9851,7 +9809,6 @@ def test_init_command_allows_reddit_as_only_profile_signal_source(monkeypatch) -
     )
     monkeypatch.setattr(cli_module, "_ask_network_binding", lambda: False)
     monkeypatch.setattr(cli_module, "_persist_api_host_choice", lambda **kwargs: None)
-    monkeypatch.setattr(cli_module, "_maybe_setup_password_in_init", lambda **kwargs: None)
     monkeypatch.setattr(cli_module, "_notify_running_server_init_completed", lambda: None)
     monkeypatch.setattr(cli_module, "_print_init_cost_summary", lambda *args, **kwargs: None)
 
@@ -9939,7 +9896,6 @@ def test_init_summary_marks_douyin_degraded_without_dropping_collected_events(
     )
     monkeypatch.setattr(cli_module, "_ask_network_binding", lambda: False)
     monkeypatch.setattr(cli_module, "_persist_api_host_choice", lambda **kwargs: None)
-    monkeypatch.setattr(cli_module, "_maybe_setup_password_in_init", lambda **kwargs: None)
     monkeypatch.setattr(cli_module, "_notify_running_server_init_completed", lambda: None)
     monkeypatch.setattr(cli_module, "_print_init_cost_summary", lambda *args, **kwargs: None)
 
