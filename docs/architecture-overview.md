@@ -181,7 +181,7 @@ config save → safe API handoff → settled queue → parent supervisor
             → same locked data directory + durable candidate recovery
 
 recommendation request → main API auth → dedicated recommendation process
-                                       → Unix socket preserves verified local access; TCP fallback
+                                       → authorized request + startup proof over Unix socket / loopback TCP
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory
 main API ← validated response inventory / 2s active-client inventory watcher

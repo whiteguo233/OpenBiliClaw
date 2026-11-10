@@ -26,7 +26,7 @@ from starlette.responses import JSONResponse, Response
 
 from openbiliclaw import auth_core
 from openbiliclaw.auth_core import COOKIE_NAME, CSRF_HEADER
-from openbiliclaw.recommendation_runtime import RECOMMENDATION_LOCAL_HEADER
+from openbiliclaw.recommendation_runtime import RECOMMENDATION_PROXY_HEADER
 
 if TYPE_CHECKING:
     from starlette.requests import HTTPConnection
@@ -324,29 +324,28 @@ def _is_public(request: Request) -> bool:
 # ── middleware ──────────────────────────────────────────────────────────────
 
 
-def make_auth_middleware(get_gate: GateGetter, *, recommendation_local_token: str = "") -> Any:
+def make_auth_middleware(get_gate: GateGetter, *, recommendation_proxy_token: str = "") -> Any:
     """Build the ASGI http middleware dispatch closure."""
 
     async def auth_guard(request: Request, call_next: Any) -> Any:
         gate: AuthGate = get_gate()
         if _is_public(request):
             return await call_next(request)
-        if gate.is_trusted_local(request):
-            return await call_next(request)
-        # The dedicated Unix socket has no IP peer. Only the main API can
-        # attest that it received this recommendation request from trusted local.
-        if (
-            recommendation_local_token
-            and request.client is None
-            and (
-                request.url.path == "/api/recommendations"
-                or request.url.path.startswith("/api/recommendations/")
-            )
-            and secrets.compare_digest(
-                request.headers.get(RECOMMENDATION_LOCAL_HEADER, "").encode(),
-                recommendation_local_token.encode(),
-            )
+        if recommendation_proxy_token and (
+            request.url.path == "/api/recommendations"
+            or request.url.path.startswith("/api/recommendations/")
         ):
+            # A supervised worker only accepts requests already authorized by
+            # the main API. Its startup auth config may be older than the live gate.
+            peer = request.client
+            private_peer = peer is None or auth_core.is_loopback_host(peer.host)
+            if private_peer and secrets.compare_digest(
+                request.headers.get(RECOMMENDATION_PROXY_HEADER, "").encode(),
+                recommendation_proxy_token.encode(),
+            ):
+                return await call_next(request)
+            return _unauthorized(clear_cookie=False)
+        if gate.is_trusted_local(request):
             return await call_next(request)
         if not gate.auth.enabled:
             # Migration has its own stricter physical-loopback + same-origin

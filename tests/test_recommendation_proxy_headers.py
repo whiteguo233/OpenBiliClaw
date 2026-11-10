@@ -29,8 +29,8 @@ from openbiliclaw.api.auth import AuthGate
 from openbiliclaw.auth_core import sign_token
 from openbiliclaw.config import ApiAuthConfig, ApiConfig, Config
 from openbiliclaw.recommendation_runtime import (
-    RECOMMENDATION_LOCAL_HEADER,
     RECOMMENDATION_PORT_ENV,
+    RECOMMENDATION_PROXY_HEADER,
     RECOMMENDATION_SOCK_ENV,
 )
 
@@ -284,7 +284,7 @@ _TERMINATOR_HEADERS = {
     "X-Forwarded-For": "203.0.113.7",
     "X-Real-IP": "203.0.113.8",
     "Forwarded": "for=203.0.113.7",
-    RECOMMENDATION_LOCAL_HEADER: "untrusted-request-header",
+    RECOMMENDATION_PROXY_HEADER: "untrusted-request-header",
 }
 
 
@@ -359,7 +359,7 @@ def test_forwarded_context_headers_are_not_relayed(monkeypatch, tmp_path: Path) 
     forwarded = _FakeAsyncClient.forwards[0]["headers"]
     assert "x-forwarded-proto" not in forwarded
     assert "x-forwarded-host" not in forwarded
-    assert RECOMMENDATION_LOCAL_HEADER not in forwarded
+    assert forwarded[RECOMMENDATION_PROXY_HEADER] == app.state.recommendation_proxy_token
     # Client identity is deliberately NOT dropped: auth_core treats the presence
     # of any of these on a loopback peer as fail-closed, and stripping them here
     # would widen the local-exemption decision on the loopback-TCP transport.
