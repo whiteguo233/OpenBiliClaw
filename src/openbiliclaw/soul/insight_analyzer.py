@@ -9,7 +9,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from typing import Protocol
 
-from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.base import LLMBudgetExhaustedError, LLMProviderError, LLMResponse
 from openbiliclaw.llm.json_utils import (
     DEFAULT_STRUCTURED_MAX_TOKENS,
     extract_llm_json_list,
@@ -88,6 +88,9 @@ class InsightAnalyzer:
                 caller="soul.insight",
                 **without_core_memory_kwargs(complete_structured),
             )
+        except LLMBudgetExhaustedError:
+            # Local admission control: stop the insight chunks without a retry.
+            raise
         except (LLMProviderError, LLMServiceError) as exc:
             raise InsightGenerationError(str(exc)) from exc
         payload = self._parse_response(response.content)

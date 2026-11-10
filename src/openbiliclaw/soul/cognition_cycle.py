@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.llm.base import LLMBudgetExhaustedError
 from openbiliclaw.soul.awareness_analyzer import AwarenessGenerationError, AwarenessGroundingError
 from openbiliclaw.soul.confusion import ConfusionManager
 from openbiliclaw.soul.ledger import ProfileLedger
@@ -184,6 +185,19 @@ _EARLY_TRIGGER_EVENT_COUNT = 30
 # pass even below the count threshold (explicit user intent / authored text).
 _STRONG_EVENT_TYPES = frozenset({"comment", "danmaku", "reply", "feedback"})
 
+# Early-trigger debounce (issue #344). A backlog or one strong-signal event can
+# pull awareness ahead of the 12h throttle; without a floor, a streaming
+# comment/danmaku session re-triggered a pass on nearly every tick. 30 minutes
+# is the minimum spacing: long enough that one busy session produces one early
+# pass, short enough that explicit feedback still lands within the session.
+# 4 passes per 12h keeps the worst case (one early pass per 3h) at the same
+# order of magnitude as the regular throttle, so early triggers can at most
+# ~1.3x the 12h baseline. Re-open after a month of real counts from the state
+# file (``early_trigger_count`` / ``last_early_trigger_at``).
+_EARLY_TRIGGER_MIN_INTERVAL_SECONDS = 30 * 60
+_EARLY_TRIGGER_MAX_PER_WINDOW = 4
+_EARLY_TRIGGER_WINDOW_SECONDS = 12 * 60 * 60
+
 
 @dataclass
 class CognitionCycleResult:
@@ -196,6 +210,11 @@ class CognitionCycleResult:
     total_awareness_after: int = 0
     total_insight_after: int = 0
     errors: list[str] = field(default_factory=list)
+    # Set when the shared background LLM budget stopped a multi-call pass
+    # between chunks (issue #344). The watermark/cursor stays where the last
+    # successful chunk left it, so the next window resumes instead of replaying.
+    budget_exhausted: bool = False
+    budget_detail: str = ""
 
 
 class CognitionCycle:
@@ -244,6 +263,9 @@ class CognitionCycle:
         # must run under one lock so overlapping ticks (or an early trigger
         # racing the 12h tick) never double-process the same events.
         self._run_lock = asyncio.Lock()
+        # Set by ``_run_awareness`` / ``_run_insight`` when the budget refused a
+        # chunk, keyed by pass; surfaced on the cycle result and never persisted.
+        self._budget_stop_notes: dict[str, str] = {}
 
     def _profile_ledger(self) -> ProfileLedger:
         """Best-effort audit ledger over the memory manager's database."""
@@ -276,6 +298,7 @@ class CognitionCycle:
         current_time = now or datetime.now()
         state = self._load_state()
         result = CognitionCycleResult()
+        self._budget_stop_notes = {}
 
         # Gate: awareness + insight LLM calls feed on `preference` and `soul`
         # memory layers. If neither has been built yet (init's first ~7
@@ -325,7 +348,11 @@ class CognitionCycle:
             try:
                 added = await self._run_awareness(state)
                 result.awareness_generated = added
-                state["last_awareness_at"] = current_time.isoformat()
+                if "awareness" not in self._budget_stop_notes:
+                    state["last_awareness_at"] = current_time.isoformat()
+                # Budget-stopped passes keep the old timestamp (like the
+                # AwarenessGenerationError path): the watermark already holds
+                # the progress, so the next window resumes instead of waiting 12h.
             except AwarenessGenerationError as exc:
                 # Recoverable: bad JSON shape or single LLM hiccup. Log at
                 # WARNING (not ERROR) and DO NOT advance ``last_awareness_at``
@@ -347,12 +374,23 @@ class CognitionCycle:
             try:
                 added = await self._run_insight(state)
                 result.insight_generated = added
-                state["last_insight_at"] = current_time.isoformat()
+                if "insight" not in self._budget_stop_notes:
+                    state["last_insight_at"] = current_time.isoformat()
             except Exception as exc:
                 logger.exception("Insight analyzer failed during cognition cycle")
                 result.errors.append(f"insight: {exc}")
 
-        # 3. Sync the fresh awareness/insights into the OnionProfile so the
+        # 3. Surface a budget stop clearly: the pass ran, made partial progress,
+        #    and the next window resumes from the persisted watermark/cursor.
+        if self._budget_stop_notes:
+            result.budget_exhausted = True
+            result.budget_detail = "; ".join(self._budget_stop_notes.values())
+            logger.warning(
+                "Cognition cycle stopped by the background LLM budget: %s",
+                result.budget_detail,
+            )
+
+        # 4. Sync the fresh awareness/insights into the OnionProfile so the
         # popup sees them immediately. This is a best-effort write — a
         # missing soul layer or mid-init state should not break the cycle.
         try:
@@ -360,14 +398,14 @@ class CognitionCycle:
         except Exception:
             logger.exception("Failed to sync cognition cycle output into profile")
 
-        # 4. Confusion TTL maintenance (Phase 2): expire wait-parked confusions
+        # 5. Confusion TTL maintenance (Phase 2): expire wait-parked confusions
         # past their TTL. Best-effort — never breaks the cognition cycle.
         try:
             self._confusion_manager().expire_due(now=current_time)
         except Exception:
             logger.debug("Confusion TTL sweep failed", exc_info=True)
 
-        # 5. Enumerate any completed clarifying reply that missed its durable
+        # 6. Enumerate any completed clarifying reply that missed its durable
         # attribution receipt. The hook only submits the dedicated typed replay
         # command; analysis and mutation remain in the settlement worker.
         if self._confusion_replay_hook is not None:
@@ -399,13 +437,50 @@ class CognitionCycle:
         elapsed = (now - last_run_at).total_seconds()
         return elapsed >= self._min_interval_seconds
 
+    def _early_trigger_debounced(self, state: dict[str, Any]) -> bool:
+        """True when the debounce floor or the per-window cap suppresses a trigger."""
+        now = datetime.now()
+        last = _parse_iso(state.get("last_early_trigger_at"))
+        if last is not None and (now - last).total_seconds() < _EARLY_TRIGGER_MIN_INTERVAL_SECONDS:
+            return True
+        window_started = _parse_iso(state.get("early_trigger_window_started_at"))
+        if window_started is None:
+            return False
+        if (now - window_started).total_seconds() >= _EARLY_TRIGGER_WINDOW_SECONDS:
+            return False
+        return _coerce_int(state.get("early_trigger_count", 0)) >= _EARLY_TRIGGER_MAX_PER_WINDOW
+
+    def _record_early_trigger(self, state: dict[str, Any]) -> None:
+        """Consume one early-trigger slot in the rolling 12h window."""
+        now = datetime.now()
+        window_started = _parse_iso(state.get("early_trigger_window_started_at"))
+        count = _coerce_int(state.get("early_trigger_count", 0))
+        if (
+            window_started is None
+            or (now - window_started).total_seconds() >= _EARLY_TRIGGER_WINDOW_SECONDS
+        ):
+            window_started = now
+            count = 0
+        state["last_early_trigger_at"] = now.isoformat()
+        state["early_trigger_window_started_at"] = window_started.isoformat()
+        state["early_trigger_count"] = count + 1
+        self._save_state(state)
+
     def _should_early_trigger(self, state: dict[str, Any]) -> bool:
         """True when unrefined events warrant an awareness pass before 12h.
 
         Reads the newest events past the awareness watermark once (bounded by
         the count threshold) and fires when either there are enough of them or
         any is a strong signal. Best-effort — a query failure never triggers.
+
+        Debounced (issue #344): at most one early pass per
+        ``_EARLY_TRIGGER_MIN_INTERVAL_SECONDS`` and
+        ``_EARLY_TRIGGER_MAX_PER_WINDOW`` per ``_EARLY_TRIGGER_WINDOW_SECONDS``,
+        and each fired pass consumes a slot in persisted state so a restart
+        cannot reset the count.
         """
+        if self._early_trigger_debounced(state):
+            return False
         watermark = _coerce_int(state.get("last_awareness_event_id", 0))
         try:
             rows = self._memory.query_events(
@@ -415,9 +490,13 @@ class CognitionCycle:
         except Exception:
             logger.debug("early-trigger event probe failed", exc_info=True)
             return False
-        if len(rows) >= _EARLY_TRIGGER_EVENT_COUNT:
-            return True
-        return any(_is_strong_signal_event(row) for row in rows)
+        should_trigger = len(rows) >= _EARLY_TRIGGER_EVENT_COUNT or any(
+            _is_strong_signal_event(row) for row in rows
+        )
+        if not should_trigger:
+            return False
+        self._record_early_trigger(state)
+        return True
 
     async def _run_awareness(self, state: dict[str, Any]) -> int:
         """Fold events newer than the watermark into awareness notes.
@@ -456,15 +535,25 @@ class CognitionCycle:
         soul_profile_data = self._memory.get_layer("soul").data
 
         total_added = 0
-        for batch_index, batch in enumerate(_chunk(rows, self._awareness_event_batch_size)):
+        batches = list(_chunk(rows, self._awareness_event_batch_size))
+        for batch_index, batch in enumerate(batches):
             events_for_call = (lookback + batch) if batch_index == 0 else batch
             # Evidence chain: attribute produced notes to THIS round's consumed
             # events (the batch), not the read-only lookback context.
             batch_event_ids = [_coerce_int(item.get("id", 0)) for item in batch]
             batch_event_ids = [eid for eid in batch_event_ids if eid > 0]
-            new_notes, confusion_candidates = await self._awareness_with_retry(
-                events_for_call, preference, soul_profile_data, batch_event_ids
-            )
+            try:
+                new_notes, confusion_candidates = await self._awareness_with_retry(
+                    events_for_call, preference, soul_profile_data, batch_event_ids
+                )
+            except LLMBudgetExhaustedError as exc:
+                # Request-level admission refused this chunk. Keep the
+                # watermark at the last successful batch and report the stop
+                # instead of replaying the whole backlog next window.
+                self._budget_stop_notes["awareness"] = (
+                    f"awareness stopped before batch {batch_index + 1}/{len(batches)}: {exc}"
+                )
+                break
             if new_notes:
                 existing = self._load_awareness_notes()
                 merged = self._awareness_analyzer.merge_notes(existing, new_notes)
@@ -589,13 +678,19 @@ class CognitionCycle:
                     "Weighted insight context selection failed; using fixed bounded fallback"
                 )
                 prompt_context = _select_fixed_insight_prompt_context(existing)
-            new_insights = await self._insight_analyzer.analyze(
-                awareness_notes=batch,
-                preference=preference,
-                soul_profile=soul_profile_data,
-                existing_insights=prompt_context,
-                max_tokens=self._cognition_max_tokens,
-            )
+            try:
+                new_insights = await self._insight_analyzer.analyze(
+                    awareness_notes=batch,
+                    preference=preference,
+                    soul_profile=soul_profile_data,
+                    existing_insights=prompt_context,
+                    max_tokens=self._cognition_max_tokens,
+                )
+            except LLMBudgetExhaustedError as exc:
+                self._budget_stop_notes["insight"] = (
+                    f"insight stopped at note index {processed}/{total_notes}: {exc}"
+                )
+                break
             if new_insights:
                 merged = self._insight_analyzer.merge_insights(existing, new_insights)
                 total_added += max(0, len(merged) - len(existing))

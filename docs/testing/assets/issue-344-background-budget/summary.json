@@ -1,0 +1,37 @@
+{
+  "issue": 344,
+  "date": "2026-11-11",
+  "environment": {
+    "provider_endpoint": "token.sensenova.cn",
+    "selected_model_seen": "glm-5.2",
+    "python": "3.12.12",
+    "events_in_db": 109390,
+    "max_event_id": 109803,
+    "events_consumed": 2,
+    "awareness_batch_size": 1,
+    "budget_max_calls": 1,
+    "budget_window_seconds": 3600
+  },
+  "run": {
+    "elapsed_seconds": 31.65,
+    "provider_calls": 1,
+    "usage_rows": [
+      {
+        "caller": "soul.awareness_confusions",
+        "model": "glm-5.2",
+        "prompt_tokens": 25786,
+        "completion_tokens": 1616,
+        "estimated_cost_cny": 0.030634,
+        "success": true
+      }
+    ],
+    "awareness_generated": 4,
+    "budget_exhausted": true,
+    "budget_detail": "awareness stopped before batch 2/2 ... 1/1 background calls in the last 3600s ...; insight stopped at note index 940/1390 ... 1/1 background calls ...",
+    "gate_budget_calls": 1,
+    "state_after": {
+      "last_awareness_event_id": 109802,
+      "last_awareness_at": "2020-01-01T00:00:00"
+    }
+  }
+}

@@ -4,6 +4,8 @@
 
 ## v0.3.237：首启免密、安装引导与初始化可靠性（2026-11-10）
 
+- 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344，待下次发版）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
+
 - 桌面、后端和浏览器插件统一为 0.3.237。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。
 - 安装包、容器、运行时和浏览器商店的各渠道回执见 [v0.3.237 发布记录](testing/2026-11-10-release-v0.3.237.md)。
 - Chrome Web Store 已受理 0.3.237，待审核，通过后自动发布。

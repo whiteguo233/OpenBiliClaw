@@ -861,12 +861,17 @@ def _build_registry() -> Any:
 def _build_llm_concurrency_gate() -> Any:
     """Return the single LLM gate owned by this CLI process composition."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.concurrency import LLMConcurrencyGate
+    from openbiliclaw.llm.concurrency import (
+        LLMConcurrencyGate,
+        apply_background_budget_config,
+    )
 
     cached = _RUNTIME_COMPONENTS.get("llm_concurrency_gate")
     if cached is not None:
         return cached
-    gate = LLMConcurrencyGate(load_config().llm.concurrency)
+    config = load_config()
+    gate = LLMConcurrencyGate(config.llm.concurrency)
+    apply_background_budget_config(gate, config)
     _RUNTIME_COMPONENTS["llm_concurrency_gate"] = gate
     return gate
 

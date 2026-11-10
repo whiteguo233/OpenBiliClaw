@@ -1349,7 +1349,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `true` | daemon 后台调度总开关；插件设置页显示为「停止后台 LLM 请求」。关闭后 runtime 的刷新、补池预计算、账户同步、猜测兴趣、主动推送和八源扩展账号周期回拉都会跳过；手动 CLI / API 请求仍按显式操作执行。若候选池为空，推荐页可能暂时没有内容 |
-| `llm_budget_max_calls` | int | `120` | daemon 后台 LLM 请求在 `llm_budget_window_seconds` 内的自设上限；达到后 `ContinuousRefreshController` 暂停自动 LLM / embedding 循环直到窗口滚动，并打一条 WARNING 提示可调大上限或手动继续。`0` 表示不启用预算。默认值按保护付费 API 额度的工程安全起点设定，正常单用户发现循环通常远低于该值 |
+| `llm_budget_max_calls` | int | `120` | daemon 后台 LLM 请求在 `llm_budget_window_seconds` 内的自设上限。v0.3.236 起是**请求级硬上限**：`LLMConcurrencyGate` 在每次后台请求发出前扣减额度，超限抛 `LLMBudgetExhaustedError`；计数落在共享 SQLite `background_llm_budget` 表，同一数据库上的多个进程（daemon / API / 桌面 worker / CLI）共用一份额度。`ContinuousRefreshController` 另在环路入口查额度以友好暂停自动循环并打 WARNING。认知循环在两个分片之间停下并保留水位。`0` 表示不启用预算。默认值按保护付费 API 额度的工程安全起点设定，正常单用户发现循环通常远低于该值 |
 | `llm_budget_window_seconds` | int | `3600` | 后台 LLM 预算窗口长度（秒），最小 `60`；与 `llm_budget_max_calls` 配合形成固定窗口配额 |
 | `pause_on_extension_disconnect` | bool | `false` | 开启后，daemon-owned 后台 LLM / embedding 工作只在浏览器插件有 `/api/runtime-stream` 连接、或刚断开仍处于宽限窗口内时运行；离线期间不会自动补新内容 |
 | `extension_disconnect_grace_seconds` | int | `90` | 插件最后一个 `runtime-stream` 连接断开后的宽限秒数；小于等于 0 或无法解析时回退到 `90` |

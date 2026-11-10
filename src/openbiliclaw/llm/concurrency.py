@@ -11,10 +11,43 @@ from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from openbiliclaw.llm.base import LLMBudgetExhaustedError
+from openbiliclaw.llm.budget import BackgroundBudgetLedger
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
+
+
+def apply_background_budget_config(gate: LLMConcurrencyGate, config: object) -> None:
+    """Apply `scheduler.llm_budget_*` and the shared ledger to ``gate``.
+
+    Composition roots call this right after building the gate so the quota is
+    enforced per background request and shared across every process that opens
+    the same database. Duck-typed on purpose: ``config`` is a Pydantic model
+    from :mod:`openbiliclaw.config`, and this module must stay import-light.
+    """
+
+    from pathlib import Path as _Path
+
+    scheduler = getattr(config, "scheduler", None)
+    max_calls = int(getattr(scheduler, "llm_budget_max_calls", 0) or 0)
+    window_seconds = int(getattr(scheduler, "llm_budget_window_seconds", 3600) or 3600)
+    data_path = getattr(config, "data_path", None)
+    ledger = None
+    if data_path is not None:
+        data_dir = _Path(data_path)
+        # The gate may be built before MemoryManager.initialize(); the ledger
+        # opens the app database directly, so make sure its directory exists.
+        data_dir.mkdir(parents=True, exist_ok=True)
+        ledger = BackgroundBudgetLedger(data_dir / "openbiliclaw.db")
+    gate.configure_background_budget(
+        max_calls=max_calls,
+        window_seconds=window_seconds,
+        ledger=ledger,
+    )
+
 
 DEFAULT_TOTAL_LLM_CONCURRENCY = 3
 
@@ -411,7 +444,14 @@ def is_interactive_caller(caller: str) -> bool:
 class LLMConcurrencyGate:
     """One true total provider bound plus a reserved background bound."""
 
-    def __init__(self, total_concurrency: int = DEFAULT_TOTAL_LLM_CONCURRENCY) -> None:
+    def __init__(
+        self,
+        total_concurrency: int = DEFAULT_TOTAL_LLM_CONCURRENCY,
+        *,
+        background_budget_calls: int = 0,
+        background_budget_window_seconds: int = 3600,
+        background_budget_ledger: BackgroundBudgetLedger | None = None,
+    ) -> None:
         self.total_concurrency = coerce_total_concurrency(total_concurrency)
         self.background_concurrency = background_llm_concurrency(self.total_concurrency)
         self._total = PrioritySemaphore(self.total_concurrency)
@@ -419,6 +459,35 @@ class LLMConcurrencyGate:
         self._warned_unknown_callers: set[str] = set()
         self._budget_window_started_at = time.monotonic()
         self._budget_window_calls = 0
+        self._budget_max_calls = max(0, int(background_budget_calls))
+        self._budget_window_seconds = max(0, int(background_budget_window_seconds))
+        self._budget_ledger = background_budget_ledger
+
+    def configure_background_budget(
+        self,
+        *,
+        max_calls: int,
+        window_seconds: int,
+        ledger: BackgroundBudgetLedger | None = None,
+    ) -> None:
+        """Apply `scheduler.llm_budget_*` and the shared ledger to this gate.
+
+        Composition roots call this once after loading config; tests and
+        standalone callers keep the disabled default (``max_calls=0``).
+        """
+
+        self._budget_max_calls = max(0, int(max_calls))
+        self._budget_window_seconds = max(0, int(window_seconds))
+        if ledger is not None:
+            self._budget_ledger = ledger
+
+    @property
+    def background_budget_max_calls(self) -> int:
+        return self._budget_max_calls
+
+    @property
+    def background_budget_window_seconds(self) -> int:
+        return self._budget_window_seconds
 
     @property
     def inventory_priority_state(self) -> InventoryPriorityState:
@@ -450,8 +519,18 @@ class LLMConcurrencyGate:
         """Return the number of background LLM calls in the current fixed window.
 
         A non-positive window disables the budget and simply returns the raw
-        count since the last explicit rollover.
+        count since the last explicit rollover. When a shared ledger is wired
+        (the daemon/API composition roots), the count is the process-wide total
+        rather than this process's share.
         """
+        if self._budget_ledger is not None and window_seconds > 0:
+            try:
+                return self._budget_ledger.count(window_seconds=window_seconds)
+            except Exception:
+                logger.warning(
+                    "Background budget ledger unavailable; using process-local count",
+                    exc_info=True,
+                )
         now = time.monotonic()
         if window_seconds > 0 and now - self._budget_window_started_at >= window_seconds:
             self._budget_window_started_at = now
@@ -462,6 +541,62 @@ class LLMConcurrencyGate:
         """Manually start a fresh budget window (e.g. user confirmed continue)."""
         self._budget_window_started_at = time.monotonic()
         self._budget_window_calls = 0
+        if self._budget_ledger is not None:
+            try:
+                self._budget_ledger.reset()
+            except Exception:
+                logger.warning("Background budget ledger reset failed", exc_info=True)
+
+    def _admit_process_local(self, *, limit: int, window_seconds: int) -> bool:
+        now = time.monotonic()
+        if now - self._budget_window_started_at >= window_seconds:
+            self._budget_window_started_at = now
+            self._budget_window_calls = 0
+        if self._budget_window_calls >= limit:
+            return False
+        self._budget_window_calls += 1
+        return True
+
+    def _admit_background_call(self, *, caller: str) -> None:
+        """Reserve budget for one background request or refuse it before send.
+
+        Request-level admission (issue #344): the cap is checked here, at the
+        single place every background provider request passes through, instead
+        of only at controller loop boundaries. The reservation happens after the
+        concurrency slots are acquired so a cancelled/queued call never burns
+        budget.
+        """
+        limit = self._budget_max_calls
+        window_seconds = self._budget_window_seconds
+        if limit <= 0 or window_seconds <= 0:
+            # Budget disabled (the supported opt-out); keep counting so
+            # `openbiliclaw cost` / status payload still show background volume.
+            self._budget_window_calls += 1
+            return
+        if self._budget_ledger is not None:
+            try:
+                admitted = self._budget_ledger.try_acquire(
+                    limit=limit,
+                    window_seconds=window_seconds,
+                )
+            except Exception:
+                logger.warning(
+                    "Background budget ledger unavailable; falling back to the "
+                    "process-local counter for admission",
+                    exc_info=True,
+                )
+                admitted = self._admit_process_local(limit=limit, window_seconds=window_seconds)
+        else:
+            admitted = self._admit_process_local(limit=limit, window_seconds=window_seconds)
+        if admitted:
+            return
+        used = self.background_call_count(window_seconds)
+        raise LLMBudgetExhaustedError(
+            f"Background LLM budget exhausted for caller {caller!r}: "
+            f"{used}/{limit} background calls in the last {window_seconds}s. "
+            "Raise scheduler.llm_budget_max_calls, set it to 0 to disable the "
+            "quota, or wait for the window to roll over."
+        )
 
     def classify(self, caller: str) -> LLMTrafficClass:
         tag = caller.strip()
@@ -508,11 +643,12 @@ class LLMConcurrencyGate:
         priority = self._priority(traffic)
         uses_background = traffic is not LLMTrafficClass.INTERACTIVE and not bypass_background
         if uses_background:
-            # Count daemon/background LLM requests for the scheduler's
-            # self-imposed per-window quota guard. Interactive user requests
-            # are deliberately excluded.
-            self._budget_window_calls += 1
             async with self._background.slot(traffic, priority), self._total.slot(priority):
+                # Counted and admitted for daemon/background LLM requests; the
+                # reservation happens after slot acquisition so a queued or
+                # cancelled call never consumes the window budget. Interactive
+                # user requests are deliberately excluded.
+                self._admit_background_call(caller=caller)
                 yield
             return
         async with self._total.slot(priority):
@@ -534,4 +670,12 @@ class LLMConcurrencyGate:
                 self.inventory_priority_state is not InventoryPriorityState.HEALTHY
             ),
             "inventory_priority_state": self.inventory_priority_state.value,
+            "llm_background_budget_max_calls": self._budget_max_calls,
+            "llm_background_budget_window_seconds": self._budget_window_seconds,
+            "llm_background_budget_calls": (
+                self.background_call_count(self._budget_window_seconds)
+                if self._budget_window_seconds > 0
+                else 0
+            ),
+            "llm_background_budget_shared": self._budget_ledger is not None,
         }

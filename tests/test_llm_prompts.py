@@ -1713,6 +1713,84 @@ def test_prompt_builders_strip_the_archived_interest_ledger() -> None:
     assert with_ledger["archived_interests"] == archived
 
 
+def test_prompt_builders_strip_lifecycle_archived_interest_rows() -> None:
+    """``state="archived"`` rows are tombstones, not live preference.
+
+    The lifecycle design never deletes a topic; it flips ``state`` to
+    ``archived`` after 60 quiet days. Those rows used to ride into the legacy
+    (default for preference/insight) payload forever, while compact-v1 already
+    filtered them. The prompt projection now drops them for both views; storage
+    keeps them for the analyzer's reactivation merge.
+    """
+    from openbiliclaw.llm.prompts import (
+        build_awareness_prompt,
+        build_awareness_with_confusions_prompt,
+        build_insight_prompt,
+        build_preference_analysis_prompt,
+        build_soul_profile_prompt,
+        render_preference_summary,
+    )
+
+    active = {"name": "滑雪", "category": "体育", "weight": 0.8}
+    archived = {
+        "name": "旧兴趣",
+        "category": "生活",
+        "weight": 0.01,
+        "state": "archived",
+        "evidence_count": 2,
+    }
+    persisted = {"interests": [active, archived]}
+    cleaned = {"interests": [active]}
+    events = [{"event_type": "view", "title": "标题"}]
+
+    for view in ("legacy", "compact-v1"):
+        rendered = [
+            build_preference_analysis_prompt(
+                events=events, existing_preference=persisted, input_view=view
+            ),
+            build_awareness_prompt(
+                events=events, preference_summary=persisted, soul_profile={}, input_view=view
+            ),
+            build_awareness_with_confusions_prompt(
+                events=events, preference_summary=persisted, soul_profile={}, input_view=view
+            ),
+            build_insight_prompt(
+                awareness_notes=[], preference_summary=persisted, soul_profile={}, input_view=view
+            ),
+        ]
+        baselines = [
+            build_preference_analysis_prompt(
+                events=events, existing_preference=cleaned, input_view=view
+            ),
+            build_awareness_prompt(
+                events=events, preference_summary=cleaned, soul_profile={}, input_view=view
+            ),
+            build_awareness_with_confusions_prompt(
+                events=events, preference_summary=cleaned, soul_profile={}, input_view=view
+            ),
+            build_insight_prompt(
+                awareness_notes=[], preference_summary=cleaned, soul_profile={}, input_view=view
+            ),
+        ]
+        assert rendered == baselines, view
+        assert "旧兴趣" not in json.dumps(rendered, ensure_ascii=False), view
+
+    soul_messages = build_soul_profile_prompt(
+        history_summary={},
+        preference_summary=persisted,
+        tone_profile=None,
+    )
+    assert soul_messages == build_soul_profile_prompt(
+        history_summary={},
+        preference_summary=cleaned,
+        tone_profile=None,
+    )
+    assert "旧兴趣" not in json.dumps(soul_messages, ensure_ascii=False)
+    assert render_preference_summary(persisted) == render_preference_summary(cleaned)
+    # Storage-side payload handed in by callers is never mutated.
+    assert persisted["interests"][1] == archived
+
+
 # ----------------------------------------------------------------------
 # v0.3.x batch_content_evaluation negative_examples block.
 
