@@ -26,8 +26,10 @@ from starlette.requests import Request
 
 from openbiliclaw.api.app import create_app
 from openbiliclaw.api.auth import AuthGate
+from openbiliclaw.auth_core import sign_token
 from openbiliclaw.config import ApiAuthConfig, ApiConfig, Config
 from openbiliclaw.recommendation_runtime import (
+    RECOMMENDATION_LOCAL_HEADER,
     RECOMMENDATION_PORT_ENV,
     RECOMMENDATION_SOCK_ENV,
 )
@@ -39,6 +41,9 @@ _ORIGIN = "http://127.0.0.1:8420"
 _APPEND_PATH = "/api/recommendations/append"
 _TCP_PORT = "18424"
 _SOCK_PATH = "/tmp/openbiliclaw-test/recommendation.sock"
+_SESSION_SECRET = "test-secret"
+_SESSION = sign_token(_SESSION_SECRET, epoch=0, ttl_hours=24)
+_OTHER_ORIGINS = ["https://evil.example", "https://127.0.0.1:8420"]
 
 
 class _FakeAsyncHTTPTransport:
@@ -108,7 +113,14 @@ def _build_proxied_app(
     ``fake_httpx=False`` keeps the real async client in place, so the test
     exercises the actual on-the-wire header assembly.
     """
-    config = config or Config(data_dir=str(tmp_path))
+    config = config or Config(
+        data_dir=str(tmp_path),
+        api=ApiConfig(
+            auth=ApiAuthConfig(
+                enabled=True, session_secret=_SESSION_SECRET, allowed_bearer_origins=_OTHER_ORIGINS
+            )
+        ),
+    )
     monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: config)
     # ``create_app`` persists the whole config when it has to generate a session
     # secret for an enabled auth gate. Point the project root at tmp_path so that
@@ -120,7 +132,7 @@ def _build_proxied_app(
         monkeypatch.setattr(httpx, "AsyncHTTPTransport", _FakeAsyncHTTPTransport)
     return create_app(
         memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
-        database=SimpleNamespace(),
+        database=SimpleNamespace(get_auth_epoch=lambda: 0),
         soul_engine=SimpleNamespace(),
         runtime_controller=SimpleNamespace(event_hub=None),
         recommendation_engine=SimpleNamespace(),
@@ -163,14 +175,14 @@ def _post_append(
         headers={
             "X-OBC-Auth": "1",
             "Origin": origin,
-            "Cookie": "obc_session=test-token",
+            "Cookie": f"obc_session={_SESSION}",
             **(extra_headers or {}),
         },
     )
 
 
 def _recommendation_process_gate() -> AuthGate:
-    return AuthGate(ApiAuthConfig(enabled=True, session_secret="test-secret"), None)
+    return AuthGate(ApiAuthConfig(enabled=True, session_secret=_SESSION_SECRET), None)
 
 
 def test_proxy_forwards_original_host_and_origin(monkeypatch, tmp_path: Path) -> None:
@@ -272,6 +284,7 @@ _TERMINATOR_HEADERS = {
     "X-Forwarded-For": "203.0.113.7",
     "X-Real-IP": "203.0.113.8",
     "Forwarded": "for=203.0.113.7",
+    RECOMMENDATION_LOCAL_HEADER: "untrusted-request-header",
 }
 
 
@@ -280,7 +293,14 @@ def _post_through_external_tls_terminator(app: Any, *, origin: str) -> Any:
     return _post_append(
         TestClient(app, base_url="https://sushe:8443"),
         origin=origin,
-        extra_headers=_TERMINATOR_HEADERS,
+        extra_headers={
+            **_TERMINATOR_HEADERS,
+            **(
+                {"Cookie": "", "Authorization": f"Bearer {_SESSION}"}
+                if origin in _OTHER_ORIGINS
+                else {}
+            ),
+        },
     )
 
 
@@ -317,7 +337,11 @@ def test_origin_with_mismatched_scheme_is_never_normalised(monkeypatch, tmp_path
     monkeypatch.delenv(RECOMMENDATION_PORT_ENV, raising=False)
     app = _build_proxied_app(monkeypatch, tmp_path)
 
-    _post_append(TestClient(app, base_url=_ORIGIN), origin="https://127.0.0.1:8420")
+    _post_append(
+        TestClient(app, base_url=_ORIGIN),
+        origin="https://127.0.0.1:8420",
+        extra_headers={"Cookie": "", "Authorization": f"Bearer {_SESSION}"},
+    )
 
     forwarded = _FakeAsyncClient.forwards[0]["headers"]
     assert forwarded["origin"] == "https://127.0.0.1:8420"
@@ -335,6 +359,7 @@ def test_forwarded_context_headers_are_not_relayed(monkeypatch, tmp_path: Path) 
     forwarded = _FakeAsyncClient.forwards[0]["headers"]
     assert "x-forwarded-proto" not in forwarded
     assert "x-forwarded-host" not in forwarded
+    assert RECOMMENDATION_LOCAL_HEADER not in forwarded
     # Client identity is deliberately NOT dropped: auth_core treats the presence
     # of any of these on a loopback peer as fail-closed, and stripping them here
     # would widen the local-exemption decision on the loopback-TCP transport.
@@ -373,7 +398,7 @@ def test_https_scheme_from_trusted_proxy_is_normalised(monkeypatch, tmp_path: Pa
         api=ApiConfig(
             auth=ApiAuthConfig(
                 enabled=True,
-                session_secret="test-secret",
+                session_secret=_SESSION_SECRET,
                 trusted_proxies=["127.0.0.1"],
             )
         ),

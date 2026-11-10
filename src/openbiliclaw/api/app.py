@@ -227,6 +227,8 @@ from openbiliclaw.discovery.temporal import (
 )
 from openbiliclaw.llm.base import safe_llm_failure_message
 from openbiliclaw.recommendation_runtime import (
+    RECOMMENDATION_LOCAL_HEADER,
+    RECOMMENDATION_LOCAL_TOKEN_ENV,
     RECOMMENDATION_PORT_ENV,
     RECOMMENDATION_SOCK_ENV,
     recommendation_transport_enabled,
@@ -3321,19 +3323,14 @@ def create_app(
                 )
         return await call_next(request)
 
-    # Register AFTER the degraded guard so the auth gate runs ahead of it:
-    # unauthenticated requests are rejected before any downstream handling.
-    # CORS stays inner; 401/403 echo a permissive header. Note that the
-    # recommendation proxy below is registered even later, so it wraps this
-    # gate: /api/recommendations/* is authenticated by the recommendation
-    # process, which is why that hop must preserve the request context.
-    app.middleware("http")(make_auth_middleware(_get_auth_gate))
-
-    if (
-        os.environ.get("OPENBILICLAW_RECOMMENDATION_ONLY", "").strip() != "1"
-        and recommendation_transport_enabled()
-    ):
+    recommendation_only = os.environ.get("OPENBILICLAW_RECOMMENDATION_ONLY", "").strip() == "1"
+    recommendation_child_token = (
+        os.environ.get(RECOMMENDATION_LOCAL_TOKEN_ENV, "") if recommendation_only else ""
+    )
+    if not recommendation_only and recommendation_transport_enabled():
         import httpx as _httpx
+
+        app.state.recommendation_local_token = secrets.token_urlsafe(32)
 
         def _ingress_origin_is_same_origin(request: Request, host: str) -> bool:
             """Whether the request Origin matches this ingress's effective view.
@@ -3355,7 +3352,8 @@ def create_app(
 
         @app.middleware("http")
         async def proxy_recommendation_api(request: Request, call_next: Any) -> Any:
-            if not request.url.path.startswith("/api/recommendations"):
+            path = request.url.path
+            if path != "/api/recommendations" and not path.startswith("/api/recommendations/"):
                 return await call_next(request)
             # The original Host MUST be forwarded: the recommendation process runs
             # the same auth middleware, whose CSRF check compares the request
@@ -3391,6 +3389,7 @@ def create_app(
                     "connection",
                     "x-forwarded-proto",
                     "x-forwarded-host",
+                    RECOMMENDATION_LOCAL_HEADER,
                 }:
                     continue
                 if lowered == "origin" and same_origin:
@@ -3412,6 +3411,8 @@ def create_app(
                 client_kwargs: dict[str, Any] = {"timeout": proxy_timeout, "trust_env": False}
             else:
                 target_url = f"http://localhost{request.url.path}"
+                if _get_auth_gate().is_trusted_local(request):
+                    headers[RECOMMENDATION_LOCAL_HEADER] = app.state.recommendation_local_token
                 client_kwargs = {
                     "transport": _httpx.AsyncHTTPTransport(uds=os.environ[RECOMMENDATION_SOCK_ENV]),
                     "timeout": proxy_timeout,
@@ -3452,6 +3453,12 @@ def create_app(
                 status_code=upstream.status_code,
                 headers=response_headers,
             )
+
+    # Check the original browser request before proxying it. In particular,
+    # the TCP hop's loopback peer does not establish that the browser was local.
+    app.middleware("http")(
+        make_auth_middleware(_get_auth_gate, recommendation_local_token=recommendation_child_token)
+    )
 
     def _schedule_post_feedback_tasks() -> None:
         if (

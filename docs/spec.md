@@ -352,7 +352,8 @@ full Jev evaluation → joint temporal outcome + representative excerpt (8 quest
                     → native INVALID / contradiction → typed refusal → lease-CAS parking
                     → no same-context retry; recovery after endpoint/evidence context change
 
-recommendation request → main API → optional Unix-socket recommendation process
+recommendation request → main API auth → optional recommendation process
+                                       → Unix socket carries verified local identity; loopback TCP fallback
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory
 main API ← validated response inventory / 2s active-client inventory watcher

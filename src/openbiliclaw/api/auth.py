@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse, Response
 
 from openbiliclaw import auth_core
 from openbiliclaw.auth_core import COOKIE_NAME, CSRF_HEADER
+from openbiliclaw.recommendation_runtime import RECOMMENDATION_LOCAL_HEADER
 
 if TYPE_CHECKING:
     from starlette.requests import HTTPConnection
@@ -323,7 +324,7 @@ def _is_public(request: Request) -> bool:
 # ── middleware ──────────────────────────────────────────────────────────────
 
 
-def make_auth_middleware(get_gate: GateGetter) -> Any:
+def make_auth_middleware(get_gate: GateGetter, *, recommendation_local_token: str = "") -> Any:
     """Build the ASGI http middleware dispatch closure."""
 
     async def auth_guard(request: Request, call_next: Any) -> Any:
@@ -331,6 +332,21 @@ def make_auth_middleware(get_gate: GateGetter) -> Any:
         if _is_public(request):
             return await call_next(request)
         if gate.is_trusted_local(request):
+            return await call_next(request)
+        # The dedicated Unix socket has no IP peer. Only the main API can
+        # attest that it received this recommendation request from trusted local.
+        if (
+            recommendation_local_token
+            and request.client is None
+            and (
+                request.url.path == "/api/recommendations"
+                or request.url.path.startswith("/api/recommendations/")
+            )
+            and secrets.compare_digest(
+                request.headers.get(RECOMMENDATION_LOCAL_HEADER, "").encode(),
+                recommendation_local_token.encode(),
+            )
+        ):
             return await call_next(request)
         if not gate.auth.enabled:
             # Migration has its own stricter physical-loopback + same-origin
