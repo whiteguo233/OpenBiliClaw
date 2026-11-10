@@ -92,6 +92,35 @@ def test_parser_accepts_and_canonicalizes_complete_v2_deadline() -> None:
     assert parsed.evidence_complete is True
 
 
+def test_parser_keeps_class_when_item_makes_no_explicit_validity_claim(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``none`` is a legal mode for a classified item, without a warning.
+
+    The prompt tells the model to answer ``none`` when the item carries no
+    explicit validity claim ("没有具体时效主张时用 none"), so rejecting that
+    pair threw away a correct ``temporal_class`` and dropped the item out of
+    temporal ranking. One install logged it 2402 times.
+    """
+
+    caplog.set_level(logging.WARNING, logger="openbiliclaw.discovery.temporal")
+
+    parsed = parse_temporal_evaluation(
+        _wire(
+            temporal_validity_mode="none",
+            temporal_valid_until="",
+            temporal_scope="none",
+            temporal_evidence="",
+        )
+    )
+
+    assert parsed.temporal_class == "current"
+    assert parsed.temporal_validity_mode == "none"
+    assert parsed.temporal_scope == "none"
+    assert parsed.temporal_state == "unknown"
+    assert caplog.records == []
+
+
 def test_parser_accepts_exact_neutral_unknown_wire_without_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

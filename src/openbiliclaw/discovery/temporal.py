@@ -71,6 +71,24 @@ _ALLOWED_VALIDITY_MODES_BY_CLASS: MappingProxyType[str, frozenset[str]] = Mappin
         "unknown": frozenset({"none"}),
     }
 )
+# ``_ALLOWED_VALIDITY_MODES_BY_CLASS`` is the *review clock* contract: deriving
+# a review trigger needs a real validity mode, so ``none`` cannot participate.
+# The LLM-output parser has a different job — it must not throw away a correct
+# ``temporal_class`` just because the item makes no explicit validity claim.
+# ``none`` is the honest mode in exactly that case, and the prompt itself tells
+# the model to answer ``none`` ("没有具体时效主张时用 none"). Keeping the parser
+# strict here demoted 2402 correctly-classified items to ``unknown`` on one
+# install (log 2026-08→11) — the ranking lost their temporal class entirely.
+_PARSE_VALIDITY_MODES_BY_CLASS: MappingProxyType[str, frozenset[str]] = MappingProxyType(
+    {
+        **{
+            cls: allowed | {"none"}
+            for cls, allowed in _ALLOWED_VALIDITY_MODES_BY_CLASS.items()
+            if cls != "unknown"
+        },
+        "unknown": frozenset({"none"}),
+    }
+)
 
 
 def is_complete_temporal_evidence_marker(value: object) -> bool:
@@ -911,7 +929,7 @@ def parse_temporal_evaluation(payload: Mapping[str, object]) -> TemporalEvaluati
     if raw_state.strip().lower() not in TEMPORAL_STATES:
         logger.warning("Temporal evaluation state is invalid; using unknown")
         return TemporalEvaluation()
-    if mode not in _ALLOWED_VALIDITY_MODES_BY_CLASS[temporal_class]:
+    if mode not in _PARSE_VALIDITY_MODES_BY_CLASS[temporal_class]:
         logger.warning("Temporal evaluation class/mode pair is invalid; using unknown")
         return TemporalEvaluation()
     allowed_states = {

@@ -263,12 +263,20 @@ async def _wait_for_llm_registry(
 
 
 async def run_full_worker() -> None:
-    """Run a full RuntimeContext background worker in a separate process.
+    """Run the non-discovery half of the background work in a separate process.
 
     This builds the same runtime components as the API process and starts the
-    periodic background loops (refresh/account sync/auto-update and related
-    daemon work). When ``OPENBILICLAW_FULL_WORKER=1``, the API process should
-    skip starting these loops so they run here instead.
+    loops this process owns: account sync, auto-update, the soul speculators
+    and the serve publisher. When ``OPENBILICLAW_FULL_WORKER=1`` the API process
+    skips starting those loops so they run here instead.
+
+    It deliberately does **not** own ``ContinuousRefreshController``
+    (discovery / pool refill / candidate evaluation): ``openbiliclaw.discovery_
+    worker`` is the sole owner, spawned alongside this process. Ownership is
+    passed in explicitly because this process is also spawned *with*
+    ``OPENBILICLAW_FULL_WORKER=1`` — the flag means "someone else runs the
+    loops", so inferring ownership from it here made this worker start nothing
+    at all and left the refresh loop running in no process.
     """
     from types import SimpleNamespace
 
@@ -297,7 +305,11 @@ async def run_full_worker() -> None:
         await _wait_for_llm_registry()
         config = load_config()
         ctx = build_runtime_context(config)
-        await ctx.restart_background_tasks(app)
+        await ctx.restart_background_tasks(
+            app,
+            start_refresh_controller=False,
+            start_account_sync=True,
+        )
         logger.info("Full worker background tasks started")
         feedback_scheduler = EventProcessingScheduler(
             soul_engine_resolver=lambda: getattr(ctx, "soul_engine", None),

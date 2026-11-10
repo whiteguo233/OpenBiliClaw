@@ -322,6 +322,107 @@ class _GuidedInitTimeoutKwargs(TypedDict, total=False):
 # leave enough headroom for cold local providers.
 _CONFIG_LLM_PROBE_MAX_TIMEOUT_SECONDS = 120.0
 
+# Delegated-loop takeover. A frozen Windows child takes minutes to cold-start
+# (PyInstaller + PySide imports), so the grace period is deliberately long
+# enough that a slow-but-alive worker is never mistaken for a dead one; a
+# genuinely dead worker still recovers in minutes instead of never.
+# Calibration provenance: the 2026-10-15 desktop stall left the discovery loop
+# stopped for 23 days because nothing ever re-checked the promise.
+_DELEGATED_TAKEOVER_GRACE_SECONDS = 600.0
+_DELEGATED_TAKEOVER_POLL_SECONDS = 60.0
+# The grace period is anchored to process start, not to watchdog creation:
+# every config hot-reload rebuilds the runtime and restarts the watchdog, and a
+# per-watchdog timer would let a desktop that saves settings now and then keep
+# postponing the takeover forever — which is the stall this feature exists to
+# break.
+_DELEGATED_OWNER_GRACE_STARTED_AT = time.monotonic()
+
+
+def _schedule_delegated_loop_takeover(ctx: Any, app: FastAPI) -> None:
+    """Start the watchdog that reclaims loops whose delegated owner died.
+
+    ``OPENBILICLAW_FULL_WORKER=1`` makes the API process skip every periodic
+    loop on the promise that child processes run them. Nothing enforced that
+    promise: when the discovery worker stopped heartbeating on a Windows
+    desktop install, the pool sat frozen while the API kept serving
+    "delegated" forever.
+
+    The watchdog waits out a cold-start grace period, then takes ownership of
+    any loop whose owner is not heartbeating. Takeover is once per process
+    lifetime so a flapping child cannot start and stop discovery underneath
+    live HTTP traffic.
+    """
+
+    existing = getattr(app.state, "delegated_takeover_task", None)
+    if existing is not None and not existing.done():
+        return
+    registry = getattr(ctx, "task_registry", None)
+    track = getattr(registry, "track", None)
+    if not callable(track):
+        logger.warning(
+            "Cannot schedule the delegated-loop takeover watchdog: runtime context has "
+            "no task registry; a dead worker would leave discovery stopped"
+        )
+        return
+    app.state.delegated_takeover_task = track(
+        "delegated_loop_takeover",
+        _delegated_loop_takeover_loop(ctx, app),
+    )
+
+
+async def _delegated_loop_takeover_loop(ctx: Any, app: FastAPI) -> None:
+    """Poll the delegated owners and take over the ones that never reported."""
+
+    remaining = max(
+        0.0,
+        _DELEGATED_TAKEOVER_GRACE_SECONDS - (time.monotonic() - _DELEGATED_OWNER_GRACE_STARTED_AT),
+    )
+    await asyncio.sleep(remaining)
+    health_fn = getattr(ctx, "delegated_owner_health", None)
+    if not callable(health_fn):
+        return
+    while True:
+        try:
+            health = health_fn()
+        except Exception:
+            logger.debug("Delegated owner health probe failed", exc_info=True)
+            return
+        if not isinstance(health, dict):
+            return
+        missing = [name for name, alive in health.items() if not alive]
+        if missing:
+            await _take_over_delegated_loops(ctx, app, health)
+            return
+        await asyncio.sleep(_DELEGATED_TAKEOVER_POLL_SECONDS)
+
+
+async def _take_over_delegated_loops(ctx: Any, app: FastAPI, health: dict[str, bool]) -> None:
+    """Run the loops this process had delegated to a worker that is now dead."""
+
+    missing = ", ".join(name for name, alive in health.items() if not alive)
+    logger.error(
+        "Delegated background loop owner(s) [%s] have no live heartbeat after %.0fs; "
+        "this API process is taking those loops over for the rest of its lifetime "
+        "(they were running in no process, so nothing could refill the pool)",
+        missing,
+        _DELEGATED_TAKEOVER_GRACE_SECONDS,
+    )
+    restart = getattr(ctx, "restart_background_tasks", None)
+    if not callable(restart):
+        logger.error("Cannot take over delegated loops: no restart_background_tasks")
+        return
+    try:
+        await restart(
+            app,
+            start_refresh_controller=not bool(health.get("refresh", True)),
+            start_account_sync=not bool(health.get("account_sync", True)),
+        )
+    except Exception:
+        logger.exception("Delegated loop takeover failed; discovery remains stopped")
+        return
+    app.state.delegated_takeover_active = True
+    logger.warning("Delegated loop takeover complete; this process now runs [%s]", missing)
+
 
 def _config_llm_probe_timeout_seconds(configured_timeout: object) -> float:
     """Clamp one settings-page LLM probe to a finite cold-start-safe budget."""
@@ -3548,6 +3649,7 @@ def create_app(
             logger.info(
                 "External full worker active; API periodic and event-processing loops delegated"
             )
+            _schedule_delegated_loop_takeover(ctx, app)
             return
         if resume_execution_lanes:
             await _prepare_event_owners()
