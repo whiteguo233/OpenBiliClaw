@@ -111,6 +111,7 @@ packaging = [
     # pystray's macOS backend needs pyobjc (Foundation / AppKit / Quartz).
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "dmgbuild==1.6.7; sys_platform == 'darwin'",
 ]
 
 [project.scripts]

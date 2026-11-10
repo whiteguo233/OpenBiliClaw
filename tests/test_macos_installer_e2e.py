@@ -313,3 +313,55 @@ def test_mounted_dmg_installer_replaces_old_app_and_launches_new_version(
                     capture_output=True,
                     text=True,
                 )
+
+
+def test_notarized_dmg_mounts_with_finder_drag_layout(tmp_path: Path) -> None:
+    """Finder must get its layout from the actual read-only distribution volume."""
+    ds_store = pytest.importorskip("ds_store")
+    mac_alias = pytest.importorskip("mac_alias")
+    app = tmp_path / "OpenBiliClaw.app"
+    _make_signed_test_app(
+        app,
+        bundle_id=f"com.openbiliclaw.dmg-layout.{uuid.uuid4().hex}",
+        version="1.0.0",
+        launch_marker=tmp_path / "unused-marker",
+    )
+    dmg = build_module.make_macos_dmg(
+        app_bundle=app, output_dir=tmp_path / "release", version="v1.0.0", notarized=True
+    )
+    mount = tmp_path / "mounted"
+    mount.mkdir()
+    subprocess.run(
+        ["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(dmg)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    try:
+        with ds_store.DSStore.open(str(mount / ".DS_Store"), "r") as store:
+            assert store["."]["icvl"] == (b"type", b"icnv")
+            icon_view = store["."]["icvp"]
+            assert icon_view["backgroundType"] == 2
+            assert icon_view["arrangeBy"] == "none"
+            background = mac_alias.Alias.from_bytes(icon_view["backgroundImageAlias"])
+            assert (mount / background.target.filename).is_file()
+            app_x, app_y = store[app.name]["Iloc"]
+            applications_x, applications_y = store["Applications"]["Iloc"]
+            assert app_x < applications_x
+            assert app_y == applications_y
+
+        assert {entry.name for entry in mount.iterdir() if not entry.name.startswith(".")} == {
+            app.name,
+            "Applications",
+        }
+        assert (mount / "Applications").readlink() == Path("/Applications")
+        subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", str(mount / app.name)],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    finally:
+        subprocess.run(
+            ["hdiutil", "detach", str(mount)], check=True, capture_output=True, timeout=60
+        )

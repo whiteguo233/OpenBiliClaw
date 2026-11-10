@@ -31,6 +31,7 @@ TAILNET_NOTICES_SCRIPT = PROJECT_ROOT / "scripts" / "generate_tailnet_notices.py
 MACOS_FIRST_LAUNCH_GUIDE_NAME = "首次打开说明 First Launch.html"
 MACOS_FIRST_LAUNCH_IMAGE_NAME = "首次打开提示 First Launch.png"
 MACOS_DMG_BACKGROUND_NAME = "openbiliclaw-dmg-guide.png"
+MACOS_DMG_WINDOW_SIZE = (620, 350)
 MACOS_INSTALLER_COMMAND_NAME = "安装并启动 Install OpenBiliClaw.command"
 MACOS_INSTALLER_COMMAND_SOURCE = PROJECT_ROOT / "packaging" / "install_macos.command"
 
@@ -576,6 +577,7 @@ def _load_dmg_font(size: int, *, bold: bool = False):
 
     candidates = [
         "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "/System/Library/Fonts/Supplemental/Songti.ttc",
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         (
@@ -669,17 +671,81 @@ def write_macos_dmg_background(stage_dir: Path) -> Path:
     return background_path
 
 
+def _write_macos_drag_background(directory: Path) -> Path:
+    """Draw Finder's bilingual instructions at standard and Retina resolutions."""
+    from PIL import Image, ImageDraw
+
+    width, height = MACOS_DMG_WINDOW_SIZE
+    background = directory / "drag-to-applications.png"
+    for scale in (1, 2):
+        image = Image.new("RGB", (width * scale, height * scale), "#f1f7fa")
+        draw = ImageDraw.Draw(image)
+        for y, text, size, color in (
+            (31, "将 OpenBiliClaw 拖到「应用程序」", 25, "#10283a"),
+            (70, "Drag OpenBiliClaw to Applications", 15, "#3f5969"),
+            (263, "复制完成后，从「应用程序」打开 OpenBiliClaw。", 16, "#10283a"),
+            (291, "Then open OpenBiliClaw from Applications.", 14, "#3f5969"),
+        ):
+            draw.text(
+                (width * scale // 2, y * scale),
+                text,
+                font=_load_dmg_font(size * scale),
+                fill=color,
+                anchor="mt",
+            )
+
+        arrow = ((268, 161), (331, 161), (331, 146), (355, 166), (331, 186), (331, 171), (268, 171))
+        draw.polygon([(x * scale, y * scale) for x, y in arrow], fill="#0c7596")
+        image.save(background if scale == 1 else directory / "drag-to-applications@2x.png")
+    return background
+
+
+def _make_macos_drag_dmg(app_bundle: Path, dmg_path: Path) -> None:
+    """Write a Finder layout directly into the release image without a GUI session."""
+    import tempfile
+    import time
+
+    try:
+        from dmgbuild import build_dmg
+        from dmgbuild.core import DMGError
+    except ImportError as exc:
+        raise RuntimeError("Install the macOS [packaging] extra to build the release DMG") from exc
+
+    def verify_copy(mount_point: str, _settings: object) -> None:
+        # dmgbuild uses ditto but does not propagate a failed copy's exit code.
+        subprocess.check_call(
+            ["codesign", "--verify", "--deep", "--strict", str(Path(mount_point) / app_bundle.name)]
+        )
+
+    with tempfile.TemporaryDirectory(prefix="obc-dmg-guide-") as directory:
+        settings = {
+            "format": "UDZO",
+            "files": [(str(app_bundle.resolve()), app_bundle.name)],
+            "symlinks": {"Applications": "/Applications"},
+            "default_view": "icon-view",
+            "window_rect": ((160, 120), MACOS_DMG_WINDOW_SIZE),
+            "icon_size": 100,
+            "text_size": 15,
+            "icon_locations": {app_bundle.name: (164, 166), "Applications": (456, 166)},
+            "background": str(_write_macos_drag_background(Path(directory))),
+            "create_hook": verify_copy,
+        }
+        for attempt in range(1, 4):
+            try:
+                build_dmg(str(dmg_path), "OpenBiliClaw", settings=settings)
+                return
+            except DMGError as exc:
+                dmg_path.unlink(missing_ok=True)
+                if attempt == 3:
+                    raise
+                print(f"[build] DMG build failed (attempt {attempt}/3): {exc}")
+                time.sleep(3 * attempt)
+
+
 def make_macos_dmg(
     *, app_bundle: Path, output_dir: Path, version: str, notarized: bool = False
 ) -> Path:
-    """Build a helper-assisted ``.dmg`` from the ``.app`` bundle (macOS only).
-
-    Uses ``ditto`` (bundle-faithful copy that preserves the in-bundle symlinks)
-    into a staging dir with an explicit verified install/restart helper and an
-    ``/Applications`` shortcut, then ``hdiutil`` to a compressed UDZO image.
-    Experimental packages include the verified install/restart helper. Notarized
-    packages use drag-install guidance without an unsigned shell launcher.
-    """
+    """Build a drag-install release DMG or a helper-assisted experimental DMG."""
     import tempfile
     import time
 
@@ -688,27 +754,17 @@ def make_macos_dmg(
     dmg_path = output_dir / dmg_name
     if dmg_path.exists():
         dmg_path.unlink()
+    if notarized:
+        _make_macos_drag_dmg(app_bundle, dmg_path)
+        return dmg_path
 
     stage = Path(tempfile.mkdtemp(prefix="obc-dmg-"))
     try:
         subprocess.check_call(["ditto", str(app_bundle), str(stage / app_bundle.name)])
         (stage / "Applications").symlink_to("/Applications")
-        if notarized:
-            (stage / MACOS_FIRST_LAUNCH_GUIDE_NAME).write_text(
-                "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
-                "<title>OpenBiliClaw 安装</title><h1>安装 OpenBiliClaw</h1>"
-                "<p>本应用已通过 Developer ID 签名与 Apple 公证。</p>"
-                "<ol><li>升级前先从菜单栏退出旧版本。</li>"
-                "<li>将 OpenBiliClaw 拖到 Applications，升级时确认替换。</li>"
-                "<li>从 Applications 打开 OpenBiliClaw。</li></ol>"
-                "<p>Quit the old version, drag OpenBiliClaw to Applications, then launch it.</p>"
-                "<p>用户数据保留在 ~/OpenBiliClaw。User data is preserved.</p></html>",
-                encoding="utf-8",
-            )
-        else:
-            stage_macos_installer_command(stage)
-            write_macos_first_launch_guide(stage)
-            write_macos_dmg_background(stage)
+        stage_macos_installer_command(stage)
+        write_macos_first_launch_guide(stage)
+        write_macos_dmg_background(stage)
         hdiutil_cmd = [
             "hdiutil",
             "create",
