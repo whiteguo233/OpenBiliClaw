@@ -1075,6 +1075,8 @@ origins, methods and public DNS; it does not pin the host's socket resolution. S
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。打开正式 DMG 后，按 Finder 窗口里的箭头把 OpenBiliClaw 拖到「应用程序」，再从「应用程序」打开。升级前先退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
+内置向量版的构建会为 BGE-M3 模型和文件系统开销预留 DMG 卷空间。普通安装和升级步骤相同。
+
 macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行传输；逐段校验后才缓存，服务器忽略范围时回到单流。签名、系统信任及原生握手验证仍必须全部通过。Linux/Docker 的原生 Ego 支持范围未扩大。
 
 

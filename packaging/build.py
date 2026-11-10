@@ -717,9 +717,28 @@ def _make_macos_drag_dmg(app_bundle: Path, dmg_path: Path) -> None:
             ["codesign", "--verify", "--deep", "--strict", str(Path(mount_point) / app_bundle.name)]
         )
 
+    # dmgbuild assumes 4 KiB allocation blocks. Its size parameter also includes
+    # partition and HFS metadata that do not become usable file space.
+    allocation = 16 * 1024
+    mebibyte = 1024**2
+    payload_bytes = 0
+    for directory, _, filenames in os.walk(app_bundle):
+        payload_bytes += allocation
+        for filename in filenames:
+            size = (Path(directory) / filename).lstat().st_size
+            payload_bytes += max(allocation, ((size + allocation - 1) // allocation) * allocation)
+    # A real full-model app can exhaust a multi-GiB volume with the small-app
+    # margin. The writable image is compacted before the final DMG is produced.
+    overhead_mib = 1024 if payload_bytes >= 1024 * mebibyte else 256
+    volume_bytes = payload_bytes + overhead_mib * mebibyte
+    volume_mib = (volume_bytes + mebibyte - 1) // mebibyte
+    free_mib = shutil.disk_usage(dmg_path.parent).free // mebibyte
+    print(f"[build] Writable DMG volume: {volume_mib} MiB, host free space: {free_mib} MiB")
+
     with tempfile.TemporaryDirectory(prefix="obc-dmg-guide-") as directory:
         settings = {
             "format": "UDZO",
+            "size": f"{volume_mib}m",
             "files": [(str(app_bundle.resolve()), app_bundle.name)],
             "symlinks": {"Applications": "/Applications"},
             "default_view": "icon-view",
@@ -1344,14 +1363,6 @@ def build(
                 f"{archive_version}-with-embedding" if bundle_embedding else archive_version
             )
             target = detect_target()
-            archive_path = create_archive(
-                packaged_root=packaged_root,
-                output_dir=RELEASE_DIR,
-                version=asset_version,
-                target=target,
-            )
-            print()
-            print(f"  Release archive: {archive_path}")
             if platform.system() == "Darwin":
                 app_bundle = DIST_DIR / "OpenBiliClaw.app"
                 if app_bundle.exists() and shutil.which("hdiutil"):
@@ -1392,6 +1403,16 @@ def build(
                             ]
                         )
                     print(f"  Release installer: {dmg_path}")
+            # Finish the DMG before creating a second copy of the model in
+            # the release ZIP, when the writable image no longer uses disk.
+            archive_path = create_archive(
+                packaged_root=packaged_root,
+                output_dir=RELEASE_DIR,
+                version=asset_version,
+                target=target,
+            )
+            print()
+            print(f"  Release archive: {archive_path}")
         print("=" * 60)
     else:
         print("[build] WARNING: Expected output directory not found!")

@@ -12,6 +12,11 @@ name: Release Desktop Installers
 # Signed/notarized Intel x64 builds use the manual build-installers.yml workflow.
 on:
   workflow_dispatch:
+    inputs:
+      embedding_backfill_tag:
+        description: "Publish only a missing arm64 with-embedding DMG to this existing desktop tag"
+        type: string
+        required: false
   push:
     tags:
       - "desktop-v*"
@@ -19,6 +24,9 @@ on:
 # Needs write access to publish the Release (build-installers.yml stays read-only).
 permissions:
   contents: write
+
+env:
+  DESKTOP_RELEASE_TAG: ${{ inputs.embedding_backfill_tag || github.ref_name }}
 
 jobs:
   macos:
@@ -28,7 +36,7 @@ jobs:
       # fail-fast off so a failing variant doesn't cancel the other.
       fail-fast: false
       matrix:
-        variant: [lean, with-embedding]
+        variant: ${{ fromJSON(inputs.embedding_backfill_tag && '["with-embedding"]' || '["lean","with-embedding"]') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -83,17 +91,26 @@ jobs:
         id: ver
         run: |
           # desktop-v0.3.102 -> v0.3.102 (a tagged release IS the version; no SHA stamp).
-          v="${GITHUB_REF_NAME#desktop-}"
+          v="${DESKTOP_RELEASE_TAG#desktop-}"
+          expected="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$DESKTOP_RELEASE_TAG" != "desktop-v$expected" ]; then
+            echo "Desktop release tag must match pyproject version: desktop-v$expected"
+            exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Produce bge-m3 seed (with-embedding only)
         if: matrix.variant == 'with-embedding'
         run: |
+          model_root="$(mktemp -d "${RUNNER_TEMP}/openbiliclaw-ollama.XXXXXX")"
+          export OLLAMA_MODELS="$model_root/models"
           export OLLAMA_HOST=127.0.0.1:11500
           "$OPENBILICLAW_OLLAMA_BIN" serve &
+          ollama_pid=$!
+          trap 'kill "$ollama_pid" 2>/dev/null || true; rm -rf -- "$model_root"' EXIT
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:11500/api/version >/dev/null && break; sleep 1; done
           "$OPENBILICLAW_OLLAMA_BIN" pull bge-m3
-          python packaging/make_model_seed.py --model bge-m3 --out packaging/model-seed \
+          python packaging/make_model_seed.py --ollama-root "$model_root" --model bge-m3 --out packaging/model-seed \
             --expect-digest sha256:0c4c9c2a325fb1cdafec606e6809cb745f1cb26a6d919994400d27372303e276 \
             --expect-digest sha256:daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c \
             --expect-digest sha256:a406579cd136771c705c521db86ca7d60a6f3de7c9b5460e6193a2df27861bde
@@ -157,6 +174,7 @@ jobs:
 
   windows:
     name: Windows installer (.exe, ${{ matrix.variant }})
+    if: ${{ !inputs.embedding_backfill_tag }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -355,6 +373,7 @@ jobs:
         run: ls -lhR release-artifacts || true
 
       - name: Publish GitHub pre-release
+        if: ${{ !inputs.embedding_backfill_tag }}
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -412,6 +431,7 @@ jobs:
           done
 
       - name: Update aggregate latest release
+        if: ${{ !inputs.embedding_backfill_tag }}
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -419,3 +439,25 @@ jobs:
           CHANNEL: desktop
           ASSET_GLOBS: release-artifacts/*.dmg release-artifacts/*.exe
         run: bash .github/scripts/sync-aggregate-release.sh
+
+      - name: Add the missing macOS embedding installer to both releases
+        if: ${{ inputs.embedding_backfill_tag }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${DESKTOP_RELEASE_TAG#desktop-}"
+          asset="OpenBiliClaw-macos-${version}-arm64-with-embedding.dmg"
+          installer="release-artifacts/$asset"
+          test -s "$installer"
+          digest="sha256:$(sha256sum "$installer" | cut -d' ' -f1)"
+          for tag in "$DESKTOP_RELEASE_TAG" "openbiliclaw-$version"; do
+            published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq \
+              '.assets[] | select(.name == "'"$asset"'") | [.state, .digest] | join(" ")')"
+            if [ -z "$published" ]; then
+              gh release upload "$tag" "$installer" --repo "$GITHUB_REPOSITORY"
+            elif [ "$published" != "uploaded $digest" ]; then
+              echo "Refusing to replace the existing $asset on $tag"
+              exit 1
+            fi
+          done
