@@ -1,8 +1,8 @@
 """Real browser/HTTP regression for remote setup and password login.
 
-The backend uses temporary storage and the real auth routes. Only local-peer
-trust is disabled so a loopback browser exercises the remote access contract.
-No model or platform network requests are made.
+The backend uses temporary storage and the real auth routes. Forwarded
+browser requests exercise the remote access contract. No model or platform
+network requests are made.
 """
 
 from __future__ import annotations
@@ -34,8 +34,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.parametrize("path", ["/web/", "/m/"])
 def test_remote_setup_then_real_password_login(tmp_path, monkeypatch, path):
-    app, db = _build_app(tmp_path, monkeypatch, enabled=False)
-    app.state.auth_gate.is_trusted_local = lambda request: False
+    app, db = _build_app(tmp_path, monkeypatch, enabled=False, password=None)
     server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="critical"))
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -51,7 +50,7 @@ def test_remote_setup_then_real_password_login(tmp_path, monkeypatch, path):
         with playwright_api.sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             try:
-                page = browser.new_page()
+                page = browser.new_page(extra_http_headers={"X-Forwarded-For": "192.168.1.50"})
                 page.goto(base + path)
                 retry = page.get_by_role("button", name="已设置，重新检查")
                 playwright_api.expect(retry).to_be_visible()
@@ -61,9 +60,21 @@ def test_remote_setup_then_real_password_login(tmp_path, monkeypatch, path):
                 assert denied.status == 401
                 assert denied.json()["error"] == "auth_setup_required"
 
-                # Equivalent to enabling the gate locally; real login still
-                # validates the stored scrypt hash, same-origin and session.
-                app.state.auth_gate.auth.enabled = True
+                local = browser.new_page()
+                local.goto(base + "/web/?settings=general")
+                checkbox = local.locator("#authEnabled")
+                playwright_api.expect(checkbox).to_be_enabled()
+                playwright_api.expect(checkbox).not_to_be_checked()
+                checkbox.check()
+                assert local.request.get(base + "/api/auth/status").json()["enabled"] is False
+
+                local.locator("#authPasswordField #authPassword").fill("hunter2")
+                with local.expect_response("**/api/auth/admin") as saved:
+                    local.locator("#authSave").click()
+                assert saved.value.ok, saved.value.json()
+                status = local.request.get(base + "/api/auth/status").json()
+                assert status["enabled"] is True
+                assert status["authenticated"] is True
                 retry.click()
                 # Password inputs do not have the implicit textbox role.
                 password = form.locator('input[type="password"]')

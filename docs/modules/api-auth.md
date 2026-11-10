@@ -2,7 +2,7 @@
 
 ## 默认本机边界（2026-11-06）
 
-关闭密码不再等于开放远程访问。`GET /api/auth/status` 在关闭时返回 `authenticated=trusted_local` 与 `setup_required=!trusted_local`。桌面和手机 Web 为远程用户显示本机设置指引，设置完成后重新检查并进入密码登录；插件继续使用独立设备密钥。已启用认证的 token、Origin、CSRF 和撤销策略不变。
+首次安装默认关闭访问密码。桌面用户在本机 Web「设置 → 通用」勾选「局域网访问密码」并保存后才开启，初始化只处理监听地址等初始化选项。密码关闭时，仅可信本机可访问私有 API。`GET /api/auth/status` 在关闭时返回 `authenticated=trusted_local` 与 `setup_required=!trusted_local`。桌面和手机 Web 为远程用户显示本机设置指引，设置完成后重新检查并进入密码登录；插件继续使用独立设备密钥。已启用认证的 token、Origin、CSRF 和撤销策略不变。
 
 桌面和手机 Web 收到认证错误后会重新读取主 API 的状态，只有 `authenticated=false` 才显示登录或设置引导。
 

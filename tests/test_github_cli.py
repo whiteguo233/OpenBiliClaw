@@ -509,7 +509,6 @@ def test_init_command_isolates_invalid_github_pat_in_mixed_source_run(
     )
     monkeypatch.setattr(cli, "_ask_network_binding", lambda: False)
     monkeypatch.setattr(cli, "_persist_api_host_choice", lambda **_: None)
-    monkeypatch.setattr(cli, "_maybe_setup_password_in_init", lambda **_: None)
     monkeypatch.setattr(cli, "_notify_running_server_init_completed", lambda: None)
     monkeypatch.setattr(cli, "_print_init_cost_summary", lambda *_: None)
 

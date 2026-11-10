@@ -141,7 +141,7 @@ Tailnet 的完整字段级优先级是：`OPENBILICLAW_TAILNET_ENABLED` /
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `false` | 是否允许经过密码认证的局域网 / 远程访问；关闭时仅可信本机可访问私有 API。`true` 且 `password_hash` 为空时按配置错误处理（blocking） |
-| `password_hash` | string | `""` | scrypt 密码哈希。**请勿手填明文**；用 `openbiliclaw set-password` / `init` / 环境变量设置 |
+| `password_hash` | string | `""` | scrypt 密码哈希。**请勿手填明文**；通过本机 Web「设置 → 通用」设置。无界面部署可用 `openbiliclaw set-password` 或环境变量 |
 | `session_secret` | string | `""` | 登录态 HMAC 签名密钥。首次启用为空时自动生成并写回 config；请勿外泄 |
 | `session_ttl_hours` | int | `0` | 登录态有效期（小时）。`0` = 永不过期（默认，「记住登录」）；`>0` = 限时登录 |
 | `trust_loopback` | bool | `true` | 本机请求是否免登录（扩展 / CLI 依赖此项）。设 `false` 连本机也要登录。带代理转发头（`X-Forwarded-For` 等）的请求不算本机 |

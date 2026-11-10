@@ -547,6 +547,7 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
     }
     Write-Host "Health URL:  $healthUrl"
     Write-Host 'Phone:       Web / extension Mobile - LAN / Tailscale / public QR'
+    Write-Host 'Remote API:  Access password is off on fresh installs. Enable it in local Web Settings > General for remote access.'
     Write-Host '             Phone camera opens Web; App Scan to connect imports the backend.'
     if ($healthUrl) {
         $setupUrl = $healthUrl -replace '/api/health$', '/setup/'
