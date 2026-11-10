@@ -65,6 +65,8 @@ Web 先打开 `http://127.0.0.1:8420/web/` 登录，再进入 `/setup/` 配置�
 | Linux ARM (Raspberry Pi 4/5) | linux/arm64 | 直接 Docker Engine |
 | Windows | linux/amd64 (默认) | Docker Desktop（默认 WSL2 backend）|
 
+从 0.3.237 起，后端镜像在安装 Chromium 前先安装 `libatomic1`，供 Playwright 内置 Node 使用。通过 Dockerfile 构建会自动安装该依赖。
+
 `docker compose build` 会自动按主机架构选择正确的 base image 层。如果你要为发布构建跨架构镜像，用 buildx：
 
 ```bash

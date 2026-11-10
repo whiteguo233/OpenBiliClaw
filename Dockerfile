@@ -24,7 +24,10 @@ WORKDIR /app
 # Copying src/ before installing dependencies would invalidate the layer
 # on every source edit and force a full multi-minute reinstall.
 COPY pyproject.toml ./
-RUN python -c "import tomllib, pathlib; project = tomllib.load(open('pyproject.toml', 'rb'))['project']; deps = project['dependencies']; pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps) + '\n')" \
+# Playwright's bundled Node needs libatomic before it can install Chromium.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && python -c "import tomllib, pathlib; project = tomllib.load(open('pyproject.toml', 'rb'))['project']; deps = project['dependencies']; pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps) + '\n')" \
     && pip install -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt \
     && python -m playwright install --with-deps chromium \
