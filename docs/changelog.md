@@ -5,6 +5,7 @@
 ## v0.3.237：首启免密、安装引导与初始化可靠性（2026-11-10）
 
 - 桌面、后端和浏览器插件统一为 0.3.237。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。
+- Docker 发行补丁为 Playwright 内置 Node 补齐 `libatomic1`，恢复 amd64 / arm64 的 Chromium 构建；现有源码、桌面与扩展标签保留。详见 [Docker 部署](docker-deployment.md#平台支持v034)。
 
 - macOS DMG 原生验收补充。Apple Silicon 和 Intel 的 macOS 15 公证包通过安装、正常启动及真实流式请求。本机 macOS 26.5.1 Intel 用同一公证包复现菜单栏启动卡住，前台对照真实请求通过。[验收记录](testing/2026-11-10-macos-dmg-live.md)
 
