@@ -238,11 +238,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.235 (2026-11-08)**
+📌 Latest: **v0.3.237 (2026-11-10)**
 
-- **Free models join existing chains**: select and reorder two read-only Qwen instances, and choose BGE-M3 in the existing embedding settings.
-- **Add websites and RSS through chat**: trial before confirmation, with shared controls for frequency, allocation and failure notices.
-- **On-demand website collection**: macOS prepares Ego automatically, runs collection without visible windows and releases idle resources.
+- **Password-free local first launch**. Enable a remote access password in Settings and it takes effect when saved.
+- **Clearer macOS installation**. Follow the arrow in the DMG to drag the app into Applications.
+- **More reliable setup with free models**. Large imports show progress and recover from rate limits or brief disconnects.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
