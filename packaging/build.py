@@ -728,6 +728,8 @@ def _make_macos_drag_dmg(app_bundle: Path, dmg_path: Path) -> None:
             size = (Path(directory) / filename).lstat().st_size
             volume_bytes += max(allocation, ((size + allocation - 1) // allocation) * allocation)
     volume_mib = (volume_bytes + mebibyte - 1) // mebibyte
+    free_mib = shutil.disk_usage(dmg_path.parent).free // mebibyte
+    print(f"[build] Writable DMG volume: {volume_mib} MiB, host free space: {free_mib} MiB")
 
     with tempfile.TemporaryDirectory(prefix="obc-dmg-guide-") as directory:
         settings = {
@@ -1357,14 +1359,6 @@ def build(
                 f"{archive_version}-with-embedding" if bundle_embedding else archive_version
             )
             target = detect_target()
-            archive_path = create_archive(
-                packaged_root=packaged_root,
-                output_dir=RELEASE_DIR,
-                version=asset_version,
-                target=target,
-            )
-            print()
-            print(f"  Release archive: {archive_path}")
             if platform.system() == "Darwin":
                 app_bundle = DIST_DIR / "OpenBiliClaw.app"
                 if app_bundle.exists() and shutil.which("hdiutil"):
@@ -1405,6 +1399,16 @@ def build(
                             ]
                         )
                     print(f"  Release installer: {dmg_path}")
+            # Finish the DMG before creating a second copy of the model in
+            # the release ZIP, when the writable image no longer uses disk.
+            archive_path = create_archive(
+                packaged_root=packaged_root,
+                output_dir=RELEASE_DIR,
+                version=asset_version,
+                target=target,
+            )
+            print()
+            print(f"  Release archive: {archive_path}")
         print("=" * 60)
     else:
         print("[build] WARNING: Expected output directory not found!")

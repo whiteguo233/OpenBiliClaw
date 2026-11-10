@@ -61,6 +61,8 @@ Public helpers in `packaging/build.py`: `validate_macos_signing`, `sign_macos_ap
 
 `release-desktop.yml` 的可选 `embedding_backfill_tag` 只重建 Apple Silicon 内置向量 DMG。标签必须匹配当前源码版本，组件页和聚合页必须已存在。补发时拒绝覆盖不同摘要的同名附件。
 
+macOS CI 在制作模型种子后移除临时下载库。构建先完成 DMG，再制作 ZIP，避免两个大文件和可写镜像同时占用构建机磁盘。DMG 打包日志会显示卷容量和宿主磁盘可用空间。
+
 The Ego adapter resolves `ego_host.mjs` beside its Python module and passes its file URI to Ego's native Node channel. The host then imports `./ego_dom.mjs`; preserve both file names and their directory when staging desktop data. These are application-owned modules, not workflow-supplied scripts. The wheel's existing `src/openbiliclaw` package inclusion also carries these files; no separate build option is needed.
 
 `EgoSetupManager` in `sources/ego_setup.py` and the bounded `ego_onboarding.py` driver handle deployment preparation. A signed drag-install DMG has no post-install hook: the first actual desktop launch performs this part of deployment. After migration, the single-instance/data guards, and final configuration resolution, `packaging/entry.py` calls `create_app(prepare_ego_on_startup=True)`. The API owns one background preparation task without blocking HTTP or the UI; selftests, duplicate launches, and worker children do not opt in. The build itself never initializes a user's Ego environment.

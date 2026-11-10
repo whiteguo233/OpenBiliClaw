@@ -102,11 +102,15 @@ jobs:
       - name: Produce bge-m3 seed (with-embedding only)
         if: matrix.variant == 'with-embedding'
         run: |
+          model_root="$(mktemp -d "${RUNNER_TEMP}/openbiliclaw-ollama.XXXXXX")"
+          export OLLAMA_MODELS="$model_root/models"
           export OLLAMA_HOST=127.0.0.1:11500
           "$OPENBILICLAW_OLLAMA_BIN" serve &
+          ollama_pid=$!
+          trap 'kill "$ollama_pid" 2>/dev/null || true; rm -rf -- "$model_root"' EXIT
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:11500/api/version >/dev/null && break; sleep 1; done
           "$OPENBILICLAW_OLLAMA_BIN" pull bge-m3
-          python packaging/make_model_seed.py --model bge-m3 --out packaging/model-seed \
+          python packaging/make_model_seed.py --ollama-root "$model_root" --model bge-m3 --out packaging/model-seed \
             --expect-digest sha256:0c4c9c2a325fb1cdafec606e6809cb745f1cb26a6d919994400d27372303e276 \
             --expect-digest sha256:daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c \
             --expect-digest sha256:a406579cd136771c705c521db86ca7d60a6f3de7c9b5460e6193a2df27861bde
