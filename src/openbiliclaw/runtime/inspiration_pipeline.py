@@ -1937,6 +1937,7 @@ class InspirationKeywordPipeline:
             guides.append(
                 {
                     "platform": platform,
+                    **self._host._platform_context(platform),
                     "supply_advantage": platform_supply_advantage(platform),
                     "query_style": self._platform_query_style(platform),
                     "recent_keywords": list(recent_by_platform.get(platform, [])),

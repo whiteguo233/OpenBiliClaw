@@ -477,6 +477,8 @@ test("reshuffleRecommendations posts to reshuffle endpoint", async () => {
         content_id: "BV1NEW",
         content_url: "",
         source_platform: "bilibili",
+        source_id: "",
+        source_name: "",
         content_type: "video",
         body_text: "",
         published_at: "",
@@ -542,6 +544,8 @@ test("appendRecommendations posts excluded bvids to append endpoint", async () =
         content_id: "BV1APPEND",
         content_url: "",
         source_platform: "bilibili",
+        source_id: "",
+        source_name: "",
         content_type: "video",
         body_text: "",
         published_at: "",
@@ -622,6 +626,8 @@ test("fetchRecommendations normalizes cover urls from the recommend endpoint", a
       content_id: "BV1FETCH",
       content_url: "",
       source_platform: "bilibili",
+      source_id: "",
+      source_name: "",
       content_type: "video",
       body_text: "",
       published_at: "",
@@ -1435,6 +1441,26 @@ test("requestJson without timeout preserves no-signal fetch behavior", async () 
   assert.deepEqual(result, { ok: true });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].signal, undefined);
+});
+
+test("requestJson accepts a 204 custom-source DELETE without reading JSON", async (t) => {
+  const response = new Response(null, { status: 204 });
+  const json = t.mock.method(response, "json", async () => {
+    throw new Error("204 has no JSON body");
+  });
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => response);
+
+  const result = await requestJson("/custom-sources/site-1", {
+    method: "DELETE", timeoutMs: 30_000,
+  });
+
+  assert.equal(result, null);
+  assert.equal(json.mock.callCount(), 0);
+  assert.equal(fetchMock.mock.callCount(), 1);
+  const [url, options] = fetchMock.mock.calls[0].arguments;
+  assert.match(String(url), /\/api\/custom-sources\/site-1$/);
+  assert.equal(options.method, "DELETE");
+  assert.ok(options.signal instanceof AbortSignal);
 });
 
 test("requestJson preserves caller abort reason before timeout fires", async () => {

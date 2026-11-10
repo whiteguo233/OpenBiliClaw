@@ -30,13 +30,13 @@ GUIDANCE = {
     "AUTH_FAILED": (
         "免费方案凭据不可用",
         "内置免费凭据已被服务商拒绝，可能已过期、撤销或权限发生变化。"
-        "请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置关闭免费方案，"
+        "请更新到最新的 OpenBiliClaw 安装包/版本后重试；也可在模型设置选择其他实例，"
         "改用自己的 API Key。更换两个免费模型不能更新凭据。",
     ),
     "POLICY_INVALID": (
         "免费组件需要更新",
         "当前免费组件的授权策略已过期或无效。请更新到最新的 OpenBiliClaw 安装包/版本；"
-        "也可关闭免费方案，改用自己的 API Key。",
+        "也可选择其他实例，改用自己的 API Key。",
     ),
     "QUOTA_EXCEEDED": (
         "免费方案额度暂不可用",
@@ -132,8 +132,15 @@ def sponsored_status(config: Config) -> dict[str, Any]:
     """Return current actionable notices without making provider requests."""
     result: dict[str, Any] = {"notices": [], "update_url": UPDATE_URL}
     settings = getattr(getattr(config, "llm", None), "sponsored", None)
-    if settings is None or not settings.enabled:
+    from openbiliclaw.config import uses_siliconflow_free
+
+    if settings is None or not uses_siliconflow_free(config.llm):
         return result
+    capabilities = []
+    if uses_siliconflow_free(config.llm, include_embedding=False):
+        capabilities.append("chat")
+    if config.llm.embedding.provider == "siliconflow_free" or settings.uses_cloud_embedding:
+        capabilities.append("embedding")
     from openbiliclaw.runtime.sponsored_bundle import installed_runtime_command
 
     try:
@@ -155,7 +162,7 @@ def sponsored_status(config: Config) -> dict[str, Any]:
                     "title": GUIDANCE["POLICY_INVALID"][0],
                     "message": GUIDANCE["POLICY_INVALID"][1],
                     "requires_update": True,
-                    "capabilities": ["chat"],
+                    "capabilities": capabilities,
                 }
             ]
         return result
@@ -168,7 +175,6 @@ def sponsored_status(config: Config) -> dict[str, Any]:
             "持续失败时联系服务维护者，或改用自己的 API Key。",
         )
     directory = config.data_path / "runtime" / "sponsored-status"
-    capabilities = ["chat", "embedding"] if settings.uses_cloud_embedding else ["chat"]
     by_code: dict[str, dict[str, Any]] = {}
     for capability in capabilities:
         value = _read(directory, capability)

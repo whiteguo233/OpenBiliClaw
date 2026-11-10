@@ -1557,9 +1557,27 @@ CREATE INDEX IF NOT EXISTS idx_confusions_status
 """
 
 
-def _pool_source_family(source: object, source_platform: object = "") -> str:
+def _pool_source_family(
+    source: object, source_platform: object = "", source_id: object = ""
+) -> str:
     """Return the source family key used by pool share accounting."""
+    if source_id:
+        return str(source_id)
     return _source_family(source, source_platform)
+
+
+def _pool_row_source_family(row: Any, strategy_key: str = "source") -> str:
+    """Resolve inventory ownership independently of canonical content identity."""
+    value = dict(row)
+    return _pool_source_family(
+        value.get(strategy_key), value.get("source_platform"), value.get("source_id")
+    )
+
+
+def _pool_row_content_family(row: Any) -> str:
+    """Return the canonical tab/filter family, independently of quota ownership."""
+    value = dict(row)
+    return _source_family(value.get("source"), value.get("source_platform"))
 
 
 def _normalize_source_platform_key(source_platform: object) -> str:
@@ -2321,10 +2339,7 @@ class Database:
             decision = evaluate_publication_preference(
                 # Older pool rows may have an empty platform column; derive
                 # their canonical family from the persisted source strategy.
-                source_platform=(
-                    row.get("source_platform")
-                    or _pool_source_family(row.get("source"), row.get("source_platform"))
-                ),
+                source_platform=(row.get("source_platform") or _pool_row_source_family(row)),
                 published_at=row.get("published_at", ""),
                 preference=cast("PublicationDatePreference", preference),
                 now=now,
@@ -2365,6 +2380,10 @@ class Database:
         self._ensure_seen_items_ledger()
         self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
+        self._ensure_web_source_tables()
+        from openbiliclaw.sources.custom_sources import ensure_custom_source_schema
+
+        ensure_custom_source_schema(self.conn)
         self._ensure_xhs_observed_urls_table()
         self._ensure_discovery_candidate_columns()
         self._normalize_legacy_style_keys()
@@ -2818,7 +2837,7 @@ class Database:
             isolated.close()
         counts: dict[str, int] = defaultdict(int)
         for row in rows:
-            counts[_pool_source_family(row["source"], row["source_platform"])] += 1
+            counts[_pool_row_content_family(row)] += 1
         return PoolPlatformAvailability(
             total_available=len(rows),
             by_platform=dict(counts),
@@ -6170,6 +6189,70 @@ class Database:
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [payload for _, _, payload in scored[: max(1, int(limit))]]
 
+    def _custom_source_attribution(self, source_id: str, platform: str) -> tuple[str, str]:
+        if not source_id:
+            return "", ""
+        from openbiliclaw.sources.custom_sources import CustomSourceStore
+
+        source = CustomSourceStore(self).get_source(source_id)
+        if source is None or platform != "web":
+            raise ValueError("Custom content requires a registered source and Web content family")
+        return source_id, str(source["name"])
+
+    def get_content_source_provenance(self, item_key: str) -> list[dict[str, Any]]:
+        """Return every discovering source without duplicating a canonical inventory item."""
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                """SELECT p.source_id, COALESCE(s.name, p.source_name) AS source_name
+               FROM content_source_provenance p
+               LEFT JOIN custom_sources s ON s.source_id = p.source_id
+               WHERE p.item_key = ? ORDER BY p.first_seen_at, p.source_id""",
+                (item_key,),
+            ).fetchall()
+        ]
+
+    def _record_content_source_provenance(
+        self, item_key: str, source_id: str, source_name: str
+    ) -> list[dict[str, Any]]:
+        if source_id:
+            self._execute_write(
+                """INSERT INTO content_source_provenance (item_key, source_id, source_name)
+                   VALUES (?, ?, ?) ON CONFLICT(item_key, source_id) DO UPDATE SET
+                   source_name = excluded.source_name, last_seen_at = CURRENT_TIMESTAMP""",
+                (item_key, source_id, source_name),
+            )
+        provenance = self.get_content_source_provenance(item_key)
+        if provenance:
+            import json
+
+            encoded = json.dumps(provenance, ensure_ascii=False)
+            # Rediscovery can occur after admission. Preserve the evidence in
+            # both durable projections without replacing evaluation snapshots.
+            self._execute_write(
+                """UPDATE content_cache SET source_metadata = json_set(
+                   COALESCE(source_metadata, '{}'), '$.source_provenance', json(?))
+                   WHERE item_key = ?""",
+                (encoded, item_key),
+            )
+            self._execute_write(
+                """UPDATE discovery_candidates SET raw_payload = json_set(
+                   COALESCE(raw_payload, '{}'), '$.source_provenance', json(?))
+                   WHERE candidate_key = ?""",
+                (encoded, item_key),
+            )
+        return provenance
+
+    def record_discovery_source_provenance(self, candidate: Any) -> None:
+        """Retain a validated rediscovery even when the shared pipeline deduplicates it."""
+        source_id, name = self._custom_source_attribution(
+            str(self._candidate_value(candidate, "source_id", "") or ""),
+            str(self._candidate_value(candidate, "source_platform", "") or ""),
+        )
+        key = str(self._candidate_value(candidate, "candidate_key", "") or "")
+        if key and source_id:
+            self._record_content_source_provenance(key, source_id, name)
+
     def cache_content(self, bvid: str, **kwargs: Any) -> CacheContentWriteResult:
         """Cache discovered content and return the lock-held admission outcome.
 
@@ -6229,6 +6312,16 @@ class Database:
             identity_content_id,
             str(kwargs.get("content_url", "") or ""),
         )
+        source_id, source_name = self._custom_source_attribution(
+            str(kwargs.get("source_id") or ""), source_platform
+        )
+        provenance = (
+            self._record_content_source_provenance(item_key, source_id, source_name)
+            if source_platform == "web"
+            else []
+        )
+        if provenance:
+            normalized_source_metadata["source_provenance"] = provenance
 
         def _cache_write_params(
             connection: sqlite3.Connection,
@@ -6405,6 +6498,8 @@ class Database:
                 kwargs.get("content_id", resolved_bvid),
                 kwargs.get("content_url", ""),
                 kwargs.get("source_platform", "bilibili"),
+                source_id,
+                source_name,
                 kwargs.get("author_name", ""),
                 kwargs.get("body_text", ""),
                 kwargs.get("content_type", "video") or "video",
@@ -6495,6 +6590,8 @@ class Database:
                 content_id,
                 content_url,
                 source_platform,
+                source_id,
+                source_name,
                 author_name,
                 body_text,
                 content_type,
@@ -6508,7 +6605,7 @@ class Database:
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -6705,6 +6802,10 @@ class Database:
                     THEN excluded.source_metadata
                     ELSE COALESCE(content_cache.source_metadata, '{}')
                 END,
+                source_id = CASE WHEN content_cache.source_id != ''
+                    THEN content_cache.source_id ELSE excluded.source_id END,
+                source_name = CASE WHEN content_cache.source_id != ''
+                    THEN content_cache.source_name ELSE excluded.source_name END,
                 -- P1.8: keep the producing-keyword provenance once set; a later
                 -- re-ingest from a source that doesn't carry the id (NULL) must
                 -- not wipe it.
@@ -6753,6 +6854,21 @@ class Database:
         except TypeError:
             return json.dumps(default, ensure_ascii=False)
 
+    def discovery_candidate_policy_exclusion_reason(self, candidate: object) -> str:
+        """Explain a terminal pre-enqueue policy skip for a normalized candidate.
+
+        An empty reason does not imply retention: callers must still verify a
+        durable row before advancing their frontier after a short enqueue.
+        This uses the same date gate as ``enqueue_discovery_candidates`` and
+        never treats queue pressure or a missing row as a policy exclusion.
+        """
+        source_platform = str(self._candidate_value(candidate, "source_platform", "") or "")
+        if not self._source_publication_date_candidate_is_eligible(
+            source_platform, self._candidate_value(candidate, "published_at", "")
+        ):
+            return "publication_date"
+        return ""
+
     def enqueue_discovery_candidates(
         self,
         candidates: Sequence[Any],
@@ -6777,12 +6893,12 @@ class Database:
             if not candidate_key:
                 continue
             source_platform = str(self._candidate_value(candidate, "source_platform", "") or "")
+            source_id, source_name = self._custom_source_attribution(
+                str(self._candidate_value(candidate, "source_id", "") or ""), source_platform
+            )
             stats_source = source_platform or "unknown"
             input_by_source[stats_source] += 1
-            if not self._source_publication_date_candidate_is_eligible(
-                source_platform,
-                self._candidate_value(candidate, "published_at", ""),
-            ):
+            if self.discovery_candidate_policy_exclusion_reason(candidate):
                 filtered_by_date += 1
                 filtered_by_source[stats_source] += 1
                 continue
@@ -6799,12 +6915,24 @@ class Database:
                 label=self._candidate_value(candidate, "published_label", ""),
             )
             score_threshold = float(self._candidate_value(candidate, "score_threshold", 0.0) or 0.0)
+            if source_platform == "web":
+                provenance = self._record_content_source_provenance(
+                    candidate_key, source_id, source_name
+                )
+                if provenance:
+                    import json
+
+                    decoded = json.loads(raw_payload)
+                    decoded["source_provenance"] = provenance
+                    raw_payload = json.dumps(decoded, ensure_ascii=False)
             cursor = self._execute_write(
                 """
                 INSERT OR IGNORE INTO discovery_candidates (
                     candidate_key,
                     status,
                     source_platform,
+                    source_id,
+                    source_name,
                     source_strategy,
                     source_context,
                     content_type,
@@ -6841,13 +6969,15 @@ class Database:
                     source_rank
                 )
                 VALUES (
-                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
                     candidate_key,
                     source_platform,
+                    source_id,
+                    source_name,
                     str(self._candidate_value(candidate, "source_strategy", "") or ""),
                     str(self._candidate_value(candidate, "source_context", "") or ""),
                     str(self._candidate_value(candidate, "content_type", "video") or "video"),
@@ -6887,7 +7017,7 @@ class Database:
                 ),
             )
             if source_platform:
-                touched_sources.add(source_platform)
+                touched_sources.add(source_id or source_platform)
             if cursor.rowcount > 0:
                 inserted += 1
                 inserted_by_source[stats_source] += 1
@@ -6979,7 +7109,7 @@ class Database:
         excess = current - cap
         if excess <= 0:
             return 0
-        family = _pool_source_family("", source)
+        family = source if source.startswith("custom_") else _pool_source_family("", source)
         victims = sorted(
             (
                 row
@@ -7011,7 +7141,7 @@ class Database:
                 claimed_at = NULL,
                 claim_token = NULL
             WHERE id = ?
-              AND source_platform = ?
+              AND COALESCE(NULLIF(source_id, ''), source_platform) = ?
               AND status IN ('pending_eval', 'evaluated')
               AND claim_token IS NULL
             """,
@@ -7140,7 +7270,10 @@ class Database:
         # cannot monopolize a mixed evaluator batch.
         if platforms:
             placeholders = ", ".join("?" for _ in platforms)
-            order_prefix = f"CASE WHEN source_platform IN ({placeholders}) THEN 0 ELSE 1 END, "
+            order_prefix = (
+                f"CASE WHEN COALESCE(NULLIF(source_id, ''), source_platform) "
+                f"IN ({placeholders}) THEN 0 ELSE 1 END, "
+            )
             window_params: tuple[Any, ...] = (*platforms, window_limit)
         else:
             order_prefix = ""
@@ -7166,7 +7299,7 @@ class Database:
         source_order: list[str] = []
         by_source: dict[str, list[dict[str, Any]]] = {}
         for row in pending:
-            source = str(row.get("source_platform") or "unknown")
+            source = str(row.get("source_id") or row.get("source_platform") or "unknown")
             if source not in by_source:
                 source_order.append(source)
                 by_source[source] = []
@@ -7283,7 +7416,10 @@ class Database:
         ]
         if platforms:
             placeholders = ", ".join("?" for _ in platforms)
-            order_prefix = f"CASE WHEN source_platform IN ({placeholders}) THEN 0 ELSE 1 END, "
+            order_prefix = (
+                f"CASE WHEN COALESCE(NULLIF(source_id, ''), source_platform) "
+                f"IN ({placeholders}) THEN 0 ELSE 1 END, "
+            )
             params: tuple[Any, ...] = tuple(platforms)
         else:
             order_prefix = ""
@@ -7816,6 +7952,111 @@ class Database:
         )
         return int(cursor.rowcount)
 
+    def park_claimed_input_budget_candidates(
+        self, candidate_ids: Sequence[int], *, claim_token: str, reason: str
+    ) -> int:
+        """Park deterministic input refusals under the evaluator's exact lease.
+
+        Preserve any prior evidence; never manufacture a score or increment a
+        transport/batch retry count for work that did not reach the provider.
+        """
+        if re.fullmatch(r"input_budget_exhausted:[0-9a-f]{64}", reason) is None:
+            raise ValueError("invalid input budget failure identity")
+        return self.park_claimed_evaluation_refused_candidates(
+            candidate_ids, claim_token=claim_token, reason=reason
+        )
+
+    def park_claimed_evaluation_refused_candidates(
+        self, candidate_ids: Sequence[int], *, claim_token: str, reason: str
+    ) -> int:
+        """Lease-CAS park a local input refusal or contradictory remote evidence.
+
+        Neither is low-score admission or a transient response-missing retry.
+        Preserve earlier evidence and counters; remote billing belongs to usage.
+        """
+        if (
+            re.fullmatch(
+                r"(?:input_budget_exhausted|invalid_evaluation_evidence):[0-9a-f]{64}", reason
+            )
+            is None
+        ):
+            raise ValueError("invalid evaluation refusal identity")
+        ids = sorted({str(int(value)) for value in candidate_ids})
+        updated = 0
+        for chunk in _chunks(ids, 450):
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = self._execute_write(
+                f"""UPDATE discovery_candidates
+                    SET status = 'failed_eval', eval_error = ?,
+                        claimed_at = NULL, claim_token = NULL
+                    WHERE id IN ({placeholders})
+                      AND status = 'evaluating' AND claim_token = ?""",
+                (reason, *chunk, str(claim_token)),
+            )
+            updated += int(cursor.rowcount)
+        return updated
+
+    def count_input_budget_blocked_candidates(self) -> int:
+        """Count parked local refusals without exposing profile or content."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM discovery_candidates
+               WHERE status = 'failed_eval'
+                 AND eval_error LIKE 'input_budget_exhausted:%'"""
+        ).fetchone()
+        return int(row[0])
+
+    def revive_input_budget_candidates(
+        self, *, context_fingerprint: str, limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE
+    ) -> int:
+        """Requeue bounded input refusals only for a different effective context."""
+        return self.revive_evaluation_refused_candidates(
+            context_fingerprint=context_fingerprint, limit=limit, include_invalid_evidence=False
+        )
+
+    def count_invalid_evidence_blocked_candidates(self) -> int:
+        """Count contradictory evidence without conflating it with input overflow."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """SELECT COUNT(*) FROM discovery_candidates
+               WHERE status = 'failed_eval'
+                 AND eval_error LIKE 'invalid_evaluation_evidence:%'"""
+        ).fetchone()
+        return int(row[0])
+
+    def revive_evaluation_refused_candidates(
+        self,
+        *,
+        context_fingerprint: str,
+        limit: int = _FAILED_EVAL_REVIVE_BATCH_SIZE,
+        include_invalid_evidence: bool = True,
+    ) -> int:
+        """Bounded recovery after a context change, never an unchanged restart."""
+        if re.fullmatch(r"[0-9a-f]{64}", context_fingerprint) is None:
+            raise ValueError("invalid evaluation context identity")
+        cursor = self._execute_write(
+            """UPDATE discovery_candidates
+               SET status = 'pending_eval', eval_error = '',
+                   eval_attempts = 0, batch_eval_attempts = 0,
+                   claimed_at = NULL, claim_token = NULL,
+                   last_seen_at = CURRENT_TIMESTAMP
+               WHERE id IN (
+                   SELECT id FROM discovery_candidates
+                   WHERE status = 'failed_eval'
+                     AND (eval_error LIKE 'input_budget_exhausted:%'
+                          OR (? AND eval_error LIKE 'invalid_evaluation_evidence:%'))
+                     AND eval_error NOT IN (?, ?)
+                   ORDER BY id ASC LIMIT ?
+               )""",
+            (
+                include_invalid_evidence,
+                f"input_budget_exhausted:{context_fingerprint}",
+                f"invalid_evaluation_evidence:{context_fingerprint}",
+                max(0, int(limit)),
+            ),
+        )
+        return int(cursor.rowcount)
+
     def revive_failed_eval_candidates(
         self,
         *,
@@ -7862,6 +8103,8 @@ class Database:
                 WHERE status = 'failed_eval'
                   AND eval_revive_count < ?
                   AND COALESCE(eval_error, '') NOT LIKE 'temporal_review_due:%'
+                  AND COALESCE(eval_error, '') NOT LIKE 'input_budget_exhausted:%'
+                  AND COALESCE(eval_error, '') NOT LIKE 'invalid_evaluation_evidence:%'
                 ORDER BY id ASC
                 LIMIT ?
             )
@@ -8056,10 +8299,11 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT source_platform, status, COUNT(*) AS count
+            SELECT COALESCE(NULLIF(source_id, ''), source_platform) AS source_platform,
+                   status, COUNT(*) AS count
             FROM discovery_candidates
-            GROUP BY source_platform, status
-            ORDER BY source_platform ASC, status ASC
+            GROUP BY COALESCE(NULLIF(source_id, ''), source_platform), status
+            ORDER BY 1 ASC, status ASC
             """
         )
         counts: dict[str, dict[str, int]] = {}
@@ -8088,10 +8332,12 @@ class Database:
         """
 
         source = str(source_platform or "").strip()
-        source_clause = " AND source_platform = ?" if source else ""
+        source_clause = (
+            " AND COALESCE(NULLIF(source_id, ''), source_platform) = ?" if source else ""
+        )
         cursor = conn.execute(
             f"""
-            SELECT id, status, source_platform, source_strategy,
+            SELECT id, status, source_platform, source_id, source_name, source_strategy,
                    relevance_score, last_seen_at, claim_token, eval_error,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
@@ -8232,7 +8478,7 @@ class Database:
         self._ensure_fresh_read()
         counts: dict[str, int] = defaultdict(int)
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
-            counts[str(row.get("source_platform") or "unknown")] += 1
+            counts[_pool_row_source_family(row, "source_strategy")] += 1
         return dict(sorted(counts.items()))
 
     def _count_pending_discovery_raw_material(self) -> int:
@@ -8668,10 +8914,12 @@ class Database:
         _viewed_content_keys: set[str] | None = None,
         _available_rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return canonical available rows belonging to one source family.
+        """Return available rows for a canonical platform or internal source ID.
 
-        The platform filter is applied in Python on ``_pool_source_family``
-        rather than in SQL: a row's family also derives from legacy
+        Public platform filters use content family, so ``web`` includes every
+        custom source while inventory quotas remain owned by each source ID.
+        Internal callers can still select one registered source's inventory.
+        The filter is applied in Python rather than in SQL: family also derives from legacy
         ``source`` strategy prefixes (``zhihu-hot``, ``xhs-extension-task``)
         when ``source_platform`` is blank, so a raw column comparison would
         silently drop stocked legacy rows and break the
@@ -8698,7 +8946,7 @@ class Database:
         )
         selected: list[dict[str, Any]] = []
         for row in rows:
-            if _pool_source_family(row["source"], row["source_platform"]) != canonical:
+            if canonical not in {_pool_row_content_family(row), _pool_row_source_family(row)}:
                 continue
             selected.append(row)
             if limit is not None and len(selected) >= limit:
@@ -8861,7 +9109,8 @@ class Database:
             "*"
             if full_rows
             else (
-                "bvid, content_id, source, source_platform, content_url, topic_group, "
+                "bvid, content_id, source, source_platform, source_id, source_name, "
+                "content_url, topic_group, "
                 "candidate_tier, relevance_score, last_scored_at, view_count, "
                 "published_at, temporal_class, temporal_confidence, "
                 "temporal_policy_version, temporal_validity_mode, "
@@ -9042,7 +9291,7 @@ class Database:
         )
         counts: dict[str, int] = defaultdict(int)
         for row in rows:
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             counts[source_family] += 1
         return dict(counts)
 
@@ -9070,7 +9319,7 @@ class Database:
             SELECT
                 bvid,
                 source,
-                source_platform,
+                source_platform, source_id, source_name,
                 content_url,
                 relevance_score,
                 last_scored_at,
@@ -9147,13 +9396,10 @@ class Database:
         """
         counts: dict[str, int] = defaultdict(int)
         for row in self._load_pool_raw_material_rows():
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             counts[source_family] += 1
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
-            source_family = _pool_source_family(
-                row.get("source_strategy"),
-                row.get("source_platform"),
-            )
+            source_family = _pool_row_source_family(row, "source_strategy")
             counts[source_family] += 1
         return dict(counts)
 
@@ -9169,10 +9415,7 @@ class Database:
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
             if str(row.get("status", "")) != "evaluated":
                 continue
-            source_family = _pool_source_family(
-                row.get("source_strategy"),
-                row.get("source_platform"),
-            )
+            source_family = _pool_row_source_family(row, "source_strategy")
             counts[source_family] += 1
         return dict(counts)
 
@@ -9191,10 +9434,7 @@ class Database:
         self._ensure_fresh_read()
         counts: dict[str, int] = defaultdict(int)
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
-            source_family = _pool_source_family(
-                row.get("source_strategy"),
-                row.get("source_platform"),
-            )
+            source_family = _pool_row_source_family(row, "source_strategy")
             counts[source_family] += 1
         return dict(counts)
 
@@ -9216,7 +9456,8 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT bvid, source, source_platform, relevance_score, last_scored_at,
+            SELECT bvid, source, source_platform, source_id, source_name,
+                   relevance_score, last_scored_at,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9239,7 +9480,7 @@ class Database:
                 continue
             if not self._temporal_eligibility_for_row(row_dict, now=temporal_now):
                 continue
-            if _pool_source_family(row_dict["source"], row_dict["source_platform"]) != family:
+            if _pool_row_source_family(row_dict) != family:
                 continue
             candidates.append(row_dict)
         candidates.sort(
@@ -9286,7 +9527,7 @@ class Database:
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         raw_cursor = self.conn.execute(
             f"""
-            SELECT bvid, published_at, source, source_platform,
+            SELECT bvid, published_at, source, source_platform, source_id, source_name,
                    temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9318,7 +9559,7 @@ class Database:
                 bvid,
                 content_id,
                 source,
-                source_platform,
+                source_platform, source_id, source_name,
                 content_url,
                 pool_expression,
                 pool_topic_label,
@@ -9534,7 +9775,7 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, source, source_platform, content_url,
+            SELECT bvid, source, source_platform, source_id, source_name, content_url,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9570,7 +9811,7 @@ class Database:
                 row["content_url"],
             ):
                 continue
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             counts[source_family] += 1
         return dict(counts)
 
@@ -9580,7 +9821,7 @@ class Database:
         cursor = self.conn.execute(
             f"""
             SELECT bvid, topic_group, style_key, franchise_key,
-                   source, source_platform, content_url,
+                   source, source_platform, source_id, source_name, content_url,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9641,7 +9882,7 @@ class Database:
             cursor = self.conn.execute(
                 f"""
                 SELECT bvid, topic_group, style_key, franchise_key,
-                       source, source_platform, content_url,
+                       source, source_platform, source_id, source_name, content_url,
                        published_at, temporal_class, temporal_confidence,
                        temporal_policy_version, temporal_validity_mode,
                        temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9678,7 +9919,7 @@ class Database:
                 row["source"], row["source_platform"], row["content_url"]
             ):
                 continue
-            platform = str(row["source_platform"] or "").strip()
+            platform = _pool_row_source_family(row)
             topic = str(row["topic_group"] or "").strip()
             if not platform or not topic:
                 continue
@@ -9701,7 +9942,7 @@ class Database:
             admission_sql, admission_params = self._pool_admission_sql()
             cursor = self.conn.execute(
                 f"""
-                SELECT topic_group, source, source_platform, content_url
+                SELECT topic_group, source, source_platform, source_id, source_name, content_url
                 FROM content_cache
                 WHERE COALESCE(feedback_type, '') != 'dislike'
                   AND {admission_sql}
@@ -9718,7 +9959,7 @@ class Database:
                 row["source"], row["source_platform"], row["content_url"]
             ):
                 continue
-            platform = str(row["source_platform"] or "").strip()
+            platform = _pool_row_source_family(row)
             topic = str(row["topic_group"] or "").strip()
             if not platform or not topic:
                 continue
@@ -9940,12 +10181,17 @@ class Database:
         )
         return [(group, by_group[group]) for group in ranked[:top_n_groups]]
 
-    @staticmethod
-    def _clean_pool_quotas(quotas: Mapping[str, int]) -> dict[str, int]:
+    def _clean_pool_quotas(self, quotas: Mapping[str, int]) -> dict[str, int]:
+        from openbiliclaw.sources.custom_sources import CustomSourceStore
+
+        registered = {row["source_id"] for row in CustomSourceStore(self).list_sources(True)}
         clean: dict[str, int] = {}
         for source, quota in quotas.items():
             try:
-                clean[_pool_source_family("", source)] = max(0, int(quota))
+                if source.startswith("custom_") and source not in registered:
+                    continue
+                key = source if source in registered else _pool_source_family("", source)
+                clean[key] = max(0, int(quota))
             except (TypeError, ValueError):
                 continue
         return clean
@@ -10052,7 +10298,8 @@ class Database:
             dict(row)
             for row in conn.execute(
                 f"""
-                SELECT bvid, source, source_platform, content_url, topic_group,
+                SELECT bvid, source, source_platform, source_id, source_name,
+                       content_url, topic_group,
                        relevance_score, last_scored_at, pool_expression,
                        pool_topic_label, style_key,
                        published_at, temporal_class, temporal_confidence,
@@ -10114,7 +10361,7 @@ class Database:
         ):
             if not self._content_is_ready_reserve(row):
                 continue
-            grouped[_pool_source_family(row["source"], row["source_platform"])].append(row)
+            grouped[_pool_row_source_family(row)].append(row)
         victims: list[str] = []
         deferred = 0
         for family, quota in source_share_quotas.items():
@@ -10149,7 +10396,7 @@ class Database:
         candidate: bool = False,
     ) -> tuple[int, float, float, int, str]:
         source = row.get("source_strategy" if candidate else "source", "")
-        family = _pool_source_family(source, row.get("source_platform", ""))
+        family = _pool_source_family(source, row.get("source_platform", ""), row.get("source_id"))
         quota = quotas.get(family)
         over_quota = quota is not None and family_counts.get(family, 0) > quota
         timestamp = row.get("last_seen_at" if candidate else "last_scored_at", "")
@@ -10187,9 +10434,9 @@ class Database:
 
         family_counts: dict[str, int] = defaultdict(int)
         for row in content_rows:
-            family_counts[_pool_source_family(row["source"], row["source_platform"])] += 1
+            family_counts[_pool_row_source_family(row)] += 1
         for row in candidate_rows:
-            family_counts[_pool_source_family(row["source_strategy"], row["source_platform"])] += 1
+            family_counts[_pool_row_source_family(row, "source_strategy")] += 1
 
         unprotected_content = [row for row in content_rows if str(row["bvid"]) not in protected_ids]
         unready = sorted(
@@ -10351,9 +10598,7 @@ class Database:
         current_family_count: dict[str, int] = defaultdict(int)
         current_topic_count: dict[str, int] = defaultdict(int)
         for row in available_rows:
-            current_family_count[
-                _pool_source_family(row.get("source"), row.get("source_platform"))
-            ] += 1
+            current_family_count[_pool_row_source_family(row)] += 1
             topic = str(row.get("topic_group", "") or "").strip().lower()
             if topic:
                 current_topic_count[topic] += 1
@@ -10416,15 +10661,9 @@ class Database:
                 fillable_rows,
                 key=lambda candidate: (
                     0
-                    if current_family_count[
-                        _pool_source_family(
-                            candidate.get("source"), candidate.get("source_platform")
-                        )
-                    ]
+                    if current_family_count[_pool_row_source_family(candidate)]
                     < source_share_quotas.get(
-                        _pool_source_family(
-                            candidate.get("source"), candidate.get("source_platform")
-                        ),
+                        _pool_row_source_family(candidate),
                         0,
                     )
                     else 1,
@@ -10448,9 +10687,7 @@ class Database:
                 topic = str(row.get("topic_group", "") or "").strip().lower()
                 simulated_available += 1
                 current_topic_count[topic] += 1
-                current_family_count[
-                    _pool_source_family(row.get("source"), row.get("source_platform"))
-                ] += 1
+                current_family_count[_pool_row_source_family(row)] += 1
         return restored_ids
 
     def maintain_pool_inventory(
@@ -10758,20 +10995,18 @@ class Database:
             for bvid in all_content_victims:
                 row = initial_raw_rows.get(bvid)
                 if row is not None:
-                    by_source[_pool_source_family(row["source"], row["source_platform"])] += 1
+                    by_source[_pool_row_source_family(row)] += 1
             if raw_plan.candidate_ids:
                 placeholders = ", ".join("?" for _ in raw_plan.candidate_ids)
                 for row in conn.execute(
                     f"""
-                    SELECT source_platform, source_strategy
+                    SELECT source_platform, source_id, source_name, source_strategy
                     FROM discovery_candidates
                     WHERE id IN ({placeholders})
                     """,
                     raw_plan.candidate_ids,
                 ).fetchall():
-                    by_source[
-                        _pool_source_family(row["source_strategy"], row["source_platform"])
-                    ] += 1
+                    by_source[_pool_row_source_family(row, "source_strategy")] += 1
             trimmed_by_source = dict(by_source)
 
             write_started = time.perf_counter()
@@ -11147,10 +11382,7 @@ class Database:
             # untracked sources eating slots.
             counts_per_source: dict[str, int] = defaultdict(int)
             for row in rows:
-                source_family = _pool_source_family(
-                    row.get("source", ""),
-                    row.get("source_platform", ""),
-                )
+                source_family = _pool_row_source_family(row)
                 counts_per_source[source_family] += 1
 
             protected: list[dict[str, Any]] = []
@@ -11158,10 +11390,7 @@ class Database:
             negotiable_untracked: list[dict[str, Any]] = []
             seen: dict[str, int] = defaultdict(int)
             for row in ranked:
-                source_family = _pool_source_family(
-                    row.get("source", ""),
-                    row.get("source_platform", ""),
-                )
+                source_family = _pool_row_source_family(row)
                 quota = source_share_quotas.get(source_family)
                 if quota is None:
                     negotiable_untracked.append(row)
@@ -11198,10 +11427,7 @@ class Database:
         # discovery cycle, not the recommender).
         per_source: dict[str, int] = defaultdict(int)
         for row in overflow_rows:
-            family = _pool_source_family(
-                row.get("source", ""),
-                row.get("source_platform", ""),
-            )
+            family = _pool_row_source_family(row)
             per_source[family] += 1
         breakdown = ", ".join(
             f"{src}:{cnt}" for src, cnt in sorted(per_source.items(), key=lambda kv: -kv[1])
@@ -11235,7 +11461,7 @@ class Database:
 
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in self._load_pool_raw_material_rows():
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             if source_family in clean_quotas:
                 grouped[source_family].append(row)
 
@@ -11266,10 +11492,7 @@ class Database:
         )
         per_source: dict[str, int] = defaultdict(int)
         for row in overflow_rows:
-            family = _pool_source_family(
-                row.get("source", ""),
-                row.get("source_platform", ""),
-            )
+            family = _pool_row_source_family(row)
             per_source[family] += 1
         breakdown = ", ".join(
             f"{src}:{cnt}" for src, cnt in sorted(per_source.items(), key=lambda kv: -kv[1])
@@ -11321,7 +11544,7 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, source, source_platform, content_url,
+            SELECT bvid, source, source_platform, source_id, source_name, content_url,
                    relevance_score, last_scored_at,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
@@ -11364,7 +11587,7 @@ class Database:
                 row["content_url"],
             ):
                 continue
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             deficit = deficits.get(source_family, 0)
             if deficit <= 0 or selected_counts[source_family] >= deficit:
                 continue
@@ -12568,6 +12791,8 @@ class Database:
                 COALESCE(c.content_id, r.bvid) AS content_id,
                 COALESCE(c.content_url, '') AS content_url,
                 COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.source_id, '') AS source_id,
+                COALESCE(c.source_name, '') AS source_name,
                 COALESCE(c.content_type, 'video') AS content_type,
                 COALESCE(c.description, '') AS description,
                 COALESCE(c.body_text, '') AS body_text,
@@ -12796,7 +13021,9 @@ class Database:
                 c.up_name AS up_name,
                 COALESCE(c.content_id, r.bvid) AS content_id,
                 COALESCE(c.content_url, '') AS content_url,
-                COALESCE(c.source_platform, '') AS source_platform
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.source_id, '') AS source_id,
+                COALESCE(c.source_name, '') AS source_name
             FROM recommendations AS r
             LEFT JOIN content_cache AS c ON c.bvid = COALESCE(
                 (SELECT bvid FROM content_cache WHERE bvid = r.bvid),
@@ -12835,7 +13062,9 @@ class Database:
                 c.up_name AS up_name,
                 COALESCE(c.content_id, r.bvid) AS content_id,
                 COALESCE(c.content_url, '') AS content_url,
-                COALESCE(c.source_platform, '') AS source_platform
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.source_id, '') AS source_id,
+                COALESCE(c.source_name, '') AS source_name
             FROM recommendations AS r
             LEFT JOIN content_cache AS c ON c.bvid = COALESCE(
                 (SELECT bvid FROM content_cache WHERE bvid = r.bvid),
@@ -14437,6 +14666,8 @@ class Database:
             for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
         }
         required_columns = {
+            "source_id": "TEXT NOT NULL DEFAULT ''",
+            "source_name": "TEXT NOT NULL DEFAULT ''",
             "content_id": "TEXT DEFAULT ''",
             "content_url": "TEXT DEFAULT ''",
             "source_platform": "TEXT DEFAULT 'bilibili'",
@@ -14933,6 +15164,8 @@ class Database:
             for row in self.conn.execute("PRAGMA table_info(discovery_candidates)").fetchall()
         }
         required_columns = {
+            "source_id": "TEXT NOT NULL DEFAULT ''",
+            "source_name": "TEXT NOT NULL DEFAULT ''",
             "score_threshold": "REAL NOT NULL DEFAULT 0.0",
             "eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "batch_eval_attempts": "INTEGER NOT NULL DEFAULT 0",
@@ -15048,6 +15281,63 @@ class Database:
                 last_fetched_at TIMESTAMP
             );
         """)
+
+    def _ensure_web_source_tables(self) -> None:
+        """Create backend-owned cadence and seen ledgers for Web recipes."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS web_source_state (
+                recipe_id              TEXT PRIMARY KEY,
+                status                 TEXT NOT NULL DEFAULT 'never_run',
+                last_error_code        TEXT NOT NULL DEFAULT '',
+                etag                   TEXT NOT NULL DEFAULT '',
+                last_modified          TEXT NOT NULL DEFAULT '',
+                validator_url          TEXT NOT NULL DEFAULT '',
+                plan_fingerprint       TEXT NOT NULL DEFAULT '',
+                cursor_json            TEXT NOT NULL DEFAULT '{}',
+                retry_cursor_json      TEXT NOT NULL DEFAULT '{}',
+                last_attempt_at        TEXT NOT NULL DEFAULT '',
+                last_success_at        TEXT NOT NULL DEFAULT '',
+                last_productive_at     TEXT NOT NULL DEFAULT '',
+                next_fetch_at          TEXT NOT NULL DEFAULT '',
+                consecutive_failures   INTEGER NOT NULL DEFAULT 0,
+                scope_complete         INTEGER NOT NULL DEFAULT 0,
+                lease_token            TEXT NOT NULL DEFAULT '',
+                lease_until            TEXT NOT NULL DEFAULT '',
+                last_discovered_count  INTEGER NOT NULL DEFAULT 0,
+                last_enqueued_count    INTEGER NOT NULL DEFAULT 0,
+                updated_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_source_state_due
+                ON web_source_state (next_fetch_at, lease_until);
+            CREATE TABLE IF NOT EXISTS web_source_seen (
+                recipe_id       TEXT NOT NULL,
+                item_key        TEXT NOT NULL,
+                canonical_url   TEXT NOT NULL DEFAULT '',
+                content_hash    TEXT NOT NULL DEFAULT '',
+                first_seen_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (recipe_id, item_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_source_seen_item_key
+                ON web_source_seen (item_key);
+        """)
+        state_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(web_source_state)").fetchall()
+        }
+        if "validator_url" not in state_columns:
+            self.conn.execute(
+                "ALTER TABLE web_source_state ADD COLUMN validator_url TEXT NOT NULL DEFAULT ''"
+            )
+        if "plan_fingerprint" not in state_columns:
+            self.conn.execute(
+                "ALTER TABLE web_source_state ADD COLUMN plan_fingerprint TEXT NOT NULL DEFAULT ''"
+            )
+        if "retry_cursor_json" not in state_columns:
+            self.conn.execute(
+                "ALTER TABLE web_source_state ADD COLUMN retry_cursor_json "
+                "TEXT NOT NULL DEFAULT '{}'"
+            )
 
     def _ensure_xhs_observed_urls_table(self) -> None:
         """Create the xhs_observed_urls table if it does not exist."""
@@ -16045,7 +16335,9 @@ class Database:
             conn.close()
         return recycled
 
-    def expire_pending_by_digest(self, platform: str, current_digest: str) -> int:
+    def expire_pending_by_digest(
+        self, platform: str, current_digest: str, *, keyword_kind: str | None = None
+    ) -> int:
         """Expire ``pending`` keywords generated under a stale profile digest.
 
         When the profile changes the planner expires any ``pending`` word from
@@ -16059,8 +16351,14 @@ class Database:
             UPDATE discovery_keywords
             SET status = 'expired'
             WHERE platform = ? AND status = 'pending' AND profile_kw_digest != ?
+              AND (? IS NULL OR keyword_kind = ?)
             """,
-            (platform.strip(), current_digest.strip()),
+            (
+                platform.strip(),
+                current_digest.strip(),
+                keyword_kind,
+                _normalize_keyword_kind(keyword_kind) if keyword_kind is not None else None,
+            ),
         )
         return int(cursor.rowcount or 0)
 
@@ -18798,6 +19096,11 @@ class Database:
                 m.list_kind,
                 i.item_key,
                 i.source_platform,
+                COALESCE((SELECT cc.source_id FROM content_cache cc
+                    WHERE cc.item_key = i.item_key LIMIT 1), '') AS source_id,
+                COALESCE((SELECT COALESCE(s.name, cc.source_name) FROM content_cache cc
+                    LEFT JOIN custom_sources s ON s.source_id = cc.source_id
+                    WHERE cc.item_key = i.item_key LIMIT 1), '') AS source_name,
                 i.content_id,
                 i.content_url,
                 i.content_type,
@@ -21257,6 +21560,9 @@ class Database:
         """Insert or update a source recipe."""
         import json as _json
 
+        if str(recipe.get("source_type") or "").strip().lower() == "web":
+            self._save_web_source_recipe(recipe)
+            return
         self._execute_write(
             """
             INSERT INTO source_recipes (id, source_type, name, strategy, config,
@@ -21282,18 +21588,148 @@ class Database:
             ),
         )
 
+    def _save_web_source_recipe(self, recipe: dict[str, Any]) -> None:
+        """Upsert Web config and invalidate only state made stale by the change."""
+
+        self._ensure_web_source_tables()
+        self.conn.commit()
+        recipe_id = str(recipe["id"])
+        raw_config = recipe.get("config")
+        incoming_config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+        incoming_fingerprint = self._web_recipe_execution_fingerprint(
+            str(recipe.get("strategy") or ""), incoming_config
+        )
+        incoming_interval = self._web_recipe_interval_minutes(incoming_config)
+        changed_at = datetime.now(UTC).isoformat()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT source_type, strategy, config FROM source_recipes WHERE id = ?",
+                (recipe_id,),
+            ).fetchone()
+            if existing is not None and str(existing["source_type"]).strip().lower() != "web":
+                raise ValueError("recipe id is already owned by another source family")
+            previous_fingerprint = ""
+            previous_interval = incoming_interval
+            if existing is not None:
+                try:
+                    previous_config = json.loads(str(existing["config"] or "{}"))
+                except (TypeError, ValueError):
+                    previous_config = {}
+                typed_previous_config = previous_config if isinstance(previous_config, dict) else {}
+                previous_fingerprint = self._web_recipe_execution_fingerprint(
+                    str(existing["strategy"] or ""),
+                    typed_previous_config,
+                )
+                previous_interval = self._web_recipe_interval_minutes(typed_previous_config)
+            conn.execute(
+                """
+                INSERT INTO source_recipes (
+                    id, source_type, name, strategy, config, target_share,
+                    enabled, created_by, created_at
+                ) VALUES (?, 'web', ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    strategy = excluded.strategy,
+                    config = excluded.config,
+                    target_share = excluded.target_share,
+                    enabled = excluded.enabled
+                """,
+                (
+                    recipe_id,
+                    str(recipe["name"]),
+                    str(recipe["strategy"]),
+                    json.dumps(incoming_config, ensure_ascii=False, sort_keys=True),
+                    int(recipe.get("target_share", 4)),
+                    int(recipe.get("enabled", True)),
+                    str(recipe.get("created_by", "system")),
+                    recipe.get("created_at") or None,
+                ),
+            )
+            if existing is not None and previous_fingerprint != incoming_fingerprint:
+                conn.execute("DELETE FROM web_source_state WHERE recipe_id = ?", (recipe_id,))
+                conn.execute("DELETE FROM web_source_seen WHERE recipe_id = ?", (recipe_id,))
+            elif existing is not None and previous_interval != incoming_interval:
+                # Cadence is deliberately outside the execution fingerprint:
+                # changing it must preserve validators, cursor and seen rows.
+                # Clear the old deadline so the new cadence takes effect with
+                # one immediate run; an in-flight completion re-reads the same
+                # current config below before scheduling its following run.
+                conn.execute(
+                    """
+                    UPDATE web_source_state
+                    SET next_fetch_at = '', updated_at = ?
+                    WHERE recipe_id = ?
+                    """,
+                    (changed_at, recipe_id),
+                )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _web_recipe_execution_fingerprint(strategy: str, config: Mapping[str, Any]) -> str:
+        """Return a stable digest for fields that affect Web network/extraction state."""
+
+        execution_config = {
+            key: config.get(key)
+            for key in (
+                "entry_url",
+                "allowed_origins",
+                "max_items",
+                "max_pages",
+                "detail_fetch_limit",
+                "listing",
+                "plan_version",
+            )
+        }
+        material = json.dumps(
+            {"strategy": str(strategy).strip().lower(), "config": execution_config},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _web_recipe_interval_minutes(config: Mapping[str, Any], *, fallback: int = 30) -> int:
+        """Return the effective Web cadence used by persisted recipe state."""
+
+        raw_value = config.get("interval_minutes", fallback)
+        if isinstance(raw_value, bool):
+            return max(5, int(fallback))
+        try:
+            return max(5, int(raw_value))
+        except (TypeError, ValueError):
+            return max(5, int(fallback))
+
     def get_all_recipes(self) -> list[dict[str, Any]]:
         """Return all source recipes."""
         self._ensure_fresh_read()
         rows = self.conn.execute("SELECT * FROM source_recipes ORDER BY created_at").fetchall()
         return [self._row_to_recipe(row) for row in rows]
 
-    def get_enabled_recipes(self) -> list[dict[str, Any]]:
-        """Return only enabled source recipes."""
+    def get_enabled_recipes(self, source_type: str | None = None) -> list[dict[str, Any]]:
+        """Return enabled recipes, optionally restricted to one source family."""
         self._ensure_fresh_read()
-        rows = self.conn.execute(
-            "SELECT * FROM source_recipes WHERE enabled = 1 ORDER BY created_at"
-        ).fetchall()
+        if source_type is None:
+            rows = self.conn.execute(
+                "SELECT * FROM source_recipes WHERE enabled = 1 ORDER BY created_at"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM source_recipes
+                WHERE enabled = 1 AND source_type = ?
+                ORDER BY created_at
+                """,
+                (str(source_type).strip().lower(),),
+            ).fetchall()
         return [self._row_to_recipe(row) for row in rows]
 
     def update_recipe(self, recipe_id: str, **fields: Any) -> bool:
@@ -21319,11 +21755,457 @@ class Database:
 
     def delete_recipe(self, recipe_id: str) -> bool:
         """Delete a recipe by id. Returns True if a row was deleted."""
-        cursor = self._execute_write(
-            "DELETE FROM source_recipes WHERE id = ?",
-            (recipe_id,),
+        # Lightweight test/embedding facades historically initialized only the
+        # generic recipe table. Keep deletion compatible while ensuring Web's
+        # backend-owned ledgers exist before the atomic cleanup transaction.
+        self._ensure_web_source_tables()
+        self.conn.commit()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute("DELETE FROM source_recipes WHERE id = ?", (recipe_id,))
+            if int(cursor.rowcount or 0) > 0:
+                conn.execute("DELETE FROM web_source_state WHERE recipe_id = ?", (recipe_id,))
+                conn.execute("DELETE FROM web_source_seen WHERE recipe_id = ?", (recipe_id,))
+            conn.commit()
+            return int(cursor.rowcount or 0) > 0
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def claim_due_web_recipes(
+        self,
+        *,
+        limit: int,
+        now: datetime | None = None,
+        lease_seconds: int = 300,
+        force: bool = False,
+        exclude_recipe_ids: Sequence[str] = (),
+    ) -> list[dict[str, Any]]:
+        """Atomically lease enabled Web recipes whose own cadence is due."""
+        claim_limit = max(0, int(limit))
+        if claim_limit <= 0:
+            return []
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        lease_until = (current + timedelta(seconds=max(30, int(lease_seconds)))).isoformat()
+        token = secrets.token_urlsafe(24)
+        excluded_ids = tuple(
+            dict.fromkeys(str(recipe_id) for recipe_id in exclude_recipe_ids if str(recipe_id))
         )
-        return cursor.rowcount > 0
+        exclusion_sql = ""
+        from openbiliclaw.sources.web_recipe import (
+            WEB_RECIPE_PLAN_VERSION,
+            WEB_RECIPE_STRATEGIES,
+            is_compiled_public_web_recipe,
+        )
+
+        strategy_values = tuple(sorted(WEB_RECIPE_STRATEGIES))
+        strategy_placeholders = ", ".join("?" for _ in strategy_values)
+        query_params: list[Any] = [
+            int(bool(force)),
+            now_text,
+            now_text,
+            *strategy_values,
+            WEB_RECIPE_PLAN_VERSION,
+        ]
+        if excluded_ids:
+            placeholders = ", ".join("?" for _ in excluded_ids)
+            exclusion_sql = f"AND recipes.id NOT IN ({placeholders})"
+            query_params.extend(excluded_ids)
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            candidate_rows = conn.execute(
+                f"""
+                SELECT recipes.*
+                FROM source_recipes AS recipes
+                LEFT JOIN web_source_state AS state ON state.recipe_id = recipes.id
+                WHERE recipes.enabled = 1
+                  AND LOWER(TRIM(recipes.source_type)) = 'web'
+                  AND (? = 1 OR COALESCE(state.next_fetch_at, '') = '' OR state.next_fetch_at <= ?)
+                  AND (COALESCE(state.lease_until, '') = '' OR state.lease_until <= ?)
+                  AND LOWER(TRIM(recipes.strategy)) IN ({strategy_placeholders})
+                  AND json_valid(recipes.config)
+                  AND json_extract(recipes.config, '$.plan_version') = ?
+                  {exclusion_sql}
+                ORDER BY COALESCE(state.last_attempt_at, '') ASC,
+                         recipes.created_at ASC,
+                         recipes.id ASC
+                """,
+                tuple(query_params),
+            ).fetchall()
+            rows = [
+                row
+                for row in candidate_rows
+                if is_compiled_public_web_recipe(self._row_to_recipe(row))
+            ][:claim_limit]
+            if not rows:
+                conn.commit()
+                return []
+            for row in rows:
+                try:
+                    raw_config = json.loads(str(row["config"] or "{}"))
+                except (TypeError, ValueError):
+                    raw_config = {}
+                claimed_plan_fingerprint = self._web_recipe_execution_fingerprint(
+                    str(row["strategy"] or ""),
+                    raw_config if isinstance(raw_config, dict) else {},
+                )
+                conn.execute(
+                    """
+                    INSERT INTO web_source_state (
+                        recipe_id, status, last_attempt_at, lease_token,
+                        lease_until, plan_fingerprint, updated_at
+                    ) VALUES (?, 'running', ?, ?, ?, ?, ?)
+                    ON CONFLICT(recipe_id) DO UPDATE SET
+                        status = 'running',
+                        last_attempt_at = excluded.last_attempt_at,
+                        lease_token = excluded.lease_token,
+                        lease_until = excluded.lease_until,
+                        plan_fingerprint = excluded.plan_fingerprint,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(row["id"]),
+                        now_text,
+                        token,
+                        lease_until,
+                        claimed_plan_fingerprint,
+                        now_text,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+        claimed = [self._row_to_recipe(row) for row in rows]
+        for recipe in claimed:
+            recipe["lease_token"] = token
+            recipe["lease_until"] = lease_until
+            recipe_config = recipe.get("config")
+            if not isinstance(recipe_config, dict):
+                recipe_config = {}
+            recipe["plan_fingerprint"] = self._web_recipe_execution_fingerprint(
+                str(recipe.get("strategy") or ""),
+                recipe_config,
+            )
+        return claimed
+
+    def complete_web_recipe_fetch(
+        self,
+        recipe_id: str,
+        *,
+        lease_token: str,
+        plan_fingerprint: str = "",
+        status: str,
+        discovered_count: int,
+        enqueued_count: int,
+        interval_minutes: int,
+        etag: str = "",
+        last_modified: str = "",
+        validator_url: str = "",
+        cursor: Mapping[str, Any] | None = None,
+        retry_cursor: Mapping[str, Any] | None = None,
+        error_code: str = "",
+        retry_after_seconds: int = 0,
+        scope_complete: bool = True,
+        seen_items: Sequence[Mapping[str, Any]] = (),
+        seen_keep: int = 10_000,
+        now: datetime | None = None,
+    ) -> bool:
+        """Atomically fence one Web handoff and advance only safe state.
+
+        Partial/degraded/error results retain the last committed HTTP
+        validators and canonical cursor. A separate recovery cursor may advance
+        so one bad sitemap branch cannot starve independent branches; the
+        adapter clears it only after every unit in the current root topology
+        completes cleanly. It is written under the same lease/plan fence. Items may still
+        have been handed to the shared candidate pipeline; their source-scoped
+        seen rows and checkpoints are committed together only while the claimed
+        plan and lease remain current.
+        """
+        normalized_status = str(status).strip().lower()
+        if normalized_status not in {
+            "ok",
+            "empty",
+            "not_modified",
+            "degraded",
+            "login_required",
+            "rate_limited",
+            "failed",
+        }:
+            raise ValueError(f"unsupported Web fetch status: {status}")
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        safe_commit = normalized_status in {"ok", "empty", "not_modified"} and scope_complete
+        productive = int(enqueued_count) > 0
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT state.*, recipes.strategy AS recipe_strategy,
+                       recipes.config AS recipe_config
+                FROM web_source_state AS state
+                JOIN source_recipes AS recipes ON recipes.id = state.recipe_id
+                WHERE state.recipe_id = ?
+                  AND state.lease_token = ?
+                  AND state.lease_until > ?
+                  AND recipes.enabled = 1
+                  AND LOWER(TRIM(recipes.source_type)) = 'web'
+                """,
+                (recipe_id, lease_token, now_text),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return False
+            try:
+                recipe_config = json.loads(str(row["recipe_config"] or "{}"))
+            except (TypeError, ValueError):
+                recipe_config = {}
+            from openbiliclaw.sources.web_recipe import is_compiled_public_web_recipe
+
+            typed_recipe_config = recipe_config if isinstance(recipe_config, dict) else {}
+            if not is_compiled_public_web_recipe(
+                {
+                    "source_type": "web",
+                    "strategy": str(row["recipe_strategy"] or ""),
+                    "config": typed_recipe_config,
+                }
+            ):
+                conn.commit()
+                return False
+            current_plan_fingerprint = self._web_recipe_execution_fingerprint(
+                str(row["recipe_strategy"] or ""),
+                typed_recipe_config,
+            )
+            claimed_plan_fingerprint = str(row["plan_fingerprint"] or "")
+            if (
+                not claimed_plan_fingerprint
+                or claimed_plan_fingerprint != current_plan_fingerprint
+                or (plan_fingerprint and plan_fingerprint != claimed_plan_fingerprint)
+            ):
+                conn.commit()
+                return False
+            current_interval = self._web_recipe_interval_minutes(
+                typed_recipe_config,
+                fallback=interval_minutes,
+            )
+            delay_seconds = (
+                max(1, int(retry_after_seconds))
+                if retry_after_seconds > 0
+                else current_interval * 60
+            )
+            next_fetch_at = (current + timedelta(seconds=delay_seconds)).isoformat()
+            seen_values = [
+                (
+                    recipe_id,
+                    str(item.get("item_key") or ""),
+                    str(item.get("canonical_url") or ""),
+                    str(item.get("content_hash") or ""),
+                    now_text,
+                    now_text,
+                )
+                for item in seen_items
+                if str(item.get("item_key") or "")
+            ]
+            if seen_values:
+                conn.executemany(
+                    """
+                    INSERT INTO web_source_seen (
+                        recipe_id, item_key, canonical_url, content_hash,
+                        first_seen_at, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(recipe_id, item_key) DO UPDATE SET
+                        canonical_url = excluded.canonical_url,
+                        content_hash = excluded.content_hash,
+                        last_seen_at = excluded.last_seen_at
+                    """,
+                    seen_values,
+                )
+                keep_count = max(100, min(100_000, int(seen_keep)))
+                conn.execute(
+                    """
+                    DELETE FROM web_source_seen
+                    WHERE recipe_id = ? AND item_key NOT IN (
+                        SELECT item_key FROM web_source_seen
+                        WHERE recipe_id = ?
+                        ORDER BY last_seen_at DESC, item_key ASC
+                        LIMIT ?
+                    )
+                    """,
+                    (recipe_id, recipe_id, keep_count),
+                )
+            committed_etag = (
+                str(etag)
+                if safe_commit and (etag or normalized_status != "not_modified")
+                else str(row["etag"] or "")
+            )
+            committed_last_modified = (
+                str(last_modified)
+                if safe_commit and (last_modified or normalized_status != "not_modified")
+                else str(row["last_modified"] or "")
+            )
+            committed_validator_url = (
+                str(validator_url)
+                if safe_commit and normalized_status in {"ok", "empty"}
+                else str(row["validator_url"] or "")
+            )
+            committed_cursor = (
+                json.dumps(dict(cursor or {}), ensure_ascii=False, sort_keys=True)
+                if safe_commit
+                else str(row["cursor_json"] or "{}")
+            )
+            committed_retry_cursor = (
+                "{}"
+                if safe_commit
+                else (
+                    json.dumps(dict(retry_cursor), ensure_ascii=False, sort_keys=True)
+                    if retry_cursor
+                    else str(row["retry_cursor_json"] or "{}")
+                )
+            )
+            successful = normalized_status in {"ok", "empty", "not_modified"}
+            last_success_at = now_text if successful else str(row["last_success_at"] or "")
+            last_productive_at = now_text if productive else str(row["last_productive_at"] or "")
+            failures = 0 if successful else int(row["consecutive_failures"] or 0) + 1
+            updated = conn.execute(
+                """
+                UPDATE web_source_state SET
+                    status = ?, last_error_code = ?, etag = ?, last_modified = ?,
+                    validator_url = ?,
+                    cursor_json = ?, retry_cursor_json = ?,
+                    last_success_at = ?, last_productive_at = ?,
+                    next_fetch_at = ?, consecutive_failures = ?, scope_complete = ?,
+                    lease_token = '', lease_until = '', last_discovered_count = ?,
+                    last_enqueued_count = ?, updated_at = ?
+                WHERE recipe_id = ? AND lease_token = ?
+                """,
+                (
+                    normalized_status,
+                    str(error_code or ""),
+                    committed_etag,
+                    committed_last_modified,
+                    committed_validator_url,
+                    committed_cursor,
+                    committed_retry_cursor,
+                    last_success_at,
+                    last_productive_at,
+                    next_fetch_at,
+                    failures,
+                    int(bool(scope_complete)),
+                    max(0, int(discovered_count)),
+                    max(0, int(enqueued_count)),
+                    now_text,
+                    recipe_id,
+                    lease_token,
+                ),
+            )
+            if int(updated.rowcount or 0) != 1:
+                conn.rollback()
+                return False
+            if successful:
+                conn.execute(
+                    "UPDATE source_recipes SET last_fetched_at = ? WHERE id = ?",
+                    (now_text, recipe_id),
+                )
+            conn.commit()
+            return True
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def renew_web_recipe_lease(
+        self,
+        recipe_id: str,
+        *,
+        lease_token: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """Extend a still-current lease; expired or replaced workers fail closed."""
+
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        lease_until = (current + timedelta(seconds=max(30, int(lease_seconds)))).isoformat()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE web_source_state
+                SET lease_until = ?, updated_at = ?
+                WHERE recipe_id = ? AND lease_token = ? AND lease_until > ?
+                  AND EXISTS (
+                      SELECT 1 FROM source_recipes
+                      WHERE id = ? AND enabled = 1 AND LOWER(TRIM(source_type)) = 'web'
+                  )
+                """,
+                (
+                    lease_until,
+                    now_text,
+                    recipe_id,
+                    lease_token,
+                    now_text,
+                    recipe_id,
+                ),
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0) == 1
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_web_source_state(self, recipe_id: str) -> dict[str, Any] | None:
+        """Return one recipe's health/cursor ledger without exposing lease state writes."""
+        self._ensure_web_source_tables()
+        self.conn.commit()
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            "SELECT * FROM web_source_state WHERE recipe_id = ?", (recipe_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result["cursor"] = json.loads(str(result.pop("cursor_json") or "{}"))
+        except (TypeError, ValueError):
+            result["cursor"] = {}
+        try:
+            result["retry_cursor"] = json.loads(str(result.pop("retry_cursor_json") or "{}"))
+        except (TypeError, ValueError):
+            result["retry_cursor"] = {}
+        result["scope_complete"] = bool(result.get("scope_complete"))
+        return result
+
+    def web_seen_item_keys(self, recipe_id: str, item_keys: Sequence[str]) -> set[str]:
+        """Return item keys already observed inside one Web recipe scope."""
+        unique = list(dict.fromkeys(str(key) for key in item_keys if str(key)))
+        if not unique:
+            return set()
+        placeholders = ", ".join("?" for _ in unique)
+        self._ensure_fresh_read()
+        rows = self.conn.execute(
+            f"""
+            SELECT item_key FROM web_source_seen
+            WHERE recipe_id = ? AND item_key IN ({placeholders})
+            """,
+            (recipe_id, *unique),
+        ).fetchall()
+        return {str(row["item_key"]) for row in rows}
 
     @staticmethod
     def _row_to_recipe(row: Any) -> dict[str, Any]:

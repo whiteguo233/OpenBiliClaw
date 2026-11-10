@@ -275,7 +275,7 @@ def test_cli_wires_config_restarts_and_stops_every_child(
     monkeypatch.setenv("OPENBILICLAW_FULL_WORKER", "0")
     monkeypatch.setenv("OPENBILICLAW_IMAGE_SERVICE_URL", "")
     monkeypatch.setattr(config, "load_config", lambda: config.Config(data_dir=str(tmp_path)))
-    monkeypatch.setattr(api, "create_app", lambda: app)
+    monkeypatch.setattr(api, "create_app", lambda **_kwargs: app)
     monkeypatch.setattr(proc, "ChildProcessSupervisor", ManualSupervisor)
     monkeypatch.setattr(cli, "_spawn_background_child", spawn)
     monkeypatch.setattr(cli, "_start_tailnet_runtime_best_effort", lambda *a, **kw: None)

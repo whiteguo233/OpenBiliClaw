@@ -1,5 +1,35 @@
 # Runtime Module
 
+## 自定义来源暂停提醒（未发布）
+
+| 能力 | 行为 |
+| --- | --- |
+| 登录／验证暂停 | `CustomWorkflowProducer.produce_if_due()` 交由 `WorkflowStore.complete()` 在当前租约事务内记录 discovery 事件；重复 tick 和过期结果不重复报警 |
+| 普通采集故障 | 前两次失败显示来源状态；第 3 次触发当前提醒和历史事件，保留原退避。成功后写恢复事件；同一来源多个任务各自结算，当前提醒按来源合并 |
+| 恢复入口 | `WorkflowService.attention()` 从持久状态供 Web／原生 App 消息与设置读取；强制刷新不绕过 `login_required`，成功试采发布后才恢复 |
+
+诊断事件包含固定原因与来源名称，不包含网页原始错误或凭据。`source_alerts.record_transition()`
+把失败／恢复转移与 workflow 完成写入同一事务，最多保留 500 条。API 生命周期拥有一个幂等启动的
+`relay_alerts()`，每 2 秒读取已提交事件并转发现有 `diagnostics.alert`；重启后的历史由 REST 读取，
+不在启动时重放旧推送。当前提醒仍由 attention 接口从数据库实时投影。读取不会启动 Ego。
+
+
+
+## 固定实例切换（2026-11-07）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `RuntimeContext.try_apply_llm_instance_config(config)` | 仅默认链顺序改变时通过已有 registry 原地发布，新请求使用新链，API 进程已开始的请求和后台任务对象保留；独立 worker 仍按配置代际重载并恢复持久任务。实例配置或模块链改变时返回 false，走完整重建。 |
+
+
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 路由决定本地依赖与通知 | `ollama_required()` / `effective_ollama_endpoint()` 只考虑有效默认/模块链和独立 Embedding；未使用的旧 Ollama 表不会覆盖向量端口。`sponsored_status()` 只展示实际选中能力的故障；各能力独立恢复。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 Docker 认证提示（2026-11-06）：bootstrap 等待扩展 Cookie 时明确提示先在容器设置密码、生成/启用设备密钥并重启配对；公开命令参数与状态结构不变。容器映射端口按远程访问处理，见[首次认证步骤](../docker-deployment.md#远程认证变更2026-11-06)。
 
 ## 免费组件随包强制集成（2026-11-06）
@@ -11,11 +41,33 @@ Docker 认证提示（2026-11-06）：bootstrap 等待扩展 Cookie 时明确提
 
 公开API与调用约定：`stage_runtime_bundle` 成功返回 `True`，不能用 `False` 表示漏包后继续构建。`installed_runtime_command()` 保持签名验证；旧组件仅作为不匹配当前pin时的可用候选。Docker和桌面构建强制成功，源码安装的显式 `--if-available` 兼容选项保留。
 
+## Jev 矛盾答案不重复收费（2026-11-06）
+
+已实现：`CandidateEvalCoordinator.status_payload()` 新增
+`candidate_eval_invalid_evidence_blocked`，读取 durable 停放数；与
+`candidate_eval_input_budget_blocked` 分开。两类 refusal 均通过 pipeline 在上下文变更后
+有界恢复；同配置的启动、手动刷新和保存不触发重评。已付费返回的矛盾时效证据不再
+折叠为 missing response，不修改评分或准入规则；暂态服务错误继续原有退避。
+2026-11-07 起 native INVALID 也走该路径。`status_payload()` 提示无效／矛盾答案；
+正式 runtime 将配置端点传入 evaluator 的证据身份，修正网关可恢复，单换 Token 不复活。
+后台 Jev 候选的纯本地打包改在线程执行，避免与配置／候选入队共用的事件循环被长文
+试装占住。数据先快照，provider 仍在原协程中按顺序调用；取消打包等待不会触发远端请求。
+
+## Jev 输入预算失败恢复（2026-10-27）
+
+| 能力 / 公共接口 | 合同 |
+|---|---|
+| `CandidateEvalCoordinator` 唤醒/安全扫描 | 在 work-allowed 门控后、claim 前交由 pipeline 检查有效上下文；画像/负例/所选模型容量或 scorer 改变后有界恢复预算停放项 |
+| `status_payload().candidate_eval_input_budget_blocked` | 从 durable `failed_eval` 预算原因读取数量，coordinator 重建/重启后仍可观察 |
+| `status_payload().candidate_eval_last_error` | 预算停放显示 `input_budget_exhausted` 及扩大容量/减少必需输入建议；不是远端故障熔断 |
+
+相同设置的 startup/manual/config 唤醒不复活预算失败，不增加 batch/provider attempts；
+模型身份保持用户选择，不自动换模型或偷偷转 LLM。混合批次其它有效项继续入池。
+暂态远端故障仍沿用既有重试/退避；停放不是内容不相关，也不代表已完成评估。
 
 ## 封面显示副本缓存（2026-10-23）
 
 `image_cache.render_cover_for_display(data, content_type)` 在线程中生成 640px JPEG 显示副本，并按原始字节 SHA-256 与媒体类型存入线程安全 LRU；最多 128 项、16 MiB，只持有显示副本、不保留大尺寸原图。字节变化自动失效，超限淘汰最旧项，进程退出即释放。小图及解码失败继续返回原始字节，不改变原图磁盘缓存、CDN 抓取/SSRF 校验或预取策略。API 与独立 image_service 复用同一实现。
-
 Instagram 普通“换一批”现在通过 `force_refresh()` 执行一个有界 producer → `drain_pending(flush=True)` → 推荐文案波次。它复用来源锁、任务准入、配额和日预算，不依赖 scheduler；失败使用安全的 Instagram 提示进入 `refresh.failed`，已有部分结果保留。CLI `discover --source instagram --force` 仍可独立使用。
 
 Instagram 显式初始化的第 4 阶段通过 `run_init_backfill(sources=..., register_instagram_task=...)` 调用正式 producer、候选评估和同步推荐文案，共享 refresh 锁。API 在 kick 前把新建及恢复的发现任务登记到当前 InitCoordinator；初始化期间其它 pending task 仍不能领取。`build_instagram_discovery_producer(manual=True)` 允许来源已启用、scheduler 关闭时的显式 init；后台 tick 仍受原 scheduler/init/presence 门控。仅选 Instagram 不运行 B 站固定策略，旧的非 Instagram init 路径本次未重构。
@@ -66,8 +118,13 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| 动态网站来源独立调度 | ✅ | 注册的 `custom_<uuid>` 逐个参与现有 share/deficit 算法与来源锁；daemon 和 OpenClaw 一次性执行均接入同一候选评估链。普通与探索关键词以实例 ID 隔离，禁用或归档后停止新调度。 |
+| Ego 网络失败原因持久化 | ✅ | `CustomWorkflowProducer` 对 `ego_navigation_failed` 只追加经校验的 `net::ERR_*` 枚举至正式运行 `error` / 工作流 `last_error`，不保存页面原始错误文本；其他失败、调度退避、权限和网络路由保持原行为。 |
+| Web 独立宿主与动态配额 | ✅ | API daemon 与 OpenClaw standalone 均注册 Web adapter/producer；`pool_source_shares_provider` 按数据库当前有效 enabled recipe 动态重算配额，新增/停用立即反映。无 daemon 的短请求复用有界 inline evaluation 与 durable copy，剩余工作留待后续请求 |
 | 多进程配置恢复 | ✅（进程级回归） | 完整配置应用后由父 supervisor 替换旧 worker，等待队列结束和旧 owner 退出，固定 active data path，保留候选继续评估与文案入池。 |
 | Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
+| 公开 HTTP 来源代理 | ✅ | Feed / 旧公开 recipe 遵循 `[network]`，复用公共 DNS 与数字 IP 隧道；robots 和 origin 限制保持，文章引用不产生额外请求。 |
+| 合成 DNS 验证 | ✅ | 公开 Web / Ego 识别全部为 `198.18.0.0/15` 的系统答案后复用固定 DoH，仍拒绝私网、混合答案和解析失败；不改变网站出口。 |
 | 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
 | 封面默认 TLS 上下文复用 | ✅ | 默认 certifi CA 按进程、trust_env 和证书包文件状态存入最多 4 项 LRU，避免每张冷封面重复解析证书；自定义 SSL_CERT_FILE/SSL_CERT_DIR 保留每次重载。连接和 DNS/IP 验证仍逐 hop 独立。 |
 | Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
@@ -108,6 +165,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | GitHub 后台 discovery producer | 🧪 接线；验收见 ledger | `GitHubDiscoveryProducer.produce_if_due()` 在 GitHub 平台族低于 quota 且启用时，只执行当前 `source_modes` 选择的公开 repository `search / ranked / latest`。CLI、正式 producer 与 inspiration backend 共用 public query sanitizer，强制 `is:public`，normalizer 再拒绝 `private=true`；可选 PAT 只用于提额和身份校验，401 后按指纹记录拒绝并退回匿名公开发现。producer 复用 canonical 关键词 claim/use/rollback，按最终去重且真正 enqueue 的候选扣 UTC 日预算，持久化 page cursor/run ledger。来源级 `Retry-After` cooldown 由 formal 与 inspiration 路径共用，任一路径限流都会让另一条 fail-closed 跳过；本地 status 也只聚合当前启用 modes，关闭分支不制造 `unverified`。它只把 `content_type="repository"` raw candidates 交给共享 evaluator，没有插件任务、Cookie、后台账号增量、媒体抓取或任何 GitHub 写操作。本行只记录实现边界；真实 API / E2E 证据状态以 [`platform-source-acceptance.github.md`](../platform-source-acceptance.github.md) 为准。 |
 | Linux.do 后台 discovery producer | ✅（真实 Chrome E2E） | `LinuxdoDiscoveryProducer.produce_if_due()` 在 Linux.do 平台族低于 quota 且启用时，按 source_modes 入队 search / hot / feed / creator / related 任务。真实站点访问只发生在扩展的 `linux.do` 同源标签页，全部为 JSON GET；候选只 enqueue raw rows。搜索复用统一 keyword claim，结构化 rate-limit/network/timeout/access/login 失败会回滚 claim；creator/related 从近期和同轮结果取种子。2026-08-09 已完成安装版热更新、五路任务与正式候选管线 E2E。 |
 | V2EX 后台 discovery producer | ✅ | `V2EXDiscoveryProducer.produce_if_due()` 在 V2EX 平台族低于 quota 且启用时，按 `search / node / tab / hot / latest` 调用匿名 API / Feed；共享关键词 claim、Node/Tab 配置、分支日预算、最小间隔和持久化 rate-limit cooldown。PAT 存在时由 `V2EXClient` 使用 API 2.0，401/403 自动降级匿名。Topic 经 `v2ex_topic_to_content()` 转为文字卡后只 enqueue raw candidates，LLM 评估由共享 coordinator 执行；Node producer 未配置 allowlist 时可使用 `v2ex_node_affinity` 排序。 |
+| Web 后台 discovery producer | ✅ Phase A | `WebDiscoveryProducer.produce_if_due()` 只消费 enabled typed recipe；在全局开关、Web quota、recipe cadence 与原子 lease 都满足时，按 recipe 权重有界公平调度公开 feed / sitemap / static listing。网络与 parser 结果先经过 token fencing，再将新 canonical URL enqueue 到共享候选池；完整成功才推进 validator/cursor，partial 不烧 checkpoint。没有 enabled recipe 时 Web 不占 quota。 |
 | X 源健康状态机 | ✅ | `storage/x_health.py` 的 `XSourceHealthStore` 持久化 `ok` / `missing_cookie` / `expired_cookie`(401) / `blocked`(403) / `rate_limited`(429) 五态；按 code 分别退避，429 带 `cooldown_until` 自愈，401/403/missing 须等用户重新登录 x.com 才恢复；连续 For-You 失败触发 `feed_allowed()=false` 自动暂停。状态经 `GET /api/sources/x/status` 暴露到插件设置页。 |
 | 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、惊喜队列加载数量、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
 | 惊喜永久消费 | ✅ | `mark_delight_sent()` 只表示通知已送达并维护冷却，不置 `delight_seen`，因此已推送但未看过的候选仍可被 popup 重灌；`mark_delight_seen()` 供用户主动叉掉时委托 storage 写 canonical `seen_items` 并置 `delight_seen`，随后更新主动惊喜冷却。两种动作分开，避免“通知出现过”被误当成“用户看过”。 |
@@ -176,6 +234,28 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+`resolve_public_addresses(host, *, proxy=None, use_public_dns=False)` 的新增开关仅供已识别
+合成 DNS 的调用方显式使用。它使 DNS 验证走固定 Cloudflare DoH；`proxy` 仍控制此查询
+的网络出口。默认行为及封面调用方不变。HTTP 将返回的公共 IP 固定到连接，Ego 仅作预检。
+
+`runtime.image_network.PinnedImageBackend(host, addresses, proxy, *, port=443)` 的隧道底座供封面和公开 Web 来源共用；只接受 80/443，端口及数字 IP 同时冻结。封面入口仍只使用 HTTPS 443，原白名单不变。
+
+### 动态来源与运行模式
+
+惊喜候选沿用 content cache 的 `source_id/source_name`，`get_pending_delight()` 与后台
+`delight.candidate` 事件均透传，API 单条/批量和手动推送保持一致。不能只因内容平台为 `web`
+就丢弃独立网站名；未设置动态来源的旧内容使用空字符串兼容。
+
+流程发布新版本时，在同一事务把旧版本未结束的运行记录结算为 `superseded`。停用、租约过期或版本变化后的迟到完成，只把匹配旧 run/token 的历史记录结算为 `stale`，不能修改新版本状态、seen 或 cursor；历史页面不会永久显示旧任务正在运行。普通与探索查询按每个流程的完整运行次数轮换，不受最近 100 条历史分页影响。
+
+动态工作流交接候选时区分日期策略排除与临时队列压力：严格日期窗口排除的内容不入候选池，但可记入该流程的 seen 并在完整扫描后推进 cursor；真正未保留的合格内容不记 seen，保留旧前沿重试。混合批次逐条判断，不因部分合法排除吞掉其它内容的重试机会。
+
+`effective_pool_source_shares(config, database=...)` 从显式数据库读取来源注册表，将每个启用的 `source_id` 与内置平台一起送入既有比例分配算法。来源增删、份额和启停在下一次 tick 生效；未知自定义 ID 不会占配额。旧 HTTP recipes 继续由原 `web` producer 管理，其聚合份额不吸收动态实例。
+
+`ContinuousRefreshController.custom_source_producer_provider(source_id)` 负责构造轻量 `CustomWorkflowProducer`；实际执行沿用来源锁、可用库存缺额和 raw headroom。单个网站失败保留诊断并继续其它来源。API/发现 worker 用 generation-owned evaluator；OpenClaw standalone 没有常驻循环，`refresh_if_needed()` 在有界 one-shot 模式先执行关键词规划，再运行来源 producer，复用原先最多 4 条的 inline admission 与 awaited copy 路径。两种装配都把 `source_share_targets` 绑定到 controller。OpenClaw 推荐 DTO 也携带 `source_id/source_name`，`source_platform` 筛选参数可接受已注册实例 ID；scope 校验不会开放任意未注册 key。
+
+`KeywordPlanner` 仅把启用来源中 active `query_mode=interest` 的流程纳入普通和探索词池，HTTP feed / 固定查询流程不消耗动态关键词。提示词带网站名称、origin 与用途，不带 session 引用或执行步骤；关键词按当前画像生成，claim/rollback/yield 仍走共享 `discovery_keywords` 生命周期。探索词池需要既有 inspiration 开关和可用 provider；无查询可领取时 producer 保持 `keyword_unavailable`。
 
 `ContinuousRefreshController.run_init_backfill(..., sources={"github"})` 在初始化暂停后台期间直接调用正式 GitHub producer，尊重来源预算和限流，至少一条候选完成评估与文案后才成功；空结果保留 `InitialPoolUnavailableError`。Instagram 的任务归属/取消行为不变。
 
@@ -471,11 +551,11 @@ API 进程在委派分支不再"打完警告就返回"：`_schedule_delegated_lo
 
 TikTok 的 curl_cffi 图片传输通过 `network.curl_cffi_proxy_kwargs()` 物化 OS/环境代理，并在 direct/custom 模式覆盖 libcurl 环境继承与 NO_PROXY；每跳仍保留 CONNECT_TO 公网地址固定、原始 Host/SNI 和 TLS 校验。Instagram 继续使用上述共享海外图片传输。
 
-`runtime.image_network.resolve_public_addresses(host, *, proxy=None)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
+`runtime.image_network.resolve_public_addresses(host, *, proxy=None, use_public_dns=False)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
 
 TLS 初始化只复用默认 certifi CA 的 `SSLContext`：进程内最多 4 项，以 PID、`trust_env`、证书包路径及设备/inode/大小/mtime/ctime 标识，升级或原地改写证书包后重建，证书包不可读取时沿用 HTTPX 的失败行为。启用 `trust_env` 且配置 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 时绕过缓存，保留自定义证书和目录内证书的每次重载；CN direct 仍忽略环境 CA。CDN TLS、HTTPS 代理握手与 DoH 复用这项内部优化，不改变公开 API、不缓存 DNS 答案，也不复用逐 hop 的连接池。`certifi` 从 HTTPX 已有的传递依赖提升为显式声明，现有打包清单已包含它，不增加安装步骤。
 
-直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。仅发送公开 CDN 域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
+封面直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。公开 Web / Ego 另在域名的本机答案全部为 `198.18.0.0/15` 时显式启用相同公共 DNS 验证；不会将合成地址直接视为公网。仅发送域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。Ego 只使用预检结果，不固定其原生 socket。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
 
 实现依据：[HTTPCore network backends](https://www.encode.io/httpcore/network-backends/) 与 [Cloudflare DNS JSON](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。`httpcore>=1.0,<2` 从 HTTPX 的传递依赖提升为显式依赖，`httpx[socks]>=0.28` 支持 `socks5h`；git、Docker、桌面打包通过现有 Python 依赖安装，不增加本机守护进程或手工安装步骤。
 
@@ -589,7 +669,7 @@ status = service.get_runtime_status()
 
 **`auth_expired` 不允许活得比它的原因更久（2026-10）。** 持久化的 `auth_expired` 过去只有「完整跑完一轮同步」这一个清理点，而 guided init 暂停或 worker 崩溃循环会让 daemon 永远到不了那个点，Cookie 早已修复横幅却永久挂着。现在有两条独立清理路径：其一，B 站凭据一经 `_write_source_credential` 真正落盘，`_credential_landed` 即调用 `clear_auth_expired_state()` 抹掉状态文件中的 `auth_expired` issue 与 error kind；其二，`sync_if_due` 因 `llm_paused` 早退时仍会做一次轻量 nav 复验（`_refresh_auth_state_while_paused`）——只在持久化状态声称 `auth_expired` 时才出网，nav 回答「已登录」即清除，仍过期或传输失败则保持原状（无结论即无证据）。两条路径都只可能清掉**陈旧**横幅：下一轮真实 tick 会从实际抓取重新推导全部 issue。
 
-桌面首页同时读取本地-only `/api/sources/status`，把它明确命名为「来源接入」后与上面的「账号同步」组合展示：十四个平台中已启用来源的缺凭据、不完整、过期、失败、受阻、限流或未知状态会点名平台并原样显示后端 `detail`；正常的 `unverified` / `syncing` 不进入故障横幅。GitHub 的匿名 discovery 健康与可选 PAT 验证是两个维度，坏 PAT 不得把匿名公开能力冒充为不可用；GitHub discovery 状态只聚合当前配置 `source_modes`，已关闭分支的旧 run 不参与当前整体结论。正式 discovery 的 401 marker 只绑定当前 PAT 指纹，会同步把 status / init-status 的 GitHub profile 与 bootstrap 轴标成 unavailable；token rotation 或清除后旧 marker 不再匹配。
+桌面首页同时读取本地-only `/api/sources/status`，把它明确命名为「来源接入」后与上面的「账号同步」组合展示：十五个来源族（含 Web）中已启用来源的缺凭据、不完整、过期、失败、受阻、限流或未知状态会点名平台并原样显示后端 `detail`；正常的 `unverified` / `syncing` 不进入故障横幅。GitHub 的匿名 discovery 健康与可选 PAT 验证是两个维度，坏 PAT 不得把匿名公开能力冒充为不可用；GitHub discovery 状态只聚合当前配置 `source_modes`，已关闭分支的旧 run 不参与当前整体结论。正式 discovery 的 401 marker 只绑定当前 PAT 指纹，会同步把 status / init-status 的 GitHub profile 与 bootstrap 轴标成 unavailable；token rotation 或清除后旧 marker 不再匹配。
 
 **X 定时增量**：仅在 `[sources.twitter].enabled=true` 且 `sources.x_auth.resolve_x_cookie` 解析到 Cookie 时，两处装配点才构造 `XClient`；同一 6h 周期内在 B 站各阶段之后拉取 likes / bookmarks（各上限 200，`_X_FETCH_LIMIT`），分别映射为 `like` / `favorite` 事件（`source_platform="twitter"`）。去重用状态集合 `x_like_ids` / `x_bookmark_ids`（归一化 tweet ID，取 URL 的 `/status/<id>` 尾段，兼容 `x.com/i/status/<id>` 与 `x.com/<handle>/status/<id>` 两种形态，集合上限 2000 保最新）；集合为空的首轮从 events 表已持久化的 X 事件播种，init 之后、首轮之前新增的 like 仍会正常发事件。API runtime 把 discovery producer 的同一 `XSourceHealthStore` 注入账号同步；OpenClaw 构造与 Cookie 指纹绑定的同类 store。每轮出网前先查 `is_ready()`，已在 429 cooldown、缺/过期 Cookie 或 403 block 时直接跳过；likes 首个失败会 `record_error()` 并在 store 变为不可用后取消 bookmarks，成功则 `record_success()`。X 子路径失败只记入 errors + WARN，不影响 B 站同步，反之亦然。
 
@@ -714,6 +794,23 @@ Producer 只接收 `sources.instagram` normalizer 认可的 canonical media，�
 
 错误分类保留 `login_required / challenge_required / rate_limited / schema_changed / timeout / partial`，并把已接收 items 随 partial 交付，但只在确有候选交付时记录生产性 cadence。Opaque cursor 不在后端猜测或合成，重复 cursor 与 `has_more` 缺 cursor 都不能推进 complete state。
 
+### WebDiscoveryProducer
+
+`WebDiscoveryProducer` 是正式 Web recipe 的后台入口。它只在 `[sources.web].enabled=true`、
+存在 enabled recipe 且统一候选池有 Web 缺口时运行；没有 recipe 时 source policy 会移除 Web
+share。producer 先按轮转起点和 `target_share` 为 recipe 分配有界额度，再逐条原子 claim 到期
+recipe，未实际执行的 recipe 不会提前持有 lease。
+
+每条 recipe 由 `WebSourceAdapter` 通过 `SafeWebTransport` 执行匿名公开 HTTP，并按
+`feed / sitemap / listing` 走确定性 parser。网络返回后 producer 必须续租且核对 claim token，
+失去 lease 的 worker 不能 enqueue 或提交状态。canonical URL 成功交给共享 pipeline 后才写
+`web_source_seen`；enqueue 调用失败不烧掉重试机会。`ok / empty / not_modified` 且
+`scope_complete=true` 才推进 ETag、Last-Modified 或 sitemap cursor；degraded/partial 轮次可以
+保留已经安全解析的候选，但沿用上次完整 checkpoint。daemon 与
+`openbiliclaw discover --source web` 都走这条正式 producer；后者的 `--force` 只绕过 cadence。
+`discover-web --recipe-id` 则直接从空 state 只读预览，不写候选或 checkpoint。完整差异、安全
+边界和状态字段见 [Web 来源文档](web.md)。
+
 ### BilibiliExtensionSearchProducer
 
 ```python
@@ -738,6 +835,13 @@ XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博八个插件�
 
 - 单任务内：`merge_result()` 合并 partial / final payload 时按 scope + 平台原生 ID / URL / title 去重，只把本次新增项返回给 API 传播。XHS 只接纳任务不可变 `scopes` 白名单内的 note 与整数计数；缺失 / 空列表按扩展默认回退为 saved / liked / xhs_history。`scope_counts` 以扩展报告值和已合并 scope-aware canonical 行数两者较大值为准，但最终受 `max_items_per_scope` 约束：两个互不重叠的 partial 可在预算内从各报 `saved=5` 累积为 `saved=10`；达到上限后先到的 canonical 行优先，后续同行、计数与未被 note 接纳的裸 URL 都被裁掉。已接纳同 identity note 的发布时间与首个有效 tokenized URL 可继续补齐，不占新额度。同一笔记同时出现在 saved/liked 仍保留为两个不同强信号，各自占用所属 scope 的预算。
 - 跨任务：API 在传播 bootstrap 事件前读取 `source_bootstrap_state.json`，跳过八个平台已经进入 durable event ingress 的 identity key；seen-key checkpoint 使用原子 read-modify-write，按扩展响应顺序为每源保留最新 5,000 个。这样 `fetch-*`、`init`、周期回拉或近期任务复用重复返回同一批收藏 / 历史时，不会再次插入行为事实或触发画像更新。各平台 final callback 先冻结首份 canonical result，随后依次修复 event ingress、seen state 和 terminal flip；任一步失败都保持 staged/nonterminal，供租约重领后从冻结结果重放。Linux.do scope 严格映射为 bookmarks→favorite、likes→like、read_history→view；V2EX key 额外带 resolved username 前缀，后端净化任务字段、执行 identity mismatch gate，并对账号分区 Node evidence / 收藏 snapshot effect 做幂等记录；微博 key 按已观察账号分区。
+
+### CustomWorkflowProducer
+
+`CustomWorkflowProducer.produce_if_due()` 的错误记录继续使用现有字符串字段；例如
+`ego_navigation_failed (net::ERR_CONNECTION_CLOSED)`。固定错误码仍在前，只有详情末尾
+符合有界枚举格式时追加该原因；URL、query 和任意页面文本不会从详情复制到运行历史。
+这项诊断不改变下一次执行时间，不会绕过 `backoff`、`login_required` 或来源启停门。
 
 ## 配置项
 
@@ -828,6 +932,9 @@ Expression copy 与 candidate evaluation 对 rate-limit、timeout、connection�
 
 公开 API：`ServeOutbox.read_all()/count()` 兼容读取遗留文件和新 spool；worker 排空流程使用逐批 ACK，`clear()` 只用于显式清理。普通推荐不再产生 outbox 记录；worker 快照仍可用于观察，不能作为已消费状态的权威来源。没有新增配置或依赖。
 
+### 对话创建 Web recipe
+
+「聊一聊」经 `create_source` 审批保存的 Web recipe 与设置页创建的计划共用 `source_recipes`，由同一个 `WebDiscoveryProducer` 在到期、来源开关、配额与 lease 允许时领取。probe 和待审批请求不进入调度；保存成功只表示计划已落库，后续健康状态以 producer 实际运行结果为准。
 
 ### TikTok 来源验收补全（2026-10-04）
 
@@ -844,10 +951,13 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 
 共享 `enqueue_tiktok_bootstrap()` 改为喜欢、收藏、关注三个默认 scope；历史缺失不影响默认任务完整成功。新增正式 runtime→SQLite→终态对账测试，模拟时钟覆盖下一周期；该测试不代表浏览器非空账号 E2E。
 
+部分页面已取得内容、后续页面触发登录／验证时，即使候选队列容量不足或交接失败，
+也保留 `login_required` 和原验证原因，不能被一般队列异常覆盖为可自动重试的 degraded/failed。
+
 
 ## Sponsored SDK 子进程（组件已发布，应用接线待发布）
 
-`ollama_required(config)` 按实际可达路由判断：默认免费云端向量不触发本地启动；选择 `embedding_mode="local"` 后走Ollama模型准备/下载/播种。`effective_ollama_endpoint()` 忽略被免费模式屏蔽的旧Ollama聊天配置，避免错误覆盖本地向量端点；显式开启用户聊天回退时仍按现有规则预备它。
+`ollama_required(config)` 按默认/模块实际链与独立 `llm.embedding` 判断本地需求。云端 BGE 不启动 Ollama；选择 `embedding.provider="ollama"` 后走本地准备/下载/播种。`effective_ollama_endpoint()` 不使用未被链引用的旧 Ollama 聊天表覆盖向量端点。
 
 同一事件循环内的 LLMService、Registry 和 EmbeddingService 复用子进程；既有应用并发 gate 不变。不同工作进程各自建 Runtime，私有安装账本只对记账事务加锁，网络期间不独占锁；预留与结算重读 HMAC 状态，不丢并发额度。`LLMService.aclose()` 等待请求结束后关闭子进程。覆盖和发行约束见[全项目 SDK](../plans/2026-10-27-sponsored-all-tasks.md)。
 
@@ -873,7 +983,7 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 | 已实现能力 | 行为 |
 | --- | --- |
 | 撤销/授权到期识别 | Rust稳定错误码进入Core状态；有效签名策略已到期时，无需运行旧组件即可提示更新。未知网络/限流故障不推断Key过期。 |
-| 持久通知与恢复 | `<data_dir>/runtime/sponsored-status/{chat,embedding}.json` 原子保存错误码、时间、组件身份哈希，无Key/Prompt/上游正文；同错误去重，重启/独立worker可读。成功只清除对应能力，更新组件后旧证据失效；关闭免费方案隐藏通知，本地向量模式忽略旧云端向量故障。 |
+| 持久通知与恢复 | `<data_dir>/runtime/sponsored-status/{chat,embedding}.json` 原子保存错误码、时间、组件身份哈希，无Key/Prompt/上游正文；同错误去重，重启/独立worker可读。成功只清除对应能力，更新组件后旧证据失效；没有使用免费 LLM 时忽略旧聊天故障，未选择免费 Embedding 时忽略旧云端向量故障。 |
 
 公开API：`sponsored_status.configure_status_directory(data_path)` 由配置加载/registry绑定；`record_sponsored_outcome(command, capability, code="")` 观察实际请求；`sponsored_status(config)` 仅读本地状态，不探测上游。`BundleExpiredError` 区分已验签但到期的策略；`bundle_status()` 新增稳定 `code`，损坏/未签名文件不被当成可靠过期证据。
 
@@ -900,3 +1010,12 @@ Core将 `cryptography>=41` 纳入基础依赖用于Ed25519验签；Python wheel�
 | runtime | 官方默认中继地址经过部署验收后，`stage_runtime_bundle` 不再下载/复制含供应商 Key 的 SDK，并拒绝旧目录混入；冻结安装包自检验证此边界。兼容模式继续验证固定 SDK，两个模式不可静默互相回退。设备认证错误与组件策略到期分开提示。公开 API `official_relay_url()`、`stage_runtime_bundle(destination)`；部署条件见 [中继说明](../sponsored-relay.md)。 |
 
 Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安装包；五平台签名/版本匹配及Mac公证已验证。中继生产地址仍未设置。[实测与发行记录](../testing/2026-11-06-relay-delivery.md)。
+
+## Core 0.3.235 免费组件发行
+
+固定目录更新为 `sponsored-runtime-2026-11-08.1`，五平台以 Core `484308bf8f1a7b42ac38565b61e1c838b3423a9d` 生成任务策略并签名，兼容范围严格为 0.3.235。SDK 的公开 API、任务协议、模型和额度保持，Mac 双架构完成 Apple Accepted 公证，Windows 仍使用独立 manifest 验签。发行和真实请求结果见[发布记录](../testing/2026-11-08-release-v0.3.235.md)。
+
+
+### 2026-11-09 默认链热切换边界
+
+`RuntimeContext.try_apply_llm_instance_config(new_config)` 对完整配置比较时，将 `data_dir` 解析为相同绝对路径，并通过 `normalize_locale` 比较语言；只有同一语言别名规范化与默认实例链变化可原地应用。真实语言、Embedding、端点及模块路由变化继续完整重建，不跳过后台写入安全交接。PC 真实保存暴露的 `zh` → `zh-Hans` 误排空由此修复；模型调用保持同一稳定 registry/gate，活动任务不被取消。

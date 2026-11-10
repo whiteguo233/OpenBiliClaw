@@ -1,0 +1,870 @@
+"""Ego Lite's native Node/CDP transport and durable application-owned task spaces.
+
+Origin/method and public-DNS checks occur at each paused request. Ego owns socket
+resolution; unlike the legacy Chromium launcher this adapter does not DNS-pin.
+No executable page or host program is accepted from workflow/model data.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from contextlib import suppress
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from openbiliclaw.proc import no_window_kwargs
+from openbiliclaw.sources.browser_workflow import (
+    BrowserWorkflowItem,
+    BrowserWorkflowPlan,
+    BrowserWorkflowResult,
+    BrowserWorkflowValidationError,
+    WorkflowParameters,
+    browser_verification_required,
+    compile_browser_workflow,
+    workflow_origin,
+    workflow_url,
+)
+from openbiliclaw.sources.ego_setup import EgoSetupManager
+from openbiliclaw.sources.web_public import _is_global_address, _system_resolver
+
+logger = logging.getLogger(__name__)
+
+_LOCKS: dict[str, asyncio.Lock] = {}
+_READY: dict[str, tuple[int, str]] = {}
+
+
+def _save_session_state(path: Path, state: dict[str, Any]) -> None:
+    """Keep the owned task identity even if native initialization is interrupted."""
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state))
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+def _current_task_owners(
+    root: Path, *, task_id: Any, host: str, pid: int, profile: str
+) -> list[dict[str, Any]]:
+    """Identify an ID recycled to another durable app session in this live host."""
+    if not isinstance(task_id, int) or isinstance(task_id, bool):
+        return []
+    owners = []
+    for path in root.glob("*.json"):
+        try:
+            if path.is_symlink() or path.stat().st_size > 16384:
+                continue
+            state = json.loads(path.read_text())
+            if (
+                isinstance(state, dict)
+                and state.get("host") == host
+                and state.get("host_pid") == pid
+                and state.get("profile") == profile
+                and state.get("task_id") == task_id
+                and re.fullmatch(r"OpenBiliClaw-[a-f0-9]{32}", str(state.get("task_name", "")))
+            ):
+                owners.append({key: state[key] for key in ("task_id", "task_name", "profile")})
+        except (OSError, ValueError):
+            continue
+    return owners
+
+
+def _error(code: str, detail: str = "", *, navigation_error: Any = None) -> Exception:
+    from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
+
+    descriptions = {
+        "ego_navigation_failed": "Ego Lite could not load the approved website",
+        "ego_navigation_timeout": "Ego Lite navigation exceeded its time budget",
+        "ego_protocol_timeout": "Ego Lite did not answer a browser command in time",
+        "ego_protocol_error": "The installed Ego Lite did not accept a required browser command",
+        "ego_window_unavailable": "The Ego Lite login window is not ready; retry the screenshot",
+        "ego_window_minimized": "The Ego Lite login window was minimized; retry the screenshot",
+        "ego_dom_error": (
+            "Ego Lite could not read this page; the workflow selectors need verification"
+        ),
+        "ego_connection_closed": "The Ego Lite native host connection closed",
+        "ego_session_identity_changed": "The saved Ego space is missing or its ownership changed",
+        "resource_budget_exceeded": "The website exceeded this run's network resource budget",
+        "EGO_PROFILE_NOT_FOUND": "The configured Ego profile is unavailable",
+        "EGO_TASK_SPACE_USER_IN_CONTROL": (
+            "Return the owned Ego space to agent control before retrying"
+        ),
+        "login_required": "Website login needs user attention",
+    }
+    description = detail or descriptions.get(
+        code, "Ego Lite could not complete the browser operation"
+    )
+    if (
+        code == "ego_navigation_failed"
+        and isinstance(navigation_error, str)
+        and re.fullmatch(r"net::ERR_[A-Z_]{1,64}", navigation_error)
+    ):
+        description += f" ({navigation_error})"
+    return BrowserWorkflowExecutionError(code, description)
+
+
+def _host_pid(server_name: str) -> int | None:
+    """Read only matching Ego app process metadata; never launch the application."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        rows = subprocess.run(
+            ["pgrep", "-f", r"/ego lite.app/Contents/MacOS/ego lite"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            **no_window_kwargs(),
+        ).stdout.splitlines()
+        for value in rows:
+            if not value.isdigit():
+                continue
+            command = subprocess.run(
+                ["ps", "-p", value, "-o", "command="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+                **no_window_kwargs(),
+            ).stdout
+            match = re.search(r"(?:^|\s)--ego-server-name=([\w.-]+)(?:\s|$)", command)
+            if (match.group(1) if match else "") == server_name:
+                return int(value)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+class EgoRequestPolicy:
+    """Exact scopes and fresh public DNS preflight, without claiming socket pinning."""
+
+    async def authorize(
+        self, plan: BrowserWorkflowPlan, request: dict[str, Any], *, interactive: bool
+    ) -> bool:
+        try:
+            url = workflow_url(str(request["url"]))
+            origin = workflow_origin(url)
+            origins = plan.allowed_origins
+            if not request.get("document"):
+                origins += plan.resource_origins
+            if interactive:
+                origins += plan.auth.login_origins
+            if origin not in origins:
+                return False
+            method = str(request.get("method", ""))
+            if method not in (
+                {"GET", "HEAD", "POST", "OPTIONS"} if interactive else {"GET", "HEAD"}
+            ):
+                return False
+            parts = urlsplit(url)
+            async with asyncio.timeout(5):
+                addresses = await _system_resolver(
+                    str(parts.hostname), parts.port or (443 if parts.scheme == "https" else 80)
+                )
+            return (
+                bool(addresses)
+                and len(addresses) <= 32
+                and all(_is_global_address(ip) for ip in addresses)
+            )
+        except (KeyError, OSError, TimeoutError, ValueError, BrowserWorkflowValidationError):
+            return False
+
+
+class EgoLiteWorkflowSession:
+    """A native Ego task space lease; no personal tabs are selected or claimed."""
+
+    def __init__(
+        self,
+        executor: EgoLiteWorkflowExecutor,
+        plan: BrowserWorkflowPlan,
+        *,
+        interactive: bool,
+        lock: asyncio.Lock,
+        observation_only: bool = False,
+    ) -> None:
+        self.executor, self.plan, self.interactive, self.lock = executor, plan, interactive, lock
+        self.observation_only = observation_only
+        self.capture_observation = False
+        self._stopped_observation: dict[str, Any] | None = None
+        self.pages_visited = 0
+        self._closed = False
+        self._serial = 0
+        self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._writer: asyncio.StreamWriter | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._guards: set[asyncio.Task[None]] = set()
+        self._process: asyncio.subprocess.Process | None = None
+        self._temporary: tempfile.TemporaryDirectory[str] | None = None
+        self._lease: Any | None = None
+        self._started = False
+        self._login_code = "login_required"
+
+    def _ensure_lease(self) -> None:
+        """Hold a cross-process shared lease before any managed host is spawned."""
+        if self._lease is not None or not self.executor.managed:
+            return
+        if not self.executor._setup.executable.is_file():
+            return
+        self._lease = self.executor._setup.acquire_session_lease()
+        self.executor._setup.register_exit_cleanup()
+
+    async def start(self, state_file: Path, state: dict[str, Any]) -> None:
+        self._ensure_lease()
+        self._temporary = tempfile.TemporaryDirectory(prefix="obc-ego-", dir="/tmp")
+        directory = Path(self._temporary.name)
+        directory.chmod(0o700)
+        current_pid = (
+            self.executor._setup._pid()
+            if self.executor.managed
+            else _host_pid(self.executor.server_name)
+        )
+        previous_pid = state.get("host_pid")
+        recovering = bool(
+            self.executor.managed
+            and current_pid
+            and isinstance(previous_pid, int)
+            and current_pid != previous_pid
+        )
+        config = {
+            "socket": str(directory / "host.sock"),
+            "ready": str(directory / "ready.json"),
+            "identity": str(directory / "identity.json"),
+            "plan": self.plan.to_dict(),
+            "interactive": self.interactive,
+            "recover_missing_task": recovering,
+            "current_owned_tasks": (
+                _current_task_owners(
+                    self.executor.profile_root,
+                    task_id=state["task_id"],
+                    host=self.executor.host_key,
+                    pid=current_pid,
+                    profile=state["profile"],
+                )
+                if recovering and current_pid is not None
+                else []
+            ),
+            **{key: state[key] for key in ("task_id", "task_name", "profile")},
+        }
+        module = Path(__file__).with_name("ego_host.mjs").as_uri()
+        config_file = directory / "config.json"
+        config_file.write_text(json.dumps(config))
+        config_file.chmod(0o600)
+        script = (
+            f"const m=await import({json.dumps(module)});"
+            f"await m.startFile({json.dumps(str(config_file))});"
+        )
+        command = [self.executor.executable]
+        if self.executor.server_name:
+            command.append(f"--ego-server-name={self.executor.server_name}")
+        command += ["nodejs", "-e", script]
+        self._process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            **no_window_kwargs(),
+        )
+        # Initialization makes several native calls, each with its own 30-second
+        # limit. Do not cut a still-budgeted call short with a second 30-second
+        # cap on their combined duration. The enclosing workflow timeout also
+        # includes managed startup, navigation and collection.
+        deadline = time.monotonic() + self.plan.budgets.timeout_seconds
+        ready_file = directory / "ready.json"
+        identity_file = directory / "identity.json"
+        identity_saved = False
+        while not ready_file.exists():
+            if not identity_saved and identity_file.exists():
+                identity = json.loads(identity_file.read_text())
+                if identity.get("task_name") != state["task_name"]:
+                    raise _error("ego_session_identity_changed")
+                state.update(task_id=identity["task_id"], host_pid=current_pid)
+                _save_session_state(state_file, state)
+                identity_saved = True
+            if self._process.returncode is not None:
+                raise _error(
+                    "ego_not_ready",
+                    "Complete Ego Lite first-run setup without importing browser data",
+                )
+            if time.monotonic() >= deadline:
+                raise _error(
+                    "ego_connection_timeout",
+                    "Ego Lite host did not establish its native connection",
+                )
+            await asyncio.sleep(0.05)
+        ready = json.loads(ready_file.read_text())
+        if ready.get("task_id") is not None:
+            state.update(task_id=ready["task_id"], host_pid=current_pid)
+            _save_session_state(state_file, state)
+        if ready.get("error"):
+            raise _error(str(ready["error"]))
+        pid = _host_pid(self.executor.server_name)
+        if pid:
+            _READY[self.executor.host_key] = (pid, str(ready.get("version", "")))
+        reader, self._writer = await asyncio.open_unix_connection(
+            config["socket"], limit=8 * 1024 * 1024
+        )
+        self._reader_task = asyncio.create_task(self._read(reader))
+        self._started = True
+        await self._open_entry()
+
+    async def _open_entry(self) -> None:
+        """Preserve denied-origin facts for a user-approved login scope update."""
+        try:
+            await self.navigate(self.plan.entry_url)
+        except Exception:
+            if not self.observation_only:
+                raise
+            diagnostics = await self.command("diagnostics")
+            blocked = diagnostics.get("blocked_navigation_origins", [])
+            if not any(origin not in self.plan.allowed_origins for origin in blocked):
+                raise
+            parts = urlsplit(self.plan.entry_url)
+            self._stopped_observation = {
+                "url": urlunsplit((parts.scheme, parts.netloc, parts.path, "", "")),
+                "title": "",
+                "elements": [],
+                **diagnostics,
+            }
+
+    async def _read(self, reader: asyncio.StreamReader) -> None:
+        try:
+            while line := await reader.readline():
+                message = json.loads(line)
+                if message.get("event") == "authorize":
+                    task = asyncio.create_task(self._authorize(message))
+                    self._guards.add(task)
+                    task.add_done_callback(self._guards.discard)
+                elif (future := self._pending.pop(message.get("id"), None)) is not None:
+                    if message.get("error"):
+                        future.set_exception(
+                            _error(
+                                str(message["error"]),
+                                navigation_error=message.get("navigation_error"),
+                            )
+                        )
+                    else:
+                        future.set_result(message.get("result"))
+        finally:
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(_error("ego_connection_closed"))
+            self._pending.clear()
+
+    async def _authorize(self, message: dict[str, Any]) -> None:
+        approved = await self.executor.policy.authorize(
+            self.plan, message, interactive=self.interactive
+        )
+        if self._writer is not None and not self._writer.is_closing():
+            self._writer.write(
+                json.dumps({"id": message["id"], "authorized": approved}).encode() + b"\n"
+            )
+            await self._writer.drain()
+
+    async def command(self, operation: str, **arguments: Any) -> Any:
+        if self._writer is None:
+            raise _error("ego_connection_closed")
+        self._serial += 1
+        serial = self._serial
+        future = asyncio.get_running_loop().create_future()
+        self._pending[serial] = future
+        self._writer.write(
+            json.dumps({"id": serial, "operation": operation, "arguments": arguments}).encode()
+            + b"\n"
+        )
+        await self._writer.drain()
+        try:
+            async with asyncio.timeout(32):
+                return await future
+        except TimeoutError as exc:
+            raise _error("ego_protocol_timeout") from exc
+        finally:
+            self._pending.pop(serial, None)
+
+    async def navigate(self, url: str) -> None:
+        await self.command("navigate", url=url)
+        self.pages_visited += 1
+
+    async def snapshot(
+        self, *, link_patterns: list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        if self._stopped_observation is not None:
+            return dict(self._stopped_observation)
+        value = (
+            await self.command("snapshot", link_patterns=link_patterns)
+            if link_patterns
+            else await self.command("snapshot")
+        )
+        return dict(value) if isinstance(value, dict) else {}
+
+    async def screenshot(self) -> bytes:
+        return base64.b64decode(await self.command("screenshot"), validate=True)
+
+    async def act(self, action: Any) -> dict[str, Any]:
+        if not self.interactive:
+            raise _error("manual_only", "Manual control requires login takeover")
+        if not isinstance(action, dict) or action.get("action") not in {"click", "fill", "key"}:
+            raise _error("invalid_action")
+        selector = action.get("selector")
+        if selector is not None and (not isinstance(selector, str) or len(selector) > 300):
+            raise _error("invalid_action")
+        if action["action"] == "fill" and (
+            not isinstance(action.get("value"), str) or len(action["value"]) > 4096
+        ):
+            raise _error("invalid_action")
+        result = await self.command(
+            str(action["action"]), **{k: v for k, v in action.items() if k != "action"}
+        )
+        if action["action"] == "fill" and result is not True:
+            raise _error("invalid_action", "The manual input selector did not match one input")
+        return await self.snapshot()
+
+    async def login_required(self) -> bool:
+        observation = await self.snapshot()
+        self._login_code = "login_required"
+        if browser_verification_required(observation):
+            self._login_code = "verification_required"
+            return True
+        if observation.get("login_wall"):
+            return True
+        auth = self.plan.auth
+        if auth.login_selector:
+            row = await self.command("query", selector=auth.login_selector)
+            if row and row["visible"]:
+                return True
+        if auth.required:
+            row = await self.command("query", selector=auth.ready_selector)
+            return not (row and row["visible"])
+        return False
+
+    async def execute(self, parameters: WorkflowParameters) -> BrowserWorkflowResult:
+        if self.interactive:
+            raise _error("manual_active")
+        for step in self.plan.steps:
+            if await self.login_required():
+                return BrowserWorkflowResult(
+                    "login_required",
+                    detail="Website login or security verification needs user attention",
+                    error_code=self._login_code,
+                    scope_complete=False,
+                )
+            action = step["action"]
+            if action == "goto":
+                await self.navigate(parameters.render(step["url"], url=True))
+            elif action == "fill_search":
+                if not await self.command("safe_search", selector=step["selector"]):
+                    raise _error("not_search_input")
+                await self.command(
+                    "fill", selector=step["selector"], value=parameters.render(step["value"])
+                )
+            elif action == "submit_search":
+                form = await self.command("form", selector=step["selector"])
+                if not isinstance(form, dict):
+                    raise _error("not_get_search")
+                parts = urlsplit(form["action"])
+                await self.navigate(
+                    urlunsplit(
+                        (
+                            parts.scheme,
+                            parts.netloc,
+                            parts.path,
+                            urlencode([*parse_qsl(parts.query), *form["fields"]]),
+                            "",
+                        )
+                    )
+                )
+            elif action == "click_link":
+                row = await self.command("query", selector=step["selector"])
+                if not row or not row["href"]:
+                    raise _error("not_link")
+                await self.navigate(str(row["href"]))
+            elif action == "wait_for":
+                async with asyncio.timeout(10):
+                    while not (
+                        (row := await self.command("query", selector=step["selector"]))
+                        and row["visible"]
+                    ):
+                        await asyncio.sleep(0.1)
+            elif action == "collect":
+                return await self._collect(step)
+        raise _error("invalid_plan")
+
+    async def _collect(self, step: dict[str, str]) -> BrowserWorkflowResult:
+        items: list[BrowserWorkflowItem] = []
+        seen: set[str] = set()
+        pages: set[str] = set()
+        evidence: dict[str, Any] = {
+            "item_selector": step["item_selector"],
+            "link_selector": step["link_selector"],
+            "samples": [],
+        }
+        captured = {"collection_evidence": evidence} if self.capture_observation else {}
+        for index in range(self.plan.budgets.max_pages):
+            if await self.login_required():
+                return BrowserWorkflowResult(
+                    "login_required",
+                    tuple(items),
+                    "Website login needs user attention",
+                    self._login_code,
+                    False,
+                    self.pages_visited,
+                )
+            data = await self.command(
+                "collect",
+                step=step,
+                limit=self.plan.budgets.max_items,
+                **({"capture_evidence": True} if self.capture_observation else {}),
+            )
+            if self.capture_observation:
+                evidence["context"] = data.get("collection_context")
+            invalid = False
+            for raw in data["items"]:
+                try:
+                    url = workflow_url(raw["url"])
+                    if (
+                        workflow_origin(url) not in self.plan.allowed_origins
+                        or not raw["title"].strip()
+                    ):
+                        invalid = True
+                        continue
+                except (BrowserWorkflowValidationError, ValueError):
+                    invalid = True
+                    continue
+                if url in seen:
+                    continue
+                seen.add(url)
+                items.append(
+                    BrowserWorkflowItem(
+                        raw["title"],
+                        url,
+                        raw["author_name"],
+                        raw["published_at"],
+                        raw["description"],
+                    )
+                )
+                if self.capture_observation and isinstance(raw.get("evidence"), dict):
+                    evidence["samples"].append({**raw["evidence"], "url": url})
+                if len(items) >= self.plan.budgets.max_items:
+                    return BrowserWorkflowResult(
+                        "ok",
+                        tuple(items),
+                        scope_complete=False,
+                        pages_visited=self.pages_visited,
+                        observation=captured,
+                    )
+            if invalid or (not data["items"] and not data["empty"]):
+                observation = await self.snapshot()
+                if data.get("href_selector_repairs"):
+                    observation["href_selector_repairs"] = data["href_selector_repairs"]
+                if data.get("item_href_selector_repair"):
+                    observation["item_href_selector_repair"] = data["item_href_selector_repair"]
+                if data.get("collection_diagnostics"):
+                    observation["collection_diagnostics"] = data["collection_diagnostics"]
+                return BrowserWorkflowResult(
+                    "degraded" if items else "failed",
+                    tuple(items),
+                    "Collection selectors need verification",
+                    "extraction_unverified",
+                    False,
+                    self.pages_visited,
+                    observation,
+                )
+            if not data["next"]:
+                return BrowserWorkflowResult(
+                    "ok" if items else "empty",
+                    tuple(items),
+                    pages_visited=self.pages_visited,
+                    observation=captured,
+                )
+            if data["next"] in pages:
+                return BrowserWorkflowResult(
+                    "degraded",
+                    tuple(items),
+                    "Pagination repeated a page",
+                    "pagination_loop",
+                    False,
+                    self.pages_visited,
+                )
+            pages.add(data["next"])
+            if index + 1 < self.plan.budgets.max_pages:
+                await self.navigate(data["next"])
+        return BrowserWorkflowResult(
+            "ok" if items else "empty",
+            tuple(items),
+            scope_complete=False,
+            pages_visited=self.pages_visited,
+            observation=captured,
+        )
+
+    async def close(self) -> None:
+        """Release the owned tab, socket and session lease even if close RPC fails."""
+        if self._closed:
+            return
+        self._closed = True
+        close_failed = False
+        had_lease = self._lease is not None
+        try:
+            if self._writer:
+                try:
+                    async with asyncio.timeout(3):
+                        await self.command("close")
+                except Exception:
+                    close_failed = True
+                    logger.warning("Ego host did not confirm removal of its owned tab")
+                finally:
+                    self._writer.close()
+            for task in self._guards:
+                task.cancel()
+            if self._reader_task:
+                self._reader_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await self._reader_task
+            if self._process and self._process.returncode is None:
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(2):
+                        await self._process.wait()
+                if self._process.returncode is None:
+                    with suppress(ProcessLookupError):
+                        self._process.terminate()
+                    with suppress(TimeoutError):
+                        async with asyncio.timeout(2):
+                            await self._process.wait()
+                    if self._process.returncode is None:
+                        with suppress(ProcessLookupError):
+                            self._process.kill()
+                        await self._process.wait()
+        finally:
+            if self._lease is not None:
+                self.executor._setup.release_session_lease(self._lease)
+                self._lease = None
+            if self._temporary:
+                self._temporary.cleanup()
+            if self.lock.locked():
+                self.lock.release()
+            if had_lease or self._started:
+                # A tab that refused to close keeps rendering even after the
+                # native host exits, so a failed close shortens the idle grace
+                # and the managed browser is stopped outright.
+                self.executor.schedule_idle_stop(grace=0.0 if close_failed else None)
+
+
+class EgoLiteWorkflowExecutor:
+    """Connect the installed Ego host using its official native command channel."""
+
+    def __init__(self, profile_root: Path) -> None:
+        self.profile_root = profile_root / "ego"
+        self._setup = EgoSetupManager(profile_root.parent)
+        managed = self._setup.connection()
+        self.executable = managed.get("executable") or (
+            os.environ.get("OPENBILICLAW_EGO_BROWSER") or shutil.which("ego-browser") or ""
+        )
+        self.server_name = managed.get(
+            "server_name", os.environ.get("OPENBILICLAW_EGO_SERVER_NAME", "")
+        )
+        self.profile = managed.get("profile", os.environ.get("OPENBILICLAW_EGO_PROFILE", "Default"))
+        self.managed = bool(managed)
+        self.host_key = f"{self.executable}:{self.server_name}"
+        self.policy = EgoRequestPolicy()
+
+    def availability(self) -> dict[str, Any]:
+        """Side-effect-free status: do not run CLI commands which can open onboarding."""
+        if self.managed:
+            return {
+                **self._setup.status(),
+                "executor": "ego",
+                "network_guarantee": "origin_and_public_dns_preflight",
+                "dns_pinned": False,
+            }
+        installed = bool(self.executable and os.path.isfile(self.executable))
+        supported = sys.platform == "darwin"
+        pid = _host_pid(self.server_name) if installed and supported else None
+        ready = _READY.get(self.host_key)
+        available = bool(pid and ready and ready[0] == pid)
+        detail = (
+            "Ego Lite native connection is ready"
+            if available
+            else (
+                "This host is not supported by the Ego Lite native adapter"
+                if not supported
+                else "Install Ego Lite and complete first-run setup"
+                if not installed
+                else "Open Ego Lite on this host"
+                if not pid
+                else "Ego Lite is installed; its native connection has not been verified"
+            )
+        )
+        return {
+            "executor": "ego",
+            "installed": installed,
+            "available": available,
+            "platform_supported": supported,
+            "connection_state": "ready" if available else "unverified" if pid else "offline",
+            "detail": detail,
+            "network_guarantee": "origin_and_public_dns_preflight",
+            "dns_pinned": False,
+        }
+
+    def schedule_idle_stop(self, *, grace: float | None = None) -> None:
+        """Reclaim a prepared or used host once no process holds a session lease."""
+        self._setup.schedule_idle_stop(grace=grace)
+
+    async def open_session(
+        self,
+        plan: BrowserWorkflowPlan,
+        *,
+        session_id: str,
+        interactive: bool = False,
+        observation_only: bool = False,
+    ) -> EgoLiteWorkflowSession:
+        """Retry a managed opening timeout, reclaiming only an idle failed host."""
+        from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
+
+        try:
+            return await self._open_session_once(
+                plan,
+                session_id=session_id,
+                interactive=interactive,
+                observation_only=observation_only,
+            )
+        except BrowserWorkflowExecutionError as exc:
+            if not self.managed or exc.code not in {
+                "ego_connection_timeout",
+                "ego_protocol_timeout",
+            }:
+                raise
+            if sys.platform == "darwin":
+                lease = self._setup.try_exclusive_session_lease()
+                if lease is not None:
+                    try:
+                        logger.info(
+                            "Restarting idle managed Ego after native initialization timeout"
+                        )
+                        await self._setup.stop()
+                    except Exception:
+                        raise exc from None
+                    finally:
+                        self._setup.release_session_lease(lease)
+            logger.info("Retrying managed Ego native initialization with the saved task identity")
+            return await self._open_session_once(
+                plan,
+                session_id=session_id,
+                interactive=interactive,
+                observation_only=observation_only,
+            )
+
+    async def _open_session_once(
+        self,
+        plan: BrowserWorkflowPlan,
+        *,
+        session_id: str,
+        interactive: bool,
+        observation_only: bool,
+    ) -> EgoLiteWorkflowSession:
+        plan = compile_browser_workflow(plan.to_dict())
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", session_id):
+            raise _error("invalid_session")
+        if self.server_name and not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", self.server_name):
+            raise _error("invalid_host")
+        if self.profile_root.is_symlink():
+            raise _error("invalid_session")
+        self.profile_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.profile_root.chmod(0o700)
+        path = self.profile_root / f"{session_id}.json"
+        if path.is_symlink():
+            raise _error("invalid_session")
+        lock = _LOCKS.setdefault(str(path.resolve()), asyncio.Lock())
+        if lock.locked():
+            raise _error("session_busy")
+        await lock.acquire()
+        session = EgoLiteWorkflowSession(
+            self, plan, interactive=interactive, lock=lock, observation_only=observation_only
+        )
+        try:
+            # Take the lease before ensure_running() so an idle reaper in another
+            # process cannot stop the host between launch and attachment.
+            session._ensure_lease()
+            if self.managed and not self._setup.status()["available"]:
+                await self._setup.ensure_running()
+            status = self.availability()
+            if (
+                not status["installed"]
+                or not status["platform_supported"]
+                or status["connection_state"] == "offline"
+                or (self.managed and not status["available"])
+            ):
+                raise _error("executor_unavailable", str(status["detail"]))
+            state = (
+                json.loads(path.read_text())
+                if path.exists()
+                else {
+                    "task_id": None,
+                    "task_name": f"OpenBiliClaw-{uuid.uuid4().hex}",
+                    "profile": self.profile,
+                    "host": self.host_key,
+                }
+            )
+            if state["host"] != self.host_key:
+                raise _error(
+                    "ego_host_changed", "This login session belongs to a different Ego host"
+                )
+            _save_session_state(path, state)
+            await session.start(path, state)
+            return session
+        except BaseException:
+            await session.close()
+            raise
+
+    async def run(
+        self,
+        plan: BrowserWorkflowPlan,
+        *,
+        session_id: str,
+        parameters: WorkflowParameters | None = None,
+        capture_observation: bool = False,
+    ) -> BrowserWorkflowResult:
+        from openbiliclaw.sources.workflow_executors import BrowserWorkflowExecutionError
+
+        session: EgoLiteWorkflowSession | None = None
+        try:
+            async with asyncio.timeout(plan.budgets.timeout_seconds):
+                session = await self.open_session(plan, session_id=session_id)
+                session.capture_observation = capture_observation
+                result = await session.execute(parameters or WorkflowParameters())
+                if capture_observation and result.status == "ok" and result.items:
+                    result = replace(
+                        result, observation={**result.observation, **await session.snapshot()}
+                    )
+                return result
+        except BrowserWorkflowExecutionError as exc:
+            return BrowserWorkflowResult(
+                "login_required" if exc.code == "login_required" else "failed",
+                detail=exc.detail,
+                error_code=exc.code,
+                scope_complete=False,
+            )
+        except TimeoutError:
+            return BrowserWorkflowResult(
+                "failed",
+                detail="Ego workflow exceeded its total time budget",
+                error_code="timeout",
+                scope_complete=False,
+            )
+        except Exception:
+            return BrowserWorkflowResult(
+                "failed",
+                detail="Ego Lite workflow failed",
+                error_code="ego_error",
+                scope_complete=False,
+            )
+        finally:
+            if session:
+                await session.close()

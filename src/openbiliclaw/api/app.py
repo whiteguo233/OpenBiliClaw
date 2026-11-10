@@ -24,6 +24,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import threading
 import time
 import unicodedata
 import uuid
@@ -201,6 +202,9 @@ from openbiliclaw.api.models import (
     WatchLaterItem,
     WatchLaterListResponse,
     WatchLaterStateResponse,
+    WebProbeIn,
+    WebProbeResponse,
+    WebSourceConfigOut,
     WeiboLoginStateIn,
     WeiboLoginStateResponse,
     WeiboSourceConfigOut,
@@ -672,7 +676,7 @@ class _QueuedConfigApply:
     restart_required: bool = False
     completion: asyncio.Future[str] | None = None
     allow_agent_live_apply: bool = False
-    allow_sponsored_live_apply: bool = False
+    allow_llm_instance_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -825,6 +829,7 @@ _SOURCE_SHARE_ORDER = (
     "v2ex",
     "weibo",
     "instagram",
+    "web",
 )
 # Unknown/unregistered platform slugs are preserved in the database for future
 # expansion, but they must not silently disappear from source-share counts.
@@ -2267,8 +2272,9 @@ def create_app(
     account_sync_service: Any | None = None,
     auto_update_service: Any | None = None,
     project_stats_service: Any | None = None,
+    prepare_ego_on_startup: bool = False,
 ) -> FastAPI:
-    """Create the local backend API app."""
+    """Create the API; deployment entry points enable owned Ego preparation."""
     from openbiliclaw.api.runtime_context import (
         _LIVE_AGENT_CONFIG_FIELDS,
         RuntimeContext,
@@ -3055,6 +3061,7 @@ def create_app(
                 in {
                     "/api/config/probe-service",
                     "/api/config/discover-models",
+                    "/api/sources/web/probe",
                 }
                 and method == "POST"
             )
@@ -3245,10 +3252,12 @@ def create_app(
     #
     # Allowed during init:
     #  - /api/init, /api/init/cancel        — init control itself
-    #  - /api/config/probe-service          — read-only draft probes for LLM,
-    #                                         embedding, and network settings;
-    #                                         the LLM path still uses the stable
-    #                                         total concurrency gate
+    #  - /api/config/probe-service,
+    #    /api/sources/web/probe             — read-only draft probes for LLM,
+    #                                         embedding/network settings, and a
+    #                                         public Web recipe respectively;
+    #                                         neither persists source state. The
+    #                                         LLM path uses the stable total gate.
     #  - /api/bilibili/cookie               — handler stages a changed cookie
     #                                         during init (applies on completion)
     #  - /api/auth/*                        — auth-gate management (login/admin)
@@ -3269,6 +3278,7 @@ def create_app(
             "/api/init",
             "/api/init/cancel",
             "/api/config/probe-service",
+            "/api/sources/web/probe",
             "/api/bilibili/cookie",
             "/api/migration/pending",
             "/api/sources/bangumi/identity",
@@ -3779,9 +3789,9 @@ def create_app(
         from openbiliclaw.i18n import get_translator
 
         tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
-        if item.allow_sponsored_live_apply and not item.restart_required:
+        if item.allow_llm_instance_live_apply and not item.restart_required:
             async with config_runtime_reload_lock:
-                if ctx.try_apply_sponsored_config(item.config):
+                if ctx.try_apply_llm_instance_config(item.config):
                     if ctx.full_worker_expected():
                         # Separate workers own startup config snapshots. Let
                         # the existing supervisor reload them after the apply
@@ -3903,9 +3913,9 @@ def create_app(
                                 config_apply_pending.allow_agent_live_apply
                                 and item.allow_agent_live_apply
                             )
-                            config_apply_pending.allow_sponsored_live_apply = (
-                                config_apply_pending.allow_sponsored_live_apply
-                                and item.allow_sponsored_live_apply
+                            config_apply_pending.allow_llm_instance_live_apply = (
+                                config_apply_pending.allow_llm_instance_live_apply
+                                and item.allow_llm_instance_live_apply
                             )
                             _set_config_apply_status(
                                 "queued",
@@ -4008,8 +4018,9 @@ def create_app(
             item.allow_agent_live_apply = (
                 item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
             )
-            item.allow_sponsored_live_apply = (
-                item.allow_sponsored_live_apply and config_apply_pending.allow_sponsored_live_apply
+            item.allow_llm_instance_live_apply = (
+                item.allow_llm_instance_live_apply
+                and config_apply_pending.allow_llm_instance_live_apply
             )
             _settle_config_completion(
                 config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
@@ -5477,10 +5488,33 @@ def create_app(
         return False
 
     def _store_chat_turn_agent_events(turn_id: str, events: list[dict[str, Any]]) -> bool:
-        """Persist the agent-loop event stream into the turn payload for replay."""
+        """Persist loop events without losing independently settled approvals."""
+        merged_events = [dict(event) for event in events]
+        result_ids = {
+            event.get("approval_id")
+            for event in merged_events
+            if event.get("type") == "approval_result"
+        }
+        current = _read_chat_turn_row(turn_id)
+        current_events = (
+            _normalize_chat_turn(current).payload.get("agent_events") if current else None
+        )
+        if isinstance(current_events, list):
+            for event in current_events:
+                if (
+                    isinstance(event, dict)
+                    and event.get("type") == "approval_result"
+                    and event.get("approval_id") not in result_ids
+                ):
+                    # Approve/reject runs outside the dialogue lease and may
+                    # settle while the model is still composing its final hop.
+                    # This synchronous read/merge/write cannot yield to another
+                    # API task; keep each already-persisted decision once.
+                    merged_events.append(dict(event))
+                    result_ids.add(event.get("approval_id"))
         store = _chat_db_method("store_chat_turn_agent_events")
         if store is not None:
-            return bool(store(turn_id, events=events))
+            return bool(store(turn_id, events=merged_events))
         row = fallback_chat_turns.get(turn_id)
         if row is None:
             return False
@@ -5488,7 +5522,7 @@ def create_app(
         if not isinstance(stored_payload, dict):
             stored_payload = {}
             row["payload"] = stored_payload
-        stored_payload["agent_events"] = [dict(event) for event in events]
+        stored_payload["agent_events"] = merged_events
         return True
 
     def _agent_turn_started(turn_id: str) -> bool:
@@ -5500,11 +5534,12 @@ def create_app(
 
     def _retry_silent_sponsored_turn(turn_id: str, exc: Exception) -> bool:
         """Persist a bounded recovery count; never replay output or tool work."""
-        from openbiliclaw.llm.sponsored_errors import SponsoredError
+        from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
-        if not isinstance(exc, SponsoredError) or _agent_turn_started(turn_id):
+        sponsored_error = find_sponsored_error(exc)
+        if sponsored_error is None or _agent_turn_started(turn_id):
             return False
-        if exc.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
+        if sponsored_error.code not in {"UNAVAILABLE", "UPSTREAM_ERROR", "RATE_LIMITED"}:
             return False
         row = _get_chat_turn_row(turn_id)
         events = (row or {}).get("payload", {}).get("agent_events", [])
@@ -5513,7 +5548,9 @@ def create_app(
         # permanently unavailable service at the head of the dialogue lane.
         if sum(event.get("type") == "sponsored_retry" for event in events) >= 2:
             return False
-        return _append_chat_turn_agent_event(turn_id, {"type": "sponsored_retry", "code": exc.code})
+        return _append_chat_turn_agent_event(
+            turn_id, {"type": "sponsored_retry", "code": sponsored_error.code}
+        )
 
     def _checkpoint_agent_event(turn_id: str, event: Any) -> None:
         # Persist the first delta boundary without storing token fragments.
@@ -9392,6 +9429,8 @@ def create_app(
                 content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
                 content_url=str(getattr(item.content, "content_url", "") or ""),
                 source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
+                source_id=str(getattr(item.content, "source_id", "") or ""),
+                source_name=str(getattr(item.content, "source_name", "") or ""),
                 published_at=str(getattr(item.content, "published_at", "") or ""),
                 published_label=str(getattr(item.content, "published_label", "") or ""),
                 content_type=str(getattr(item.content, "content_type", "") or "video"),
@@ -10451,6 +10490,8 @@ def create_app(
                     content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                     content_url=str(row.get("content_url", "") or ""),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    source_id=str(row.get("source_id", "") or ""),
+                    source_name=str(row.get("source_name", "") or ""),
                     published_at=str(row.get("published_at", "") or ""),
                     published_label=str(row.get("published_label", "") or ""),
                     content_type=str(row.get("content_type", "") or "video"),
@@ -10937,6 +10978,8 @@ def create_app(
                     cover_url=str(row.get("cover_url", "")),
                     content_url=str(row.get("content_url", "")),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    source_id=str(row.get("source_id", "") or ""),
+                    source_name=str(row.get("source_name", "") or ""),
                     content_type=str(row.get("content_type", "") or "video"),
                     added_at=str(row.get("added_at", "")),
                     sync_status=_safe_native_status(row.get("sync_status")),
@@ -11018,6 +11061,8 @@ def create_app(
                     cover_url=str(row.get("cover_url", "")),
                     content_url=str(row.get("content_url", "")),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    source_id=str(row.get("source_id", "") or ""),
+                    source_name=str(row.get("source_name", "") or ""),
                     content_type=str(row.get("content_type", "") or "video"),
                     added_at=str(row.get("added_at", "")),
                     sync_status=_safe_native_status(row.get("sync_status")),
@@ -11932,14 +11977,30 @@ def create_app(
         return JSONResponse(status_code=int(status_code), content=body)
 
     @app.get("/api/diagnostics/alerts")
-    async def diagnostics_alerts(since_id: int = 0, limit: int = 100) -> dict[str, Any]:
-        """Recent LLM / embedding anomaly alerts for the 异常报警 feed.
+    async def diagnostics_alerts(
+        since_id: int = 0, limit: int = 100, source_since_id: int = 0
+    ) -> dict[str, Any]:
+        """LLM/embedding anomalies plus persistent discovery failure/recovery events.
 
-        Backs the Web console and browser-extension settings「日志」tab.
-        Pass ``since_id`` to fetch only alerts newer than a previously seen
-        row; ``limit`` caps the page size (server max 500).
+        Backs Web/extension logs and native history. ``since_id`` filters the
+        legacy memory buffer; ``source_since_id`` filters durable source rows.
+        ``source_cursor`` advances that independent stream; limit is at most 500.
         """
-        return get_diagnostics_alert_buffer().snapshot(since_id=since_id, limit=limit)
+        from openbiliclaw.sources.source_alerts import diagnostics_snapshot
+
+        memory = get_diagnostics_alert_buffer().snapshot(since_id=since_id, limit=500)
+        try:
+            return await asyncio.to_thread(
+                diagnostics_snapshot,
+                ctx.database,
+                memory,
+                source_since_id=source_since_id,
+                limit=limit,
+            )
+        except Exception:
+            logger.warning("Source diagnostics history is unavailable", exc_info=True)
+            memory["alerts"] = memory["alerts"][: max(1, min(500, limit))]
+            return {**memory, "source_history_available": False}
 
     @app.get("/api/notifications/pending", response_model=PendingNotificationResponse)
     async def pending_notification() -> PendingNotificationResponse:
@@ -12118,6 +12179,8 @@ def create_app(
                 "cover_url": str(row.get("cover_url", "")),
                 "content_url": str(row.get("content_url", "")),
                 "source_platform": str(row.get("source_platform", "bilibili")),
+                "source_id": str(row.get("source_id", "") or ""),
+                "source_name": str(row.get("source_name", "") or ""),
                 "published_at": str(row.get("published_at", "") or ""),
                 "published_label": str(row.get("published_label", "") or ""),
                 # body_text / content_type let the desktop delight card derive a
@@ -12220,6 +12283,8 @@ def create_app(
                 "cover_url": str(row.get("cover_url", "")),
                 "content_url": str(row.get("content_url", "")),
                 "source_platform": str(row.get("source_platform", "bilibili")),
+                "source_id": str(row.get("source_id", "") or ""),
+                "source_name": str(row.get("source_name", "") or ""),
                 "published_at": str(row.get("published_at", "") or ""),
                 "published_label": str(row.get("published_label", "") or ""),
                 # body_text / content_type let the desktop delight card derive a
@@ -12697,7 +12762,9 @@ def create_app(
         (created via ``POST /api/chat/turns`` with ``streaming=True``) the
         turn is completed/failed durably and the loop's events are
         persisted into the turn payload's ``agent_events``
-        for history replay; without a ``turn_id`` the run is ephemeral. The
+        for history replay. A terminal turn replays those events without
+        running tools again, including when the durable worker won the lease
+        while this stream waited; without a ``turn_id`` the run is ephemeral. The
         legacy single-hop ``/api/chat`` and ``/api/chat/stream`` endpoints
         are unaffected.
 
@@ -12779,6 +12846,8 @@ def create_app(
                 return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
             final_reply = ""
+            retry_sponsored = False
+            failure_handled = False
             try:
                 async with _dialogue_execution_lease(
                     timeout=_AGENT_STREAM_LEASE_TIMEOUT_SECONDS
@@ -12811,57 +12880,79 @@ def create_app(
                                     },
                                 )
                             return
-                    if turn_id and _agent_turn_started(turn_id):
-                        raise TerminalChatReplyError(
-                            "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
-                            code="interrupted_agent_turn",
+                    try:
+                        if turn_id and _agent_turn_started(turn_id):
+                            raise TerminalChatReplyError(
+                                "上次回复已开始但未完成，已停止自动重跑以避免重复操作。请查看记录后重新发送。",
+                                code="interrupted_agent_turn",
+                            )
+                        agent_loop = getattr(ctx, "agent_loop", None)
+                        stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
+                        if agent_loop is None or not callable(stream_fn):
+                            raise RuntimeError("Agent chat is not configured.")
+                        if turn is not None:
+                            binding = _binding_from_turn(turn)
+                            if binding is None or binding.mode.value != "bound":
+                                await _ensure_confusion_dialogue_anchor(turn)
+                        chat_message = (
+                            _contextual_chat_message(turn) if turn is not None else message
                         )
-                    agent_loop = getattr(ctx, "agent_loop", None)
-                    stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
-                    if agent_loop is None or not callable(stream_fn):
-                        raise RuntimeError("Agent chat is not configured.")
-                    if turn is not None:
-                        binding = _binding_from_turn(turn)
-                        if binding is None or binding.mode.value != "bound":
-                            await _ensure_confusion_dialogue_anchor(turn)
-                    chat_message = _contextual_chat_message(turn) if turn is not None else message
-                    binding_kwargs = _agent_turn_binding_kwargs(turn, stream_fn)
-                    async for event in stream_fn(
-                        agent_loop,
-                        chat_message,
-                        session=turn.session if turn else (payload.session.strip() or "popup"),
-                        scope=turn.scope if turn is not None else "chat",
-                        turn_id=turn_id,
-                        session_id=effective_session_id,
-                        skill=skill_definition,
-                        tools=_skill_tool_subset(skill_definition, skill_catalog),
-                        skill_switch_guide=(
-                            skill_catalog.render_switch_guide(skill_definition.name)
-                            if skill_definition is not None
-                            else ""
-                        ),
-                        **binding_kwargs,
-                        **_agent_persona_kwargs(persona_id, stream_fn),
-                    ):
-                        data = event.to_dict()
-                        # Persist semantic events incrementally for recovery;
-                        # token deltas are live-only, replay uses final/thinking.
-                        if turn_id:
-                            _checkpoint_agent_event(turn_id, event)
-                        if event.type == "final":
-                            final_reply = event.text
-                        yield sse(event.type, data)
-                    if not final_reply.strip():
-                        from openbiliclaw.llm.service import LLMResponseContentError
+                        binding_kwargs = _agent_turn_binding_kwargs(turn, stream_fn)
+                        async for event in stream_fn(
+                            agent_loop,
+                            chat_message,
+                            session=turn.session if turn else (payload.session.strip() or "popup"),
+                            scope=turn.scope if turn is not None else "chat",
+                            turn_id=turn_id,
+                            session_id=effective_session_id,
+                            skill=skill_definition,
+                            tools=_skill_tool_subset(skill_definition, skill_catalog),
+                            skill_switch_guide=(
+                                skill_catalog.render_switch_guide(skill_definition.name)
+                                if skill_definition is not None
+                                else ""
+                            ),
+                            **binding_kwargs,
+                            **_agent_persona_kwargs(persona_id, stream_fn),
+                        ):
+                            data = event.to_dict()
+                            # Persist semantic events incrementally for recovery;
+                            # token deltas are live-only, replay uses final/thinking.
+                            if turn_id:
+                                _checkpoint_agent_event(turn_id, event)
+                            if event.type == "final":
+                                final_reply = event.text
+                            yield sse(event.type, data)
+                        if not final_reply.strip():
+                            from openbiliclaw.llm.service import LLMResponseContentError
 
-                        raise LLMResponseContentError("LLM returned an empty response")
-                    if turn is not None and turn_id:
-                        completed = _complete_chat_turn_row(turn_id, reply=final_reply)
-                        if completed:
-                            try:
-                                await _apply_durable_chat_success_side_effects(turn, final_reply)
-                            except Exception:
-                                logger.exception("Failed to apply agent chat effects: %s", turn_id)
+                            raise LLMResponseContentError("LLM returned an empty response")
+                        if turn is not None and turn_id:
+                            completed = _complete_chat_turn_row(turn_id, reply=final_reply)
+                            if completed:
+                                try:
+                                    await _apply_durable_chat_success_side_effects(
+                                        turn, final_reply
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to apply agent chat effects: %s", turn_id
+                                    )
+                    except Exception as exc:
+                        # Settle execution failure before releasing the lease,
+                        # so a queued worker cannot repeat a partially run turn.
+                        retry_sponsored = bool(
+                            turn_id and _retry_silent_sponsored_turn(turn_id, exc)
+                        )
+                        if turn_id and not retry_sponsored:
+                            error_message = (
+                                exc.safe_message
+                                if isinstance(exc, TerminalChatReplyError)
+                                else safe_llm_failure_message(exc)
+                            )
+                            _fail_chat_turn_row(turn_id, error=error_message)
+                        failure_handled = True
+                        raise
             except DialogueLeaseTimeoutError as exc:
                 # Hot reload or another reply held the lane past the admission
                 # budget. The loop never started, so keep the durable turn pending and
@@ -12871,6 +12962,8 @@ def create_app(
                     "Agent stream admission timed out: %s (%s)", turn_id or "-", exc.safe_message
                 )
                 if turn_id:
+                    # No loop ran here. In particular, do not overwrite events
+                    # from a worker that acquired the lease ahead of this stream.
                     chat_reply_scheduler.schedule(turn_id)
                 yield sse("error", {"error": exc.safe_message})
                 return
@@ -12881,7 +12974,9 @@ def create_app(
                     if isinstance(exc, TerminalChatReplyError)
                     else safe_llm_failure_message(exc)
                 )
-                if turn_id and _retry_silent_sponsored_turn(turn_id, exc):
+                if turn_id and not failure_handled:
+                    retry_sponsored = _retry_silent_sponsored_turn(turn_id, exc)
+                if retry_sponsored:
                     chat_reply_scheduler.schedule(turn_id)
                     yield sse(
                         "error",
@@ -12891,7 +12986,7 @@ def create_app(
                         },
                     )
                     return
-                if turn_id:
+                if turn_id and not failure_handled:
                     _fail_chat_turn_row(turn_id, error=error_message)
                 yield sse("error", {"error": error_message})
                 return
@@ -14477,15 +14572,14 @@ def create_app(
                 raise
             except Exception as exc:
                 from openbiliclaw.llm.service import LLMResponseContentError
-                from openbiliclaw.llm.sponsored_errors import SponsoredError
+                from openbiliclaw.llm.sponsored_errors import find_sponsored_error
 
                 if isinstance(exc, TerminalChatReplyError):
                     raise
-                if isinstance(exc, SponsoredError) and not _retry_silent_sponsored_turn(
-                    turn_id, exc
-                ):
+                sponsored_error = find_sponsored_error(exc)
+                if sponsored_error is not None and not _retry_silent_sponsored_turn(turn_id, exc):
                     raise TerminalChatReplyError(
-                        safe_llm_failure_message(exc), code=exc.code
+                        safe_llm_failure_message(exc), code=sponsored_error.code
                     ) from exc
                 if isinstance(exc, LLMResponseContentError):
                     raise TerminalChatReplyError(
@@ -16354,10 +16448,74 @@ def create_app(
 
     # ── Source recipe management endpoints ──────────────────────────
 
+    # URL probing performs bounded but real outbound HTTP.  Keep this gate
+    # app-local (rather than process-global) so tests/reloads cannot retain a
+    # stale lease, and use a non-blocking threaded semaphore so overload never
+    # creates an unbounded in-memory request queue.
+    _web_probe_admission = threading.BoundedSemaphore(value=2)
+
+    @app.post("/api/sources/web/probe", response_model=WebProbeResponse)
+    async def probe_web_source(payload: WebProbeIn) -> WebProbeResponse:
+        """Infer bounded public-Web recipes without saving source state."""
+        from openbiliclaw.sources.web_probe import probe_public_web_url
+        from openbiliclaw.sources.web_recipe import WebRecipeValidationError
+
+        if not _web_probe_admission.acquire(blocking=False):
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "web_probe_busy",
+                    "message": "Public Web URL probing is busy; retry shortly.",
+                },
+                headers={"Retry-After": "1"},
+            )
+        try:
+            runtime_config = getattr(ctx, "config", None) or config
+            web_config = getattr(getattr(runtime_config, "sources", None), "web", None)
+            try:
+                result = await probe_public_web_url(
+                    payload.url,
+                    timeout_seconds=float(getattr(web_config, "request_timeout_seconds", 15)),
+                    max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+                    max_redirects=int(getattr(web_config, "max_redirects", 5)),
+                )
+            except WebRecipeValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return WebProbeResponse.model_validate(result.to_dict())
+        finally:
+            _web_probe_admission.release()
+
+    def _public_web_source_state(raw_state: object) -> dict[str, Any]:
+        """Project backend-owned Web state into a read-only status summary."""
+        if not isinstance(raw_state, dict):
+            return {"status": "never_run"}
+        allowed = {
+            "status",
+            "last_error_code",
+            "last_attempt_at",
+            "last_success_at",
+            "last_productive_at",
+            "next_fetch_at",
+            "consecutive_failures",
+            "scope_complete",
+            "last_discovered_count",
+            "last_enqueued_count",
+        }
+        return {key: raw_state[key] for key in allowed if key in raw_state}
+
     @app.get("/api/sources")
     def list_sources() -> dict[str, Any]:
-        """Return all source recipes."""
+        """Return all source recipes with public Web runtime health."""
+        from openbiliclaw.sources.web_recipe import is_compiled_public_web_recipe
+
         recipes = ctx.database.get_all_recipes()
+        get_web_state = getattr(ctx.database, "get_web_source_state", None)
+        if callable(get_web_state):
+            for recipe in recipes:
+                if not is_compiled_public_web_recipe(recipe):
+                    continue
+                raw_state = get_web_state(str(recipe.get("id") or ""))
+                recipe["runtime"] = _public_web_source_state(raw_state)
         return {"items": recipes}
 
     @app.post("/api/sources", status_code=201)
@@ -16365,8 +16523,25 @@ def create_app(
         """Create a new source recipe."""
         import uuid
 
+        source_type = str(payload.get("source_type", "") or "").strip().lower()
+        if source_type == "web":
+            from openbiliclaw.sources.web_recipe import (
+                WebRecipeValidationError,
+                build_web_recipe,
+            )
+
+            web_payload = dict(payload)
+            web_payload.pop("source_type", None)
+            try:
+                recipe = build_web_recipe(web_payload, created_by="user")
+            except WebRecipeValidationError as exc:
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            ctx.database.save_source_recipe(recipe)
+            return {"ok": True, "recipe": recipe}
+
         recipe_id = payload.get("id") or str(uuid.uuid4())
-        source_type = payload.get("source_type", "")
         name = payload.get("name", "")
         strategy = payload.get("strategy", "")
         if not source_type or not name or not strategy:
@@ -16392,6 +16567,53 @@ def create_app(
     @app.put("/api/sources/{recipe_id}")
     def update_source(recipe_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Update fields of an existing source recipe."""
+        all_recipes = ctx.database.get_all_recipes()
+        target = next((recipe for recipe in all_recipes if recipe["id"] == recipe_id), None)
+        if target is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        if str(target.get("source_type") or "").strip().lower() == "web":
+            from openbiliclaw.sources.web_recipe import (
+                WebRecipeValidationError,
+                build_web_recipe,
+                is_compiled_public_web_recipe,
+                web_recipe_payload_from_existing,
+            )
+
+            if not is_compiled_public_web_recipe(target):
+                legacy_fields = set(payload)
+                if not legacy_fields or not legacy_fields <= {"name", "enabled"}:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "legacy web_extract only supports name/enabled updates; "
+                            "create a typed Web recipe for formal discovery"
+                        ),
+                    )
+                updated = ctx.database.update_recipe(recipe_id, **payload)
+                if not updated:
+                    from fastapi import HTTPException
+
+                    raise HTTPException(status_code=404, detail="Recipe not found")
+                return {"ok": True, "id": recipe_id}
+
+            try:
+                merged = web_recipe_payload_from_existing(target, payload)
+                recipe = build_web_recipe(
+                    merged,
+                    recipe_id=recipe_id,
+                    created_by=str(target.get("created_by") or "user"),
+                )
+            except WebRecipeValidationError as exc:
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            ctx.database.save_source_recipe(recipe)
+            return {"ok": True, "id": recipe_id, "recipe": recipe}
+
         updated = ctx.database.update_recipe(recipe_id, **payload)
         if not updated:
             from fastapi import HTTPException
@@ -18406,6 +18628,85 @@ def create_app(
             auth=auth_contract,
         )
 
+    def _web_status_item(cfg: Any, auth_ctx: Any) -> SourceStatusItem:
+        """Combine anonymous Web auth with recipe-scoped observed run health."""
+        from openbiliclaw.api.source_auth.providers import auth_web
+        from openbiliclaw.sources.web_recipe import is_compiled_public_web_recipe
+
+        enabled = bool(getattr(getattr(cfg.sources, "web", None), "enabled", True))
+        enabled_recipes: list[dict[str, Any]] = []
+        get_enabled = getattr(ctx.database, "get_enabled_recipes", None)
+        if callable(get_enabled):
+            with suppress(Exception):
+                enabled_recipes = [
+                    recipe
+                    for recipe in get_enabled(source_type="web")
+                    if is_compiled_public_web_recipe(recipe)
+                ]
+
+        counts = {"healthy": 0, "pending": 0, "partial": 0, "failed": 0, "limited": 0}
+        get_state = getattr(ctx.database, "get_web_source_state", None)
+        for recipe in enabled_recipes:
+            state: dict[str, Any] = {}
+            if callable(get_state):
+                with suppress(Exception):
+                    raw_state = get_state(str(recipe.get("id") or ""))
+                    if isinstance(raw_state, dict):
+                        state = raw_state
+            status = str(state.get("status") or "never_run").strip().lower()
+            if status in {"ok", "empty", "not_modified"} or (
+                status == "running" and bool(str(state.get("last_success_at") or "").strip())
+            ):
+                counts["healthy"] += 1
+            elif status == "rate_limited":
+                counts["limited"] += 1
+            elif status == "failed":
+                counts["failed"] += 1
+            elif status in {"degraded", "login_required"}:
+                counts["partial"] += 1
+            else:
+                # Missing state and a first in-flight run are both explicitly
+                # unverified. A lease claim is not evidence that the fetch works.
+                counts["pending"] += 1
+
+        if not enabled:
+            discovery_state = "disabled"
+            detail = "Web 公开发现全局开关未启用；已配置的 recipe 不会运行。"
+        elif not enabled_recipes:
+            discovery_state = "unverified"
+            detail = "Web 公开发现已启用，但没有启用的 recipe。"
+        else:
+            detail = (
+                f"Web 公开发现：{len(enabled_recipes)} 个启用 recipe；"
+                f"健康 {counts['healthy']}，待首次运行 {counts['pending']}，"
+                f"部分异常 {counts['partial']}，失败 {counts['failed']}，"
+                f"限流 {counts['limited']}。"
+            )
+            if counts["limited"]:
+                discovery_state = "rate_limited"
+            elif counts["failed"]:
+                discovery_state = "error"
+            elif counts["partial"] or (counts["pending"] and counts["healthy"]):
+                discovery_state = "partial"
+            elif counts["pending"]:
+                discovery_state = "unverified"
+            else:
+                discovery_state = "ready"
+
+        typed_state = cast(
+            "Literal['disabled', 'unverified', 'ready', 'partial', 'error', 'rate_limited']",
+            discovery_state,
+        )
+        return SourceStatusItem(
+            enabled=enabled,
+            state="no_auth",
+            detail=detail,
+            logged_in=True,
+            feed_paused=typed_state == "rate_limited",
+            discovery_state=typed_state,
+            auth=auth_web(auth_ctx),
+        )
+
     @app.get("/api/sources/status", response_model=SourcesStatusResponse)
     def sources_status() -> SourcesStatusResponse:
         """Unified per-source login / cookie readiness for the settings pages.
@@ -18472,6 +18773,7 @@ def create_app(
         # Do not delete this line thinking the loop covers it — it does not.
         items["bangumi"] = _bangumi_status_item(cfg, auth_ctx)
         items["github"] = _github_status_item(cfg, auth_ctx)
+        items["web"] = _web_status_item(cfg, auth_ctx)
         items["weibo"] = _weibo_status_item(cfg, auth_ctx)
         statuses = SourcesStatusResponse(**items)
         _attach_network_hints(statuses, cfg)
@@ -19071,6 +19373,12 @@ def create_app(
                 )
                 or str(getattr(srcs.v2ex, "access_token", "") or ""),
                 "V2EX 公开发现无需凭据；PAT 只用于 API 2.0 身份和增强读取，后端严格只读。",
+            ),
+            web=item(
+                "web",
+                "无需凭据",
+                "",
+                "Web 公开发现不接收 Cookie 或令牌；网络权限只来自每个 recipe 的明示 origin。",
             ),
             weibo=item(
                 "weibo",
@@ -21460,6 +21768,7 @@ def create_app(
                 name=str(getattr(instance, "name", "") or ""),
                 provider_type=str(getattr(instance, "provider_type", "") or ""),
                 enabled=bool(getattr(instance, "enabled", True)),
+                read_only=getattr(instance, "provider_type", "") == "siliconflow_free",
             )
 
         def _legacy_provider_projection(provider_type: str) -> Any:
@@ -21826,6 +22135,14 @@ def create_app(
                     bootstrap_favorites_limit=cfg.sources.v2ex.bootstrap_favorites_limit,
                     bootstrap_max_pages_per_scope=cfg.sources.v2ex.bootstrap_max_pages_per_scope,
                     **_source_date_pref_out_kwargs(cfg.sources.v2ex),
+                ),
+                web=WebSourceConfigOut(
+                    enabled=cfg.sources.web.enabled,
+                    request_timeout_seconds=cfg.sources.web.request_timeout_seconds,
+                    max_response_bytes=cfg.sources.web.max_response_bytes,
+                    max_redirects=cfg.sources.web.max_redirects,
+                    lease_seconds=cfg.sources.web.lease_seconds,
+                    **_source_date_pref_out_kwargs(cfg.sources.web),
                 ),
                 weibo=WeiboSourceConfigOut(
                     enabled=cfg.sources.weibo.enabled,
@@ -22554,6 +22871,8 @@ def create_app(
             current_routes = effective_llm_routes(cfg.llm)
             was_native = bool(getattr(cfg.llm, "instance_routing", False))
             cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 2
+            cfg.llm.instances = current_instances
             if not was_native:
                 for module_name, route in current_routes.items():
                     setattr(cfg.llm, module_name, route)
@@ -22643,7 +22962,25 @@ def create_app(
                         # supported. New clients send this field; old clients
                         # must retain the historical omit-on-wire behavior.
                         target.reasoning_effort = ""
+                    if existing is not None and existing.provider_type == "siliconflow_free":
+                        if target != existing:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="内置免费实例不可修改，请在调用链中选择需要的模型实例。",
+                            )
+                    elif target.provider_type == "siliconflow_free":
+                        raise HTTPException(
+                            status_code=400,
+                            detail="请使用已有的两个内置免费实例，无需新建或复制。",
+                        )
                     replacement[instance_id] = target
+                # A whole-library replacement from an older client cannot delete
+                # built-ins. Removing them from chains is the supported opt-out.
+                replacement.update(
+                    (key, instance)
+                    for key, instance in current_instances.items()
+                    if instance.provider_type == "siliconflow_free"
+                )
                 cfg.llm.instances = replacement
             if "default_chain" in llm_data:
                 raw_chain = llm_data["default_chain"]
@@ -22849,6 +23186,14 @@ def create_app(
         if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
             emb = llm_data["embedding"]
             if "provider" in emb:
+                if str(emb["provider"]) != cfg.llm.embedding.provider:
+                    # Credentials never follow a provider switch to a new endpoint.
+                    cfg.llm.embedding.api_key = ""
+                    cfg.llm.embedding.base_url = ""
+                    if emb["provider"] == "siliconflow_free":
+                        cfg.llm.embedding.model = "BAAI/bge-m3"
+                        cfg.llm.embedding.output_dimensionality = 1024
+                        cfg.llm.embedding.multimodal_enabled = False
                 cfg.llm.embedding.provider = str(emb["provider"])
             if "model" in emb:
                 new_model = str(emb["model"])
@@ -22883,6 +23228,21 @@ def create_app(
                 cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             if "multimodal_enabled" in emb:
                 cfg.llm.embedding.multimodal_enabled = _as_bool(emb["multimodal_enabled"])
+        if cfg.llm.embedding.provider == "siliconflow_free":
+            emb_cfg = cfg.llm.embedding
+            if (
+                emb_cfg.model != "BAAI/bge-m3"
+                or emb_cfg.api_key
+                or emb_cfg.base_url
+                or emb_cfg.output_dimensionality != 1024
+                or emb_cfg.multimodal_enabled
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "免费 Embedding 仅支持 BAAI/bge-m3、1024 维文本向量，无需填写 Key 或地址。"
+                    ),
+                )
         # The shared form submits this explicit choice on all four surfaces.
         # Preserve an existing Ollama model/private port; never reuse cloud credentials.
         sponsored_update = llm_data.get("sponsored", {})
@@ -22919,6 +23279,20 @@ def create_app(
                     )
                     if instance is None:
                         continue
+                    if provider_type == "siliconflow_free" and model:
+                        selected = next(
+                            (
+                                (key, item)
+                                for key, item in cfg.llm.instances.items()
+                                if item.provider_type == "siliconflow_free" and item.model == model
+                            ),
+                            None,
+                        )
+                        if selected is None:
+                            raise HTTPException(
+                                status_code=400, detail="请选择已有的内置模型实例。"
+                            )
+                        instance_id, instance = selected
                     if model and str(getattr(instance, "model", "") or "").strip() != model:
                         derived_id = f"legacy-{module_name}"
                         instance = LLMInstanceConfig(
@@ -23016,6 +23390,17 @@ def create_app(
         effort_source: Literal["local_advisory", "not_available"] = (
             "local_advisory" if efforts else "not_available"
         )
+        if provider == "siliconflow_free":
+            from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
+
+            return ConfigModelDiscoveryResponse(
+                ok=True,
+                instance_id=target_instance_id,
+                provider=provider,
+                models=list(CHAT_MODELS),
+                message="内置免费模型目录，按实例选择。",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
         if provider not in {
             "openai",
             "deepseek",
@@ -23153,7 +23538,11 @@ def create_app(
         provider = ""
         model = ""
         try:
-            registry = build_llm_registry(cfg)
+            registry = (
+                build_llm_registry(cfg, fallback_order=[target_instance])
+                if is_instance and target_instance
+                else build_llm_registry(cfg)
+            )
             if not is_chain and not is_instance and not is_fallback and not target_instance:
                 target_instance = str(getattr(registry, "default_provider", "") or "")
             if is_instance and not target_instance:
@@ -23269,6 +23658,7 @@ def create_app(
     async def _probe_embedding_config(cfg: Any) -> ConfigServiceProbeResponse:
         from openbiliclaw.llm.base import LLMRegistry
         from openbiliclaw.llm.registry import build_embedding_service
+        from openbiliclaw.sponsored_runtime_state import SPONSORED_EMBEDDING_TIMEOUT_SECONDS
 
         started = time.perf_counter()
         emb_cfg = getattr(getattr(cfg, "llm", None), "embedding", None)
@@ -23277,6 +23667,10 @@ def create_app(
         timeout_s = (
             _LOCAL_EMBEDDING_CONFIG_PROBE_TIMEOUT_SECONDS
             if provider == "ollama"
+            # User-triggered free probes must cover the same bounded local RPM
+            # wait as business embeddings. Keep background health polls short.
+            else SPONSORED_EMBEDDING_TIMEOUT_SECONDS
+            if provider == "siliconflow_free"
             else _EMBEDDING_PROBE_TIMEOUT_SECONDS
         )
         if not provider:
@@ -23402,7 +23796,7 @@ def create_app(
     async def probe_config_service(
         request: Request, payload: ConfigServiceProbeIn
     ) -> ConfigServiceProbeResponse | JSONResponse:
-        """Probe submitted LLM / embedding / proxy settings without saving config.toml."""
+        """Probe submitted service settings without saving config.toml."""
         denied = _config_write_gate(request)
         if denied is not None:
             return denied
@@ -23441,6 +23835,10 @@ def create_app(
             return await _probe_network_proxy(mode, proxy)
 
         cfg = deepcopy(load_config())
+        if payload.kind == "jev":
+            from openbiliclaw.api.jev_probe import probe_jev_config
+
+            return await probe_jev_config(cfg, update)
         llm_data = update.get("llm")
         if isinstance(llm_data, dict):
             _apply_llm_update(cfg, llm_data)
@@ -24919,6 +25317,52 @@ def create_app(
                     except ValueError as exc:
                         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+                web_data = sources_data.get("web")
+                if isinstance(web_data, dict):
+                    allowed_web_fields = {
+                        "recommendation_date_preset",
+                        "recommendation_date_start",
+                        "recommendation_date_end",
+                        "recommendation_date_weight",
+                        "enabled",
+                        "request_timeout_seconds",
+                        "max_response_bytes",
+                        "max_redirects",
+                        "lease_seconds",
+                    }
+                    unknown_web_fields = sorted(set(web_data) - allowed_web_fields)
+                    if unknown_web_fields:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=("Web 包含不支持的配置字段: " + ", ".join(unknown_web_fields)),
+                        )
+                    if "enabled" in web_data:
+                        cfg.sources.web.enabled = _as_bool(web_data["enabled"])
+                    web_integer_limits = {
+                        "request_timeout_seconds": (1, 60),
+                        "max_response_bytes": (65_536, 5_000_000),
+                        "max_redirects": (0, 10),
+                        "lease_seconds": (30, 3600),
+                    }
+                    for key, (minimum, maximum) in web_integer_limits.items():
+                        if key not in web_data:
+                            continue
+                        raw_value = web_data[key]
+                        if isinstance(raw_value, bool):
+                            raise HTTPException(status_code=400, detail=f"Web {key} 必须是整数")
+                        try:
+                            value = int(raw_value)
+                        except (TypeError, ValueError) as exc:
+                            raise HTTPException(
+                                status_code=400, detail=f"Web {key} 必须是整数"
+                            ) from exc
+                        if value < minimum or value > maximum:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Web {key} 必须在 {minimum}..{maximum} 之间",
+                            )
+                        setattr(cfg.sources.web, key, value)
+
                 weibo_data = sources_data.get("weibo")
                 if isinstance(weibo_data, dict):
                     if "enabled" in weibo_data:
@@ -25060,6 +25504,7 @@ def create_app(
                 "linuxdo": cfg.sources.linuxdo,
                 "v2ex": cfg.sources.v2ex,
                 "weibo": cfg.sources.weibo,
+                "web": cfg.sources.web,
             }
             for slug, source_cfg in source_config_by_slug.items():
                 source_data = sources_data.get(slug)
@@ -25632,8 +26077,11 @@ def create_app(
                 saved_path=saved_path,
                 run_post_reload_llm_work=not suppress_background_llm_work,
                 restart_required=restart_required,
-                allow_sponsored_live_apply=(
-                    not pending_credential_writes and "tailnet" not in update
+                allow_llm_instance_live_apply=(
+                    # Both settings UIs echo Tailnet even when it is unchanged.
+                    # Actual settings/credential changes still require restart;
+                    # mere presence must not turn a chain switch into a drain.
+                    not pending_credential_writes and not tailnet_restart_required
                 ),
             )
 
@@ -25689,6 +26137,7 @@ def create_app(
         """Suggest pool source shares from observed platform event counts."""
         from openbiliclaw.config import load_config
         from openbiliclaw.runtime.source_policy import (
+            enabled_source_recipe_available,
             source_enabled_map,
             suggest_pool_source_shares,
         )
@@ -25697,7 +26146,13 @@ def create_app(
         event_counts = _count_events_by_source_platform(ctx.database)
         enabled_sources = _normalize_enabled_sources_override(
             payload.enabled_sources if payload else None,
-            source_enabled_map(cfg),
+            source_enabled_map(
+                cfg,
+                database=ctx.database,
+                enabled_recipe_available=lambda source: enabled_source_recipe_available(
+                    ctx.database, source
+                ),
+            ),
         )
         suggested_shares = suggest_pool_source_shares(
             event_counts,
@@ -25749,6 +26204,22 @@ def create_app(
 
     # ── Mobile Web UI ───────────────────────────────────────────
     from pathlib import Path as _Path
+
+    from openbiliclaw.api.custom_sources import create_custom_sources_router
+    from openbiliclaw.sources.workflow_service import WorkflowService
+
+    app.include_router(
+        create_custom_sources_router(
+            lambda: WorkflowService(
+                ctx.database,
+                config=getattr(ctx, "config", None),
+                llm_service=getattr(ctx, "llm_service", None),
+            ),
+            prepare_ego_on_startup=prepare_ego_on_startup,
+            event_publisher=getattr(ctx.event_hub, "publish", None),
+            database_factory=lambda: ctx.database,
+        )
+    )
 
     from fastapi.staticfiles import StaticFiles as _StaticFiles
 

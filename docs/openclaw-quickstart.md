@@ -200,6 +200,19 @@ direct adapter 构造推荐引擎时会把 `[scheduler].copy_ready_target_count`
 `0..pool_target_count`，并同时注入公开 `pool_target_count`，与 API/普通 CLI 使用同一
 eligible topic-first 双缺口文案调度；配置为 `0` 时明确保留 legacy drain-all，便于紧急回滚。
 
+### 已保存 Web 来源的独立发现
+
+OpenClaw standalone bootstrap 与 API daemon 注册相同的 `WebSourceAdapter` 和
+`WebDiscoveryProducer`。用户在「聊一聊」批准创建、或在来源设置页显式保存的公开
+feed / sitemap / listing recipe，可由独立宿主的后续补池链路处理；匿名 HTTP、robots、
+exact-origin、DNS/socket pin、lease 与 seen/checkpoint 边界保持一致。
+
+每次短请求按数据库中当前启用的有效 recipe 动态计算 Web 配额：新增后可参与补池，
+停用最后一个 recipe 后立即移出有效配额。没有 daemon owner 的 direct composition
+在请求内执行有界候选评估，再同步补齐有界 durable copy；未完成的候选或文案保留给
+后续请求，不把“订阅已保存”当作“已有可推荐内容”。OpenClaw bridge 的 `chat` 不提供
+本轮新增的 Agent probe / 审批卡 authoring；新增入口仍是图形端「聊一聊」或来源设置页。
+
 已支持的命令：
 
 - `capabilities` — 返回协议版本、兼容宿主和完整能力清单

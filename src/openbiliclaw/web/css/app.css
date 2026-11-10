@@ -407,6 +407,7 @@ body.chat-view-active .back-to-top {
 
 .card-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-top: 8px;
@@ -440,6 +441,9 @@ body.chat-view-active .back-to-top {
   font-weight: 700;
   background: var(--sky-soft);
   color: var(--sky);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .card-source[data-source="bilibili"] { background: var(--brand-soft); color: var(--brand); }
@@ -1851,6 +1855,7 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
   bottom: 0;
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 4px 10px;
   padding-bottom: max(10px, var(--safe-bottom));
@@ -1861,6 +1866,16 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
     linear-gradient(180deg, rgba(242, 248, 255, 0), var(--bg-sky) 18px),
     var(--bg-sky);
 }
+
+.chat-source-guide { flex: 0 0 100%; min-width: 0; color: var(--text-secondary); font-size: 14px; }
+.chat-source-guide summary { min-height: 44px; padding: 12px; border-radius: 12px; color: var(--text-main); font-weight: 650; cursor: pointer; }
+.chat-source-guide summary:hover, .chat-source-guide[open] summary { background: var(--brand-soft); }
+.chat-source-guide summary::marker { color: var(--brand-strong); }
+.chat-source-guide summary:focus-visible, .chat-source-guide-body:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.chat-source-guide-body { max-height: min(240px, 30dvh); padding: 0 12px; overflow-y: auto; overflow-wrap: anywhere; border-radius: 12px; line-height: 1.65; }
+.chat-source-guide-body p { margin: 12px 0; }
+.chat-source-guide-example { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.chat-source-guide-example strong { display: block; margin-bottom: 4px; color: var(--text-main); }
 
 .chat-input {
   flex: 1;
@@ -2714,7 +2729,7 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
 .saved-card-cover-empty { display: flex; align-items: center; justify-content: center; font-size: 20px; color: var(--text-muted); }
 .saved-card-body { flex: 1; min-width: 0; }
 .saved-card-title { font-size: 13px; line-height: 1.35; max-height: 2.7em; overflow: hidden; }
-.saved-card-up { margin-top: 3px; font-size: 11px; color: var(--text-muted); }
+.saved-card-up { margin-top: 3px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .saved-card-actions { display: flex; flex-direction: column; flex-shrink: 0; gap: 8px; }
 .saved-card-sync, .saved-card-remove { min-width: 44px; min-height: 44px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
 .saved-card-sync { min-inline-size: 68px; color: var(--brand); font-size: 12px; }
@@ -2737,17 +2752,23 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
 .saved-empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.6; }
 .saved-empty-text { font-size: 13px; line-height: 1.6; }
 
-.mobile-settings-overlay { position: fixed; inset: 0; z-index: 100; overflow-y: auto; background: var(--bg); padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
-.mobile-settings-card { max-width: 560px; margin: 0 auto; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.mobile-settings-overlay { position: fixed; inset: 0; z-index: 100; overflow-y: auto; background: var(--bg-base); padding: 20px 16px calc(24px + env(safe-area-inset-bottom)); }
+.mobile-settings-card { max-width: 560px; margin: 0 auto; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-strong); }
 .mobile-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .mobile-settings-close, .mobile-settings-save, .mobile-settings-retry { min-width: 44px; min-height: 44px; border: 0; border-radius: 10px; cursor: pointer; }
 .mobile-settings-retry[hidden] { display: none; }
 .mobile-settings-field { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; }
 .mobile-settings-field input { width: 44px; height: 44px; accent-color: var(--brand); }
-#mobile-eval-scorer { width: 100%; min-height: 44px; margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); color: var(--text); font: inherit; }
-#mobile-eval-scorer:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.mobile-settings-provider { grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 12px; }
+#mobile-eval-scorer, .mobile-settings-provider select { width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); color: var(--text); font: inherit; }
+#mobile-eval-scorer:focus-visible, .mobile-settings-provider select:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .mobile-settings-hint, .mobile-settings-status { margin-top: 10px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
 .mobile-settings-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
+.mobile-source-settings { min-width: 0; padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+.mobile-source-settings h3, .mobile-sync-settings h3 { margin: 0 0 12px; color: var(--text-main); font-size: 16px; }
+.mobile-source-settings > .mobile-settings-hint { margin-bottom: 16px; color: var(--text-secondary); }
+#mobile-custom-sources { min-width: 0; overflow-wrap: anywhere; }
+#mobile-custom-sources button, #mobile-custom-sources input, #mobile-custom-sources select { min-height: 44px; }
 
 /* ── Save chips on the cover (稍后再看 ☆ / 收藏 ♥) ─────────────────
    Overlay the cover top-right so the bottom action bar stays light. */

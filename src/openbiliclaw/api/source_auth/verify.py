@@ -90,6 +90,7 @@ VERIFY_ACTIONS: dict[str, VerifyAction] = {
     "github": "live_probe",
     "linuxdo": "browser_heartbeat",
     "v2ex": "live_probe",
+    "web": "none",
     "weibo": "browser_heartbeat",
     "instagram": "browser_heartbeat",
 }

@@ -1,13 +1,28 @@
 # 📖 OpenBiliClaw 文档导航
 
-- [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md)：三端可切换的文本、受控分类模式；不隐式回退 LLM，真实中文质量未认证。
+- [动态来源主线合并验证（2026-11-08）](testing/2026-11-08-dynamic-sources-main-merge.md)：后端／App 合并兼容修复、回归与工作区保护。
+
+- [免费 Provider 合并验收（2026-11-07—08）](testing/2026-11-07-unified-providers-merge.md)：main 集成检查、Embedding 现有边界与安装包发布状态。
+
+- [固定免费 Provider 实例验收（2026-11-07）](testing/2026-11-07-fixed-providers.md)：两 LLM 固定实例、独立 BGE-M3、只读保护与原有调用链切换。
+
+Provider 统一验证：[2026-11-06 实例、Embedding 与 Rust 接入](testing/2026-11-06-unified-providers.md)。
+
+- [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md) / [早期三端复验](verification/2026-11-06-jev-all-surfaces-real-e2e.md) / [时效修复及当前三端真请求复验](verification/2026-11-07-jev-temporal-joint-evidence.md)：三端可配置并显式测试的文本、受控分类模式；当前代码默认预算下 11 次真请求通过，不隐式回退 LLM，有限样本通过不代表真实中文质量认证。
 
 > 本页面是项目文档的一站式入口。用户看第一区块就够了；第二区块起面向开发者和贡献者。
 
 ## 👤 我是用户
 
+- [原生动态来源与异常记录真实验收](testing/2026-11-07-real-native-source-e2e.md) — 全新 Ego 安装、冷启动竞争修复、真实网络故障与原生端到端复验
+- [来源持续故障与异常事件流](testing/2026-11-06-source-failure-alerts.md) — 提醒阈值、来源设置、原生异常记录、跨进程历史与恢复验证
+
+- [V2EX 验证与重复采集修复验收](testing/2026-11-06-verification-recovery.md) — 真实 Ego 验证恢复、原生聊天建源与重复列表选择器；哔哩轻小说直连阻断继续单独记录
+- [多站 Discovery 阻断修复验收](testing/2026-11-06-remaining-sites-fixes.md) — 上轮 BBC、Planet Python 真实接入与原生网站验证接管记录
+
+
 - [手机扫码连接](mobile-connection.md) — Web / 插件生成局域网、Tailscale、公网二维码，原生 App 扫码导入后端；[真实环境复测](verification/2026-11-05-mobile-qr-full-e2e.md)。
-- [v0.3.234 发布记录](testing/2026-10-30-release-v0.3.234.md) — 画像时间溯源、「用工具≠口味」、Codex 订阅修复与存量画像修复命令；扩展源码无变更，商店已提审同版本 `0.3.234` 复审。
+- [v0.3.235 发布记录](testing/2026-11-08-release-v0.3.235.md) — 固定免费 Provider、网站／RSS 来源与发布验证；安装包和商店状态以记录为准。
 - [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md) — 抖音发现与后台静音、首屏体验、搜索灵感修复；仓库产物和浏览器商店状态分别记录。
 - [技术合作伙伴](partners.md) — 硅基流动（SiliconFlow）为项目提供免费模型额度，「Powered by SiliconFlow」同时出现在 GitHub 项目首页、文档站与 README
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
@@ -16,7 +31,7 @@
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [Gitee v0.3.234 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.234) — 源码已同步至最新主线。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.234)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
+- [Gitee v0.3.235 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.235) — 源码已同步至最新主线。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
@@ -44,6 +59,16 @@
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
 - [Instagram 来源文档](modules/instagram.md) / [验收台账](platform-source-acceptance.instagram.md) — 可选登录发现、init-only 点赞 / 收藏 / 关注、手动恢复与封面安全边界；最新真实结果和未完成的账号/许可门禁分开记录
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
+- [动态网站与兼容 Web 来源文档](modules/web.md) / [浏览器流程](modules/browser-workflows.md) — 独立来源份额、同站多版本 workflow、HTTP Feed / 原生 Ego Lite、人工登录接管、普通候选评估与三端管理；旧 recipe 与 Playwright 流程保留兼容
+- [12 站真实 Discovery 验收](testing/2026-11-06-multisite-real-e2e.md) — 原生 App 聊天建源、RSS／Atom／JSON Feed、多轮采集、真实评估；Ego 安装文案、后台资源与卡片字段修复，以及未通过站点的边界
+- [动态网站来源验收](platform-source-acceptance.dynamic-web.md) / [Ego Lite 本轮验收](testing/2026-10-22-ego-lite-discovery-e2e.md) — macOS 真实聊天建源、定时采集与 9 条入池，托管首次设置和按需启动；[部署自动准备](testing/2026-10-23-ego-deployment-preparation.md)与其他环境边界单列
+- [Ego 自动部署与真实聊天复验](testing/2026-10-23-ego-live-deployment-e2e.md) — 官方联网下载、首次设置失败恢复、真实聊天审批、10 条发现 / 8 条入池及自然去重；Feed、设置与安装边界分列
+- [Ego 安装恢复与采集上限修复](testing/2026-10-23-ego-reliability-fixes.md) — 同次安装有界恢复、聊天原话预算及 RSS / Ego 真实复验
+- [Ego 真实页面建源复验](testing/2026-10-23-ego-real-ui-e2e.md) — 聊天输入、审批、正式 Discovery、模型入池与比例管理；列表刷新保护修复，原生连接瞬态失败及自动恢复如实记录
+- [手机来源返回与聊天建源真实验收](testing/2026-10-24-mobile-source-live-e2e.md) — Ego 手机页面真实接管、试采、聊天审批和推荐展示；独立列明 Flutter 原生端与完整周期未验收
+- [NGA Ego 聊天建源验收](testing/2026-10-23-nga-ego-e2e.md) — 访客自动跳转、列表结构观察及真实聊天建源；明确区分技术试采成功与语义筛选达标
+- [动态网站完整服务复验](testing/2026-10-03-dynamic-source-live-e2e.md) — 真实聊天审批、连续定时发现、模型评估、重启与停用，以及桌面/移动/插件来源归属
+- [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求
 - [聊天真实请求复验（9月28日）](testing/2026-09-28-chat-real-request-recheck.md) — 19 次真实模型请求、三端 UI、延迟样本与仍存在的限制
 - [聊天完整复查（9月30日）](testing/2026-09-30-chat-comprehensive-e2e.md) — 最新 main 合并验收、三端草稿修复、审批冲突/任务恢复、真实限流与功能流程优化优先级
@@ -74,13 +99,15 @@
 | LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十四来源 planner 与 GitHub repository 查询约束已记录 |
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
 | 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository 与 Instagram（正式可用、默认关闭），验收见专用 ledger |
+| 动态网站 / Web 接入 | [modules/web.md](modules/web.md) | `sources/custom_sources.py` + `workflow_store.py` + `workflow_service.py` + `workflow_executors.py` + `runtime/custom_workflow_producer.py`；旧 `web_*` recipe 保留 | 独立 `source_id` 份额、多版本 workflow、HTTP Feed / 原生 Ego、人工登录接管与三端管理；macOS 部署自动准备，真实验收见专用 ledger |
+| 浏览器发现工作流 | [modules/browser-workflows.md](modules/browser-workflows.md) | `sources/browser_workflow.py` + `ego_executor.py` + `ego_setup.py` | 声明式计划、原生 Ego 网页、HTTP Feed、macOS 托管准备与按需启动；旧 Playwright 流程兼容保留 |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
 | GitHub 接入 | [modules/github.md](modules/github.md) | `src/openbiliclaw/sources/github*.py` + `runtime/github_producer.py` | 🧪 官方匿名/可选 PAT API + public starred init + repository search/ranked/latest 已接线；真实门禁以 [acceptance ledger](platform-source-acceptance.github.md) 为准 |
 | Linux.do 接入 | [modules/linuxdo.md](modules/linuxdo.md) | `src/openbiliclaw/sources/linuxdo_tasks.py` + `runtime/linuxdo_producer.py` + `extension/src/**/linuxdo*` | ✅ 只读实现、fixture、双浏览器构建与真实已登录 Chrome E2E 已完成 |
 | V2EX 接入 | [modules/v2ex.md](modules/v2ex.md) | `src/openbiliclaw/sources/v2ex*.py` + `runtime/v2ex_producer.py` + 扩展任务桥 | ✅ 匿名 API/Feed + 可选 PAT + 四个只读 bootstrap scope + Topic 回复聚合 |
 | 微博接入 | [modules/weibo.md](modules/weibo.md) | `src/openbiliclaw/sources/weibo*.py` + `runtime/weibo_producer.py` + `extension/src/**/weibo*` | ✅ 匿名公开 search/hot/creator discovery + 登录态 init-only 收藏 / 关注 / mentions 任务桥；后端不接收 Cookie |
 | Instagram 接入 | [modules/instagram.md](modules/instagram.md) | `src/openbiliclaw/sources/instagram*.py` + `runtime/instagram_producer.py` + `extension/src/**/instagram*` | 🧪 可选登录 topic/creator + 登录态 init-only liked/saved/following；默认关闭，生产需另行确认 Meta 授权 |
-| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十四来源契约正交化 + `verify_method` 证据强度 + 一键验证；Instagram 为逐能力 readiness，GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
+| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十五来源族契约正交化 + `verify_method` 证据强度 + 一键验证；Instagram 为逐能力 readiness，GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
 | YouTube 接入 | [modules/youtube.md](modules/youtube.md) | `src/openbiliclaw/youtube/` + `src/openbiliclaw/sources/yt_tasks.py` | ✅ init / fetch smoke / Google Takeout 导入 |
 | TikTok 接入（正式可用） | [modules/tiktok.md](modules/tiktok.md) | `src/openbiliclaw/sources/tiktok.py` + `sources/tiktok_web.py` + `sources/tiktok_sign.py` + `src/openbiliclaw/discovery/strategies/tiktok.py` + `runtime/tiktok_producer.py` | ✅ Web API 访客身份（签名 + curl_cffi）feed / hashtag / creator discovery，yt-dlp 兜底（issue #88）；可选登录 Cookie（扩展同步）解锁关键词搜索 |
 | 知乎接入 | [modules/zhihu.md](modules/zhihu.md) | `src/openbiliclaw/sources/zhihu_tasks.py` + `runtime/zhihu_producer.py` + `extension/src/**/zhihu*` | ✅ 登录态任务桥、五路 discovery、账号信号与原生保存确认 |
@@ -126,6 +153,8 @@ TikTok 已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。公开
 - [v0.3.229 发布与商店审核记录](testing/2026-10-16-release-0.3.229.md) — TikTok 新来源、远程访问安全收紧、B 站登录失效横幅死锁修复与各渠道回执。
 - [v0.3.228 发布与商店审核记录](testing/2026-10-13-release-0.3.228.md) — 画像门控降本、安装包信任修复与各渠道回执。
 - [v0.3.227 发布与商店审核记录](testing/2026-10-06-release-0.3.227.md) — macOS 签名公证、Instagram 实验性来源与各渠道回执。
+
+- [2026-11-08 动态来源真实环境复验](testing/2026-11-08-real-dynamic-sources-e2e.md)：Ego 后台、原生 App／PC 聊天、RSS、异常提醒及真实评估。
 
 
 - [Sponsored 全项目 SDK](plans/2026-10-27-sponsored-all-tasks.md) · [验收](testing/2026-10-27-sponsored-all-tasks.md)

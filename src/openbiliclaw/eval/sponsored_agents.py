@@ -6,15 +6,51 @@ import fnmatch
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.llm.sponsored_router import sponsored_enabled, try_sponsored_completion
 
+if TYPE_CHECKING:
+    from openbiliclaw.llm.base import LLMResponse
+
+
+def _evaluation_config() -> Any:
+    """Read the same explicit evaluation route used by the application."""
+    # Standalone legacy harnesses may explicitly inject a transport. Loading a
+    # project config here would overwrite that injection as a side effect.
+    # Normal application loads migrate the retired switch to enabled=False.
+    if sponsored_enabled():
+        return None
+    from openbiliclaw.config import (
+        effective_llm_default_chain,
+        effective_llm_instances,
+        effective_llm_routes,
+        load_config,
+    )
+
+    cfg = load_config()
+    route = effective_llm_routes(cfg.llm)["evaluation"]
+    chain = effective_llm_default_chain(cfg.llm) if route.inherit else route.chain
+    instances = effective_llm_instances(cfg.llm)
+    if any(
+        item in instances
+        and instances[item].enabled
+        and instances[item].provider_type == "siliconflow_free"
+        for item in chain
+    ):
+        return cfg
+    return None
+
+
+def evaluation_uses_sponsored() -> bool:
+    """Whether the evaluation chain selects a free instance (legacy harness supported)."""
+    return _evaluation_config() is not None or sponsored_enabled()
+
 
 def agent_options(**kwargs: Any) -> Any:
     """Avoid requiring the Claude SDK for a sponsor-only evaluation install."""
-    if sponsored_enabled():
+    if evaluation_uses_sponsored():
         return SimpleNamespace(**kwargs)
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -61,7 +97,18 @@ def _read_tool(name: str, arguments: dict[str, Any], root: Path) -> str:
 
 async def sponsored_agent_text(prompt: str, options: Any) -> tuple[str, str] | None:
     """Keep model calls in the SDK; execute only the harness's existing read tools locally."""
-    if not sponsored_enabled():
+    cfg = _evaluation_config()
+    service = None
+    if cfg is not None:
+        from openbiliclaw.llm.registry import build_llm_registry
+        from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+
+        service = LLMService(
+            registry=build_llm_registry(cfg),
+            memory=cast("Any", None),
+            module_overrides=module_overrides_from_config(cfg),
+        )
+    elif not sponsored_enabled():
         return None
     tools = getattr(options, "allowed_tools", None) or []
     if set(tools) - {"Read", "Grep", "Glob"}:
@@ -78,14 +125,28 @@ async def sponsored_agent_text(prompt: str, options: Any) -> tuple[str, str] | N
     messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
     all_text = []
     root = Path(getattr(options, "cwd", ".") or ".").resolve()
+    response: LLMResponse | None
     for _ in range(max(1, min(10, int(getattr(options, "max_turns", 1) or 1)))):
-        response = await try_sponsored_completion(
-            messages,
-            caller="eval.agent.tools" if tools else "eval.agent",
-            temperature=0.7,
-            max_tokens=16384,
-            json_mode=bool(getattr(options, "output_format", None)) and not tools,
-        )
+        caller = "eval.agent.tools" if tools else "eval.agent"
+        if service is not None:
+            response = await service.complete_with_core_memory(
+                system_instruction=system,
+                user_input=messages[-1]["content"],
+                history=messages[1:-1],
+                caller=caller,
+                temperature=0.7,
+                max_tokens=16384,
+                json_mode=bool(getattr(options, "output_format", None)) and not tools,
+                inject_core_memory=False,
+            )
+        else:
+            response = await try_sponsored_completion(
+                messages,
+                caller=caller,
+                temperature=0.7,
+                max_tokens=16384,
+                json_mode=bool(getattr(options, "output_format", None)) and not tools,
+            )
         if response is None:
             return None
         text = response.content

@@ -73,6 +73,11 @@ class SponsoredRateLimitedError(SponsoredError):
 
     code = "RATE_LIMITED"
 
+    @property
+    def is_local(self) -> bool:
+        """Only Rust's pre-upstream sliding-window rejection is safe to wait for."""
+        return str(self) == "local rate limit reached"
+
 
 class SponsoredAuthError(SponsoredError):
     """Sponsored key invalid, deleted, or account locked."""
@@ -146,6 +151,18 @@ def error_from_payload(payload: Mapping[str, Any], *, task_id: str = "") -> Spon
     return error_type(message, task_id=task_id)
 
 
+def find_sponsored_error(error: BaseException) -> SponsoredError | None:
+    """Recover a typed runtime cause through adapter/registry/service wrappers."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, SponsoredError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def is_fallback_allowed(error: BaseException) -> bool:
     """Whether this failure may be retried on the user's own provider."""
 
@@ -158,6 +175,10 @@ def is_free_model_fallback_allowed(error: SponsoredError) -> bool:
     Keep this separate from explicit BYOK fallback: the user's own credential
     may still work when the shared sponsored credential has expired.
     """
+    if isinstance(error, SponsoredRateLimitedError) and error.is_local:
+        # Both free models share this installation's window. Transport already
+        # waited once; changing model or retrying immediately cannot restore it.
+        return False
     return is_fallback_allowed(error) and error.code not in {
         "AUTH_FAILED",
         "BALANCE_LOW",

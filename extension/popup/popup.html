@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenBiliClaw</title>
+  <link rel="stylesheet" href="shared/custom-sources.css">
   <link rel="icon" type="image/png" sizes="32x32" href="../icons/icon32.png?v=4">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -3305,6 +3306,8 @@
       color: #b45309;
     }
 
+    [data-init-source-options]:not([hidden]) { display: grid; gap: 8px; }
+
     .init-sources {
       display: flex;
       flex-direction: column;
@@ -3817,6 +3820,16 @@
       flex-shrink: 0;
       padding-top: 8px;
     }
+
+    .chat-source-guide { color: var(--text-secondary); font-size: 13px; }
+    .chat-source-guide summary { min-height: 44px; padding: 12px; border-radius: 12px; color: var(--text-main); font-weight: 650; cursor: pointer; }
+    .chat-source-guide summary:hover, .chat-source-guide[open] summary { background: var(--brand-soft); }
+    .chat-source-guide summary::marker { color: var(--brand); }
+    .chat-source-guide summary:focus-visible, .chat-source-guide-body:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    .chat-source-guide-body { max-height: min(240px, 30dvh); padding: 0 12px; overflow-y: auto; overflow-wrap: anywhere; border-radius: 12px; line-height: 1.65; }
+    .chat-source-guide-body p { margin: 12px 0; }
+    .chat-source-guide-example { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+    .chat-source-guide-example strong { display: block; margin-bottom: 4px; color: var(--text-main); }
 
     .chat-input-shell {
       display: flex;
@@ -5082,6 +5095,7 @@
     }
 
     .settings-secondary-btn:focus-visible,
+    .settings-inline-btn:focus-visible,
     .settings-llm-icon-btn:focus-visible,
     .settings-instance-dialog-close:focus-visible,
     .settings-llm-chain-add select:focus-visible,
@@ -5293,6 +5307,11 @@
       color: #9a6b1f;
     }
 
+    .diag-alert-item[data-severity="info"] .diag-alert-badge {
+      background: var(--surface);
+      color: var(--text-secondary);
+    }
+
     .diag-alert-source {
       min-width: 0;
       overflow: hidden;
@@ -5398,6 +5417,197 @@
     .settings-hint-warning {
       background: rgba(248, 113, 113, 0.12);
       color: #b91c1c;
+    }
+
+    .web-recipe-manager,
+    .web-probe-form,
+    .web-probe-result,
+    .web-recipe-form,
+    .web-recipe-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .web-probe-panel {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(125, 211, 252, 0.08);
+    }
+
+    .web-probe-input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .web-probe-input-row .settings-field {
+      min-width: 0;
+    }
+
+    .web-probe-input-row .settings-secondary-btn {
+      min-height: 38px;
+      white-space: nowrap;
+    }
+
+    .web-probe-result {
+      min-height: 20px;
+    }
+
+    .web-probe-result[aria-busy="true"] {
+      opacity: 0.72;
+    }
+
+    .web-probe-summary {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .web-probe-summary[data-tone="success"] { color: #1a7a4a; }
+    .web-probe-summary[data-tone="warning"] { color: #8a6520; }
+    .web-probe-summary[data-tone="error"] { color: #c0404e; }
+
+    .web-probe-candidate {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .web-probe-candidate-heading {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      color: var(--text-main);
+      font-size: 12px;
+    }
+
+    .web-probe-confidence {
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(26, 122, 74, 0.12);
+      color: #1a7a4a;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .web-probe-confidence[data-confidence="medium"] {
+      background: rgba(138, 101, 32, 0.12);
+      color: #8a6520;
+    }
+
+    .web-probe-samples {
+      display: grid;
+      gap: 4px;
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .web-probe-sample-meta {
+      display: block;
+      color: var(--text-muted);
+      overflow-wrap: anywhere;
+    }
+
+    .web-recipe-form {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .web-recipe-listing-fields {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    .web-recipe-listing-fields[hidden] {
+      display: none;
+    }
+
+    .web-recipe-listing-fields legend {
+      padding: 0 6px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .web-recipe-item {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .web-recipe-item-main,
+    .web-recipe-item-title {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .web-recipe-item-title strong {
+      color: var(--text-main);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .web-recipe-item-meta {
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .web-recipe-status {
+      width: fit-content;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .web-recipe-status[data-tone="success"] { color: #1a7a4a; }
+    .web-recipe-status[data-tone="warning"] { color: #8a6520; }
+    .web-recipe-status[data-tone="error"] { color: #c0404e; }
+
+    .web-recipe-item-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .web-recipe-item-actions .settings-secondary-btn {
+      min-height: 34px;
+      cursor: pointer;
+    }
+
+    .web-recipe-item-actions .web-recipe-delete {
+      color: #b91c1c;
+      border-color: rgba(185, 28, 28, 0.35);
+    }
+
+    .web-recipe-item-actions .settings-secondary-btn:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
     }
 
     /* Overseas-egress advisory (backend-authored, inserted by
@@ -6646,6 +6856,16 @@
             </div>
             <div id="chatMessages" class="chat-messages" role="region" aria-label="口味对话记录" tabindex="0"></div>
             <form id="chatForm" class="chat-form">
+              <details class="chat-source-guide">
+                <summary>添加来源 · 说明与示例</summary>
+                <div class="chat-source-guide-body" role="region" aria-label="添加来源说明与示例" tabindex="0">
+                  <p>把网站或 RSS 地址发给阿B，说明想看什么。试跑确认后，就会定期采集，通过筛选的内容会进入推荐。</p>
+                  <p class="chat-source-guide-example"><strong>网站示例</strong>“帮我添加这个网站：[网址]，只看轻小说相关内容。”</p>
+                  <p class="chat-source-guide-example"><strong>RSS 示例</strong>“订阅这个 RSS：[订阅地址]，每天采集一次。”</p>
+                  <p>需要登录或验证时，阿B会引导你操作。频率、占比和启停在「设置 → 自定义来源」管理。</p>
+                  <p>采集问题会在来源卡提示，需要处理时也会提醒到消息铃铛；历史见「设置 → 日志 → 异常报警」。</p>
+                </div>
+              </details>
               <label class="chat-input-shell">
                 <span class="chat-input-label">写点你的想法和口味</span>
                 <textarea id="chatInput" class="chat-input" rows="2" placeholder="说说你最近怎么想——你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
@@ -6727,7 +6947,7 @@
       </div>
 
       <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
-<div id="cfgSponsoredSettings"></div>
+
       <div class="settings-section">
         <div class="settings-section-head">
           <div>
@@ -6737,7 +6957,8 @@
         </div>
         <p class="settings-hint">每个实例独立保存 Provider 类型、模型、Base URL 与凭据；同一种 Provider 也可以创建多个渠道。插件内可维护默认 fallback 链，模块自定义链继续在 PC Web 配置。</p>
         <div id="cfgLlmRoutingSummary" class="settings-routing-summary">
-          <div id="cfgLlmInstanceList" class="settings-llm-instance-list" aria-live="polite"></div>
+          <div id="cfgLlmProviderNotice" hidden></div>
+<div id="cfgLlmInstanceList" class="settings-llm-instance-list" aria-live="polite"></div>
 
           <div class="settings-llm-chain-head">
             <div>
@@ -7020,7 +7241,7 @@
         </p>
         <div class="settings-field">
           <label for="cfgEmbeddingProvider">Provider</label>
-          <select id="cfgEmbeddingProvider">
+          <select id="cfgEmbeddingProvider"><option value="siliconflow_free">硅基流动（免费 · BGE-M3）</option>
             <option value="">(不启用 embedding)</option>
             <option value="openai">OpenAI</option>
             <option value="gemini">Gemini</option>
@@ -7892,6 +8113,133 @@
       </div>
       </div>
 
+      <section class="settings-section" aria-labelledby="customSourcesHeading">
+        <h3 id="customSourcesHeading">自定义来源</h3>
+        <p class="settings-hint">在聊一聊提供网址或 RSS、Atom、JSON Feed 订阅链接和想看的内容，试跑后确认启用。每个来源独立设置候选池占比，与平台来源平级；需要登录时在接管页操作。</p>
+        <div id="customSourceManager"></div>
+      </section>
+
+      <div class="settings-section settings-source-card" data-source-card="web" data-open="0">
+        <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-web">
+        <h3><span class="section-icon" aria-hidden="true">WEB</span> 公开 Web（旧版订阅）</h3>
+        <div class="settings-field-row">
+          <input id="cfgWebEnabled" type="checkbox">
+          <label for="cfgWebEnabled">启用 Web recipe discovery</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgWebStatus" data-source-status="web"><span class="src-dot">●</span> <span class="src-detail">Web 来源状态加载中…</span></p>
+          <span class="source-card-chev" aria-hidden="true">&#x25BE;</span>
+        </div>
+        <div class="source-card-body" id="sourceCardBody-web">
+        <p class="settings-hint">仅发现公开内容：后端只访问 recipe 明确批准的 Origin，并遵守 robots.txt；不发送 Cookie 或 Authorization，不登录，也不执行 JavaScript。登录墙和仅靠脚本渲染的网站会显示真实失败状态。</p>
+        <div class="settings-field">
+          <label for="cfgWebRequestTimeout">请求超时（秒）</label>
+          <input id="cfgWebRequestTimeout" type="number" min="1" max="60" step="1" placeholder="15">
+        </div>
+        <div class="settings-field">
+          <label for="cfgWebMaxResponseBytes">单次响应上限（字节）</label>
+          <input id="cfgWebMaxResponseBytes" type="number" min="65536" max="5000000" step="1" placeholder="2097152">
+        </div>
+        <div class="settings-field">
+          <label for="cfgWebMaxRedirects">最多重定向</label>
+          <input id="cfgWebMaxRedirects" type="number" min="0" max="10" step="1" placeholder="5">
+        </div>
+        <div class="settings-field">
+          <label for="cfgWebLeaseSeconds">任务租约（秒）</label>
+          <input id="cfgWebLeaseSeconds" type="number" min="30" max="3600" step="1" placeholder="300">
+        </div>
+
+        <section class="web-recipe-manager" aria-labelledby="webRecipeHeading">
+          <h3 id="webRecipeHeading">旧版 Feed / Sitemap / 列表订阅</h3>
+          <div class="web-probe-panel">
+            <form id="webProbeForm" class="web-probe-form">
+              <div class="web-probe-input-row">
+                <div class="settings-field">
+                  <label for="webProbeUrl">网站 URL</label>
+                  <input id="webProbeUrl" type="url" maxlength="4096" required autocomplete="url" data-settings-ignore-dirty placeholder="https://example.com/">
+                </div>
+                <button class="settings-secondary-btn" id="webProbeRun" type="submit">自动探测</button>
+              </div>
+              <p class="settings-hint" id="webProbeHint">后端会只读探测公开页面，并给出 Feed、Sitemap 或列表页候选；探测不会保存网站。</p>
+            </form>
+            <div id="webProbeResult" class="web-probe-result" role="region" aria-label="网站自动探测结果" aria-live="polite" aria-busy="false" aria-describedby="webProbeHint">
+              <p class="web-probe-summary">粘贴一个网站 URL 开始探测。</p>
+            </div>
+          </div>
+          <h3>已配置网站</h3>
+          <div id="webRecipeList" class="web-recipe-list" aria-live="polite" aria-busy="true">
+            <p class="settings-hint">正在读取已配置网站…</p>
+          </div>
+          <h3>确认 Recipe</h3>
+          <form id="webRecipeForm" class="web-recipe-form" tabindex="-1">
+            <div class="settings-field">
+              <label for="webRecipeName">名称</label>
+              <input id="webRecipeName" maxlength="120" required placeholder="例如：Django 官方博客">
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeStrategy">发现方式</label>
+              <select id="webRecipeStrategy">
+                <option value="feed">Feed（RSS / Atom / JSON Feed）</option>
+                <option value="sitemap">Sitemap</option>
+                <option value="listing">列表页</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeEntryUrl">入口 URL</label>
+              <input id="webRecipeEntryUrl" type="url" maxlength="4096" required autocomplete="url" placeholder="https://example.com/feed.xml">
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeOrigins">额外允许的 Origin（可选，每行一个）</label>
+              <textarea id="webRecipeOrigins" rows="2" placeholder="https://www.example.com"></textarea>
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeInterval">抓取间隔（分钟）</label>
+              <input id="webRecipeInterval" type="number" min="5" max="10080" step="1" value="30">
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeMaxItems">每轮最多条目</label>
+              <input id="webRecipeMaxItems" type="number" min="1" max="50" step="1" value="20">
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeMaxPages">每轮最多页面</label>
+              <input id="webRecipeMaxPages" type="number" min="1" max="5" step="1" value="1">
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeDetailLimit">详情页上限</label>
+              <input id="webRecipeDetailLimit" type="number" min="0" max="20" step="1" value="10">
+            </div>
+            <div class="settings-field">
+              <label for="webRecipeShare">Recipe 权重</label>
+              <input id="webRecipeShare" type="number" min="1" max="20" step="1" value="4">
+            </div>
+            <fieldset id="webRecipeListingFields" class="web-recipe-listing-fields" hidden>
+              <legend>列表页选择器</legend>
+              <p class="settings-hint">仅支持简单的 tag、<code>.class</code>、<code>#id</code> 后代选择器；不支持脚本、伪类或属性选择器。</p>
+              <div class="settings-field">
+                <label for="webRecipeItemSelector">条目选择器</label>
+                <input id="webRecipeItemSelector" maxlength="256" placeholder="article">
+              </div>
+              <div class="settings-field">
+                <label for="webRecipeLinkSelector">链接选择器</label>
+                <input id="webRecipeLinkSelector" maxlength="256" value="a">
+              </div>
+              <div class="settings-field">
+                <label for="webRecipeTitleSelector">标题选择器（可选）</label>
+                <input id="webRecipeTitleSelector" maxlength="256" placeholder="h2">
+              </div>
+              <div class="settings-field">
+                <label for="webRecipeEmptySelector">明确空列表选择器（可选）</label>
+                <input id="webRecipeEmptySelector" maxlength="256" placeholder=".empty-state">
+              </div>
+            </fieldset>
+            <div class="settings-probe-row">
+              <button class="settings-inline-btn" id="webRecipeCreate" type="submit">添加网站</button>
+              <span class="settings-probe-status" id="webRecipeMessage" role="status" aria-live="polite"></span>
+            </div>
+          </form>
+        </section>
+      </div>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="instagram" data-open="0">
         <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-instagram">
           <h3><span class="section-icon">IG</span> Instagram</h3>
@@ -7971,6 +8319,12 @@
           <label for="cfgPoolShareInstagram">候选池 Instagram 占比</label>
           <input id="cfgPoolShareInstagram" type="number" min="1" step="1" placeholder="1">
         </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareWeb">候选池旧版 Web 订阅占比</label>
+          <input id="cfgPoolShareWeb" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div id="customSourceSharePeers" class="custom-source-share-peers" aria-label="自定义来源候选池占比"></div>
+        <p class="settings-hint">自定义来源各自参与候选池分配；在上方来源卡片中修改并保存比例。</p>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
         </div>
@@ -8424,8 +8778,12 @@
             <option value="learned">Learned（仅相关性，实验性）</option>
           </select>
         </div>
-        <p class="settings-hint" id="cfgEvalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
-        <p class="settings-hint">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+        <p class="settings-hint" id="cfgEvalScorerHint">选择 Jev 后，只有候选内容评估改用 Jev；聊天、画像等仍沿用原来的 LLM 配置。</p>
+        <details class="settings-hint">
+          <summary>评估模式说明</summary>
+          <p>Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+          <p>Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知。请选择前关闭下方“候选封面参与 LLM 评估”；评分未经当前模型质量校准。上下文按保守字节预算拆批，不偷偷删除关键画像。</p>
+        </details>
         <p class="settings-hint" id="cfgJevEvaluatorStatus" role="status" aria-live="polite">正在读取 Jev provider 配置…</p>
         <div id="cfgJevConnectionSettings"></div>
       </div>
@@ -8603,7 +8961,7 @@
           <span class="diag-alert-summary" id="cfgDiagAlertSummary" aria-live="polite"></span>
           <button id="cfgRefreshDiagAlerts" class="settings-secondary-btn diag-alerts-refresh" type="button">刷新</button>
         </div>
-        <p class="diag-alerts-empty" id="cfgDiagAlertsEmpty">暂无异常报警，LLM / Embedding 请求异常会显示在这里。</p>
+        <p class="diag-alerts-empty" id="cfgDiagAlertsEmpty">暂无异常记录，来源采集、LLM / Embedding 异常与来源恢复会显示在这里。</p>
         <ul class="diag-alert-list" id="cfgDiagAlertList" hidden></ul>
       </div>
       </div>
@@ -8764,6 +9122,8 @@
   <script src="shared/dialogue-confirmation.js"></script>
   <script src="shared/director-client.js"></script>
   <script src="shared/source-status.js"></script>
+  <script src="shared/custom-sources.js"></script>
+
   <link rel="stylesheet" href="shared/jev-settings.css">
 <link rel="stylesheet" href="shared/sponsored-settings.css">
 <script src="shared/sponsored-settings.js"></script>

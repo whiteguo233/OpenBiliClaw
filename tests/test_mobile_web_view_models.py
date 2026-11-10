@@ -153,7 +153,7 @@ class TestMobileWebViewModels:
               "getRecommendationCoverPreloadUrls", "getRecommendationImageLoadingAttrs",
               "shouldAutoAppendRecommendations",
               "formatRelativeTimestamp", "formatPublishedTime", "getPublishedTimeDisplay",
-              "normalizeSourcePlatform", "getSourceLabel",
+              "normalizeSourcePlatform", "getSourceLabel", "getSourceStrategyLabel",
               "normalizeCoverUrl", "getCoverImageAttrs",
               "normalizePoolStatus", "normalizeMbtiDimensions", "normalizeChatTurn",
             ];
@@ -358,6 +358,67 @@ class TestMobileWebViewModels:
               normalizeSourcePlatform({ source_platform: "twitter" }),
               "twitter",
             );
+        """)
+        )
+
+    def test_public_web_recommendation_keeps_direct_url_and_hides_unavailable_stats(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              buildContentUrl,
+              buildRecommendationClickPayload,
+              getSourceLabel,
+              getSourceStrategyLabel,
+              normalizeRecommendation,
+              normalizeSourcePlatform,
+              recommendationStats,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const url = "https://example.com/articles/a-practical-agent";
+            const item = normalizeRecommendation({
+              id: 144,
+              content_id: "sha256:deadbeef",
+              content_url: url,
+              title: "A practical agent",
+              source_platform: "web",
+              content_type: "article",
+              body_text: "An article discovered from a public website.",
+              topic_label: "web-feed",
+              view_count: 999,
+              like_count: 88,
+              comment_count: 7,
+            });
+
+            assert.equal(item.source_platform, "web");
+            assert.equal(getSourceLabel(item.source_platform), "Web");
+            assert.equal(buildContentUrl(item), url);
+            assert.equal(item.topic_label, "网页订阅（RSS/Atom/JSON Feed）");
+            assert.equal(recommendationStats(item), "");
+            assert.deepEqual(buildRecommendationClickPayload(item, buildContentUrl(item)), {
+              bvid: "sha256:deadbeef",
+              content_id: "sha256:deadbeef",
+              content_url: url,
+              source_platform: "web",
+              title: "A practical agent",
+              recommendation_id: 144,
+              topic_label: "网页订阅（RSS/Atom/JSON Feed）",
+              up_name: "这位创作者还没认出来",
+            });
+
+            const withoutUrl = normalizeRecommendation({
+              content_id: "sha256:missing",
+              source_platform: "web",
+              content_type: "article",
+            });
+            assert.equal(buildContentUrl(withoutUrl), "");
+            assert.equal(
+              normalizeSourcePlatform({ content_url: "https://example.net/posts/1" }),
+              "web",
+            );
+            assert.equal(getSourceStrategyLabel("web-sitemap"), "网页站点地图（Sitemap）");
+            assert.equal(getSourceStrategyLabel("web-listing"), "网页列表页");
+            assert.equal(getSourceStrategyLabel("personal-topic"), "personal-topic");
         """)
         )
 

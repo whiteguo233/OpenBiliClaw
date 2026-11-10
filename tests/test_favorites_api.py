@@ -103,6 +103,8 @@ def test_favorites_endpoints_round_trip_with_metadata(
                 "cover_url": "https://i0.hdslb.com/bfs/archive/fav.jpg",
                 "content_url": "https://www.bilibili.com/video/BV1FAV",
                 "source_platform": "bilibili",
+                "source_id": "",
+                "source_name": "",
                 "content_type": "video",
                 "added_at": list_response.json()["items"][0]["added_at"],
                 "sync_status": "pending",

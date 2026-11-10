@@ -49,6 +49,7 @@ MESSAGE_CATALOG_DIR = ROOT / "src" / "openbiliclaw" / "i18n" / "catalogs"
 
 HTML_SOURCES = (
     WEB_DIR / "desktop" / "index.html",
+    WEB_DIR / "desktop" / "source-login.html",
     WEB_DIR / "setup" / "index.html",
     WEB_DIR / "index.html",
     ROOT / "extension" / "popup" / "popup.html",

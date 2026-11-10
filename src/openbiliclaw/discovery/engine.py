@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import hashlib
 import inspect
 import json
 import logging
@@ -18,12 +19,14 @@ import time
 from abc import ABC, abstractmethod
 from collections import Counter, OrderedDict
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.admission import effective_admission_threshold
 from openbiliclaw.discovery.eval_payload import (
     CanonicalEvaluationBatch,
+    InputBudgetFailure,
+    InvalidEvaluationEvidence,
     build_canonical_evaluation_batch,
     render_sparse_evaluation_json,
     resolve_local_evaluation_results,
@@ -843,6 +846,7 @@ class DiscoveredContent:
     discovery_lane: str = ""
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
     relevance_reason: str = ""  # Why this is relevant to the user
+    evaluation_failure: InputBudgetFailure | InvalidEvaluationEvidence | None = None
     # Per-wave soft refusal only. Never serialized into content_cache or profile.
     semantic_filter_deferred: bool = False
     semantic_filter_review: bool = False
@@ -882,6 +886,13 @@ class DiscoveredContent:
     # identifiers and source-specific card metadata can survive the candidate
     # and content-cache pipeline without widening the shared schema per source.
     source_metadata: dict[str, object] = field(default_factory=dict)
+    # Recipe provenance is metadata, never part of Web's canonical item key.
+    # It survives candidate evaluation in raw_payload so operators can trace
+    # which explicit subscription authorized and discovered an item.
+    source_id: str = ""
+    source_name: str = ""
+    source_recipe_id: str = ""
+    source_site: str = ""
     # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
     # that produced this item (unified keyword planner). ``None`` for every
     # non-search / legacy / flag-off path — the admit-time yield backfill is a
@@ -988,6 +999,8 @@ class DiscoveredContent:
             "body_text": self.body_text,
             "content_type": self.content_type,
             "source_metadata": self.source_metadata,
+            "source_id": self.source_id,
+            "source_name": self.source_name,
             "source_keyword_id": self.source_keyword_id,
         }
 
@@ -1904,13 +1917,16 @@ class ContentDiscoveryEngine:
         contents: list[DiscoveredContent],
         requested_batch_size: int,
     ) -> int:
-        from openbiliclaw.llm.sponsored_router import sponsored_enabled
+        from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
 
         batch_size = max(1, int(requested_batch_size))
         # Real free-model runs timed out at 30 items while smaller batches
         # completed. Preserve every item and its identity, but bound one IPC
         # request so a slow batch cannot monopolize the background channel.
-        if sponsored_enabled() and getattr(self, "_eval_scorer", "llm") != "jev":
+        if (
+            uses_sponsored_route(self._llm_service, "discovery.evaluate_batch")
+            and getattr(self, "_eval_scorer", "llm") != "jev"
+        ):
             batch_size = min(batch_size, 8)
         self.multimodal_unavailable_reason = ""
         if not bool(getattr(self, "multimodal_evaluation_enabled", False)):
@@ -3222,6 +3238,29 @@ class ContentDiscoveryEngine:
         self._negative_exemplars_cache = (time.monotonic(), latest_id, exemplars)
         return exemplars
 
+    def evaluation_context_fingerprint(self, profile: SoulProfile) -> str:
+        """Recovery identity for local input refusals; no credentials or clocks.
+
+        Evaluator namespace includes model, capacities and packing policy.
+        Full effective profile and negative examples invalidate parked refusals.
+        Explicitly switching away from Jev also permits re-evaluation.
+        """
+        mode = getattr(self, "_eval_scorer", "llm")
+        if mode != "jev":
+            return hashlib.sha256(f"scorer:{mode}".encode()).hexdigest()
+        evaluator = self._jev_evaluator
+        identity = {
+            "scorer": mode,
+            "evaluator": evaluator.cache_namespace if evaluator else "unavailable",
+            "profile": build_profile_catalog(profile),
+            "negative": self._get_negative_exemplars() or [],
+        }
+        return hashlib.sha256(
+            json.dumps(
+                identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()
+        ).hexdigest()
+
     def _evaluation_profile_digest(self, profile: SoulProfile) -> str:
         """Digest the structured profile slice and recall pool visible to evaluation."""
 
@@ -4076,6 +4115,7 @@ class ContentDiscoveryEngine:
             negative_examples = self._get_negative_exemplars()
         negatives = cast("list[dict[str, object]] | None", negative_examples or None)
         profile_catalog = build_profile_catalog(profile)
+        recovery_fingerprint = self.evaluation_context_fingerprint(profile)
         profile_digest = self._evaluation_profile_digest(profile)
         negative_digest = self._negative_examples_digest(negatives)
         # Keys are frozen before awaiting the provider; later item mutation
@@ -4106,15 +4146,22 @@ class ContentDiscoveryEngine:
             len(payload),
             sum(result is None for result in payload),
             sum(
-                bool(result and result.get("_jev_topic_status") == "unknown") for result in payload
+                isinstance(result, dict) and result.get("_jev_topic_status") == "unknown"
+                for result in payload
             ),
             sum(
-                bool(result and result.get("_jev_franchise_status") == "unknown")
+                isinstance(result, dict) and result.get("_jev_franchise_status") == "unknown"
                 for result in payload
             ),
         )
         results: list[float | None] = []
         for index, (content, result) in enumerate(zip(batch, payload, strict=True)):
+            if isinstance(result, InputBudgetFailure | InvalidEvaluationEvidence):
+                content.evaluation_failure = replace(
+                    result, context_fingerprint=recovery_fingerprint
+                )
+                results.append(None)
+                continue
             score = (
                 self._apply_evaluator_result(
                     content,
@@ -4262,6 +4309,8 @@ class ContentDiscoveryEngine:
             # retries would reset that budget and repeat permanently oversized inputs.
             budget["remaining"] = 0
             profile = copy.deepcopy(profile)
+        for content in batch:
+            content.evaluation_failure = None
         normal_cache_enabled = normal_cache_enabled and self._batch_normal_cache_eligible(
             batch,
             source_context=source_context,
@@ -4330,7 +4379,11 @@ class ContentDiscoveryEngine:
         final: list[float] = []
         for index, (content, score) in enumerate(zip(batch, results, strict=True)):
             if score is None:
-                content.relevance_reason = "evaluation_response_missing"
+                content.relevance_reason = (
+                    content.evaluation_failure.storage_reason.split(":", 1)[0]
+                    if content.evaluation_failure
+                    else "evaluation_response_missing"
+                )
                 if getattr(self, "_eval_scorer", "llm") == "jev":
                     content.relevance_score = 0.0
                 final.append(0.0)

@@ -1,5 +1,13 @@
 # 推荐引擎
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 推荐/导演遵循实例路由 | 导演规划通过 `uses_sponsored_route()` 选择已有免费模型的顺序引用输出约束；自有模型路由保留原格式。推荐与导演公开方法签名不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 可切换完整评估器的旧池补评
 
 `RecommendationEngine.bind_content_evaluator()` 可注入共享发现评估器；纯 Jev 模式下
@@ -36,6 +44,8 @@ HTTPS URL。
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 自定义网站来源显示与独立库存 | ✅ | 普通推荐、惊喜单条/批量及手动/后台推送均保留 `source_id/source_name` 与 canonical `web` 身份；内部实例份额独立，公开 Web 平台库存与定向续页合并各实例，重复 URL 只计一次库存，收藏/稍后再看继续共用原内容键。 |
+
 | 推荐导演三策略 | ✅ 默认关闭 | `DirectorRuntime` 接通逐对 Jev、Agent+Jev 局部修补和纯 Agent 多屏计划；屏原子提交、真实曝光反馈及配置换代 fencing，详见[模块合同](director.md) |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
@@ -137,6 +147,13 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+### 自定义网站归属
+
+`Recommendation.content` 经 `DiscoveredContent.source_id/source_name` 保留网站实例。内部配额和实例定向读取使用实例 ID；公开平台库存、`append` / `reshuffle` 的 `source_platform=web` 则合并旧 Web recipe 与各动态网站，不能把实例 ID 当作公开平台名。内容的 `item_key` 继续用于打开、反馈及保存。`RecommendationOut`、`WatchLaterItem`、`FavoriteItem` 暴露实例显示字段，默认空字符串保持旧来源兼容。
+
+多个来源发现同一个 URL 时，卡片只有一份 canonical 内容，`source_metadata.source_provenance` 保存多个发现来源。首个入库实例持有一份库存额度，后续发现不重复占用来源份额或创建独立反馈；修改来源名称不改变内容键。归档移除后续调度资格，历史推荐和本地保存仍保留。
+
 
 `DirectorRuntime` 为 controller/composer/repair 注入 `JevContextBudget`；
 `CompositionSession.profile_source_digest` 用于计划新鲜度，实际视图仍绑定 `input_digest`。
@@ -279,6 +296,7 @@ GET /api/recommendations/platform-availability
 
 - 供 PC Web 平台 Tab 显示"该平台还有几条可立即推荐"，与 `count_pool_candidates()` / `serve()` 完全同口径
 - `total_available == sum(by_platform.values())` 由 storage 单次隔离快照保证；"全部" Tab 的数字取自同一份 snapshot 的 `total_available`
+- `by_platform` 使用 canonical 平台键。各动态网站库存合并到 `web`，来源实例仍独立记账并在卡片保留 `source_name`；公开平台筛选不接受 `custom_*` 实例 ID。引擎的最终平台检查与库存读取使用相同口径，避免 Web 显示库存却筛选不到内容。
 - 零库存平台可省略，前端对已启用但缺失的键显示 `0`
 - 读取异常返回可诊断 5xx；前端保留上一次成功值，首次尚未成功读取时显示未知态，不把失败伪装成 `0`
 - 该接口是只读的，刷新库存不消费候选池，也不会重载或覆盖已经 append 的推荐卡片

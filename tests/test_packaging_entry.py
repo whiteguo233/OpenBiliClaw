@@ -593,7 +593,7 @@ def test_main_source_selftest_does_not_migrate_ignored_project_data(
 
     import openbiliclaw.api.app as api_app
 
-    monkeypatch.setattr(api_app, "create_app", lambda: SimpleNamespace())
+    monkeypatch.setattr(api_app, "create_app", lambda **_kwargs: SimpleNamespace())
 
     entry.main()
 
@@ -601,6 +601,101 @@ def test_main_source_selftest_does_not_migrate_ignored_project_data(
     assert (source_data / "marker.bin").read_bytes() == data_bytes
     assert not (project_root / "config.toml").exists()
     assert not (project_root / "data" / "marker.bin").exists()
+
+
+@pytest.mark.parametrize("startup_gate", ["normal", "selftest", "second_instance", "data_busy"])
+def test_main_prepares_ego_only_after_deployment_guards_and_final_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_gate: str
+) -> None:
+    """Only the serving desktop app opts in, using configuration after migration."""
+    import openbiliclaw.api.app as api_app
+    from openbiliclaw import config, logging_setup
+    from openbiliclaw.storage import migration
+
+    project_root = tmp_path / "desktop-profile"
+    initial_data = tmp_path / "initial-data"
+    final_data = tmp_path / "imported-data"
+    current_config = SimpleNamespace(
+        data_path=initial_data,
+        api=SimpleNamespace(host="127.0.0.1", port=19421),
+    )
+    events: list[str] = []
+    app_calls: list[tuple[bool, Path]] = []
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+    monkeypatch.setenv("OPENBILICLAW_WORKER", "0")
+    monkeypatch.delenv("OPENBILICLAW_HOST", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_PORT", raising=False)
+    if startup_gate == "selftest":
+        monkeypatch.setenv("OPENBILICLAW_SELFTEST", "1")
+    else:
+        monkeypatch.delenv("OPENBILICLAW_SELFTEST", raising=False)
+    monkeypatch.setattr(entry.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(entry, "_resolve_runtime_paths", lambda: (project_root, tmp_path))
+    monkeypatch.setattr(entry, "_redirect_output_to_logfile", lambda _root: None)
+    monkeypatch.setattr(entry, "_notify_starting", lambda: None)
+    monkeypatch.setattr(entry, "_close_splash", lambda: None)
+    monkeypatch.setattr(entry, "_copy_legacy_packaged_user_data", lambda *_args: None)
+    monkeypatch.setattr(entry, "_migrate_legacy_install_dir_data", lambda *_args: None)
+    monkeypatch.setattr(entry, "_inject_bundled_ollama_on_path", lambda _root: False)
+    monkeypatch.setattr(entry, "_seed_default_config", lambda *_args: False)
+    monkeypatch.setattr(
+        entry, "_repair_unloadable_config", lambda *_args: entry._ConfigRepairResult(False, False)
+    )
+    monkeypatch.setattr(entry, "_seed_bundled_embedding_model", lambda *_args: True)
+    monkeypatch.setattr(entry, "_fetch_backend_initialized", lambda _url: True)
+    monkeypatch.setattr(entry.webbrowser, "open", lambda _url: True)
+    monkeypatch.setattr(entry.atexit, "register", lambda *_args: None)
+    monkeypatch.setattr(
+        entry.threading, "Thread", lambda **_kwargs: SimpleNamespace(start=lambda: None)
+    )
+    monkeypatch.setattr(logging_setup, "configure_logging", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(config, "load_config", lambda: current_config)
+    monkeypatch.setattr(migration, "migration_recovery_data_dir", lambda **_kwargs: None)
+
+    def single_instance(_root: Path):
+        events.append("single_instance")
+        return ("busy", None) if startup_gate == "second_instance" else ("acquired", object())
+
+    def acquire_data_guard(_root: Path, data_dir: Path):
+        assert data_dir == initial_data
+        events.append("data_guard")
+        return None if startup_gate == "data_busy" else SimpleNamespace(release=lambda: None)
+
+    def apply_pending(**_kwargs: object) -> None:
+        nonlocal current_config
+        events.append("migration")
+        current_config = SimpleNamespace(data_path=final_data, api=current_config.api)
+
+    def verify_sponsored_bundle(resources: Path) -> None:
+        assert resources == tmp_path
+        events.append("sponsored_bundle")
+
+    class ServingAppObservedError(Exception):
+        pass
+
+    def create_app(*, prepare_ego_on_startup: bool = False):
+        app_calls.append((prepare_ego_on_startup, config.load_config().data_path))
+        if startup_gate == "normal":
+            events.append("app")
+            raise ServingAppObservedError
+        return SimpleNamespace()
+
+    monkeypatch.setattr(entry, "_try_single_instance_lock", single_instance)
+    monkeypatch.setattr(entry, "_verify_packaged_sponsored_runtime", verify_sponsored_bundle)
+    monkeypatch.setattr(migration, "acquire_migration_runtime_guard", acquire_data_guard)
+    monkeypatch.setattr(migration, "apply_pending_migration", apply_pending)
+    monkeypatch.setattr(api_app, "create_app", create_app)
+
+    if startup_gate == "normal":
+        with pytest.raises(ServingAppObservedError):
+            entry.main()
+        assert events == ["single_instance", "data_guard", "migration", "app"]
+        assert app_calls == [(True, final_data)]
+    else:
+        entry.main()
+        assert app_calls == ([(False, initial_data)] if startup_gate == "selftest" else [])
+        assert ("sponsored_bundle" in events) == (startup_gate == "selftest")
+        assert "migration" not in events
 
 
 def test_main_recovers_apply_journal_before_seeding_or_creating_targets(
@@ -763,7 +858,7 @@ def test_main_uses_configured_api_host_when_env_host_unset(
     import openbiliclaw.api.app as api_app
     from openbiliclaw.runtime import api_server
 
-    monkeypatch.setattr(api_app, "create_app", lambda: SimpleNamespace())
+    monkeypatch.setattr(api_app, "create_app", lambda **_kwargs: SimpleNamespace())
     fake_listeners = [object(), object()]
     monkeypatch.setattr(
         api_server,
@@ -914,7 +1009,7 @@ def test_main_opens_setup_after_repairing_unloadable_config(
     import openbiliclaw.api.app as api_app
     from openbiliclaw.runtime import api_server
 
-    monkeypatch.setattr(api_app, "create_app", lambda: SimpleNamespace())
+    monkeypatch.setattr(api_app, "create_app", lambda **_kwargs: SimpleNamespace())
     fake_listeners = [object(), object()]
     monkeypatch.setattr(
         api_server,
@@ -1002,7 +1097,7 @@ def test_main_disables_uvicorn_access_log_in_tray_mode(
 
     import openbiliclaw.api.app as api_app
 
-    monkeypatch.setattr(api_app, "create_app", lambda: SimpleNamespace())
+    monkeypatch.setattr(api_app, "create_app", lambda **_kwargs: SimpleNamespace())
     seen: dict[str, object] = {}
 
     class _Config:

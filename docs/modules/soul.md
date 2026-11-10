@@ -1,5 +1,24 @@
 # 灵魂引擎
 
+## 初始化偏好分析批次与恢复（2026-11-08，待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 请求大小预规划 | `PreferenceAnalyzer.analyze_events(..., event_chunk_size=N)` 把 N 作为事件数上限，再按现有完整 prompt 预算预拆成独立批次，有限并发执行；每个计划批次完成即报告进度，不再等整个 200 条父批次。 |
+| 初始化预算 | 新增 `PreferenceAnalyzer.planned_batch_count(events, *, event_chunk_size)`，由 `SoulEngine.preference_analysis_batch_count(...)` 暴露给共享初始化编排，采用相同过滤与空偏好种子计算请求批次。 |
+| 免费模型偏好提取 | 实际调用链包含免费实例时，偏好提取的输出预算最多 4096 token；未显式指定思考强度时关闭额外思考。既有字段校验、事实落地和全部输入事件仍保留。 |
+| 有界故障恢复 | 沿异常原因链识别免费 SDK 的 `REQUEST_TOO_LARGE` 并拆批；免费超时以及明确的上游传输断连（TLS peer closed / reset / aborted / unexpected EOF / broken pipe）只允许一层恢复，多事件顺序重试两半，单事件最多再试一次。持续故障仍失败，不无限重放，不将鉴权／配额／策略错误、证书验证失败、返回格式或模型错误当临时断连。自动单请求路径也采用同样规则。 |
+
+完整上下文上限仍由公共 SDK 入口校验；偏好分析使用更小的业务请求预算以限制延迟，不能把上下文容量当作完成时间保证。复现、真实请求与验证范围见[验收记录](../testing/2026-11-08-free-model-init-timeouts.md)。
+
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 按模块链使用免费小模型约束 | ProfileBuilder、AwarenessAnalyzer、Consolidator 与历史重建经 `uses_sponsored_route(service, caller)` 判断实际路由，保留小批量和事实落地校验；同一安装中的自有 Soul 模块链不受免费默认链影响。公开业务调用接口不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 免费觉察引用纠错（2026-11-06）
 
 | 已实现能力 | 合同 |
@@ -30,8 +49,10 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 作为必需语义保留，未知 schema 拒绝。最小必需块装不下仍返回 fits=false。
 
 `build_shared_evaluation_profiles(contexts)` 为完整 Jev 评估拆出相同的负偏好、风格和场景，
-在共享 `profile` 只发送一次；候选相关的正偏好仍保留在各自 `candidate_profiles.cN`。
-该纯函数复制输入，不修改已选事实、源画像或导演视图。
+多候选时还可共享每条候选都已选中且完全相同的整字段（含兴趣/核心特质）。
+共享 `profile` 叠加目标 `candidate_profiles.cN` 必须精确还原它的原选择；
+字段缺失或不同则不共享，不能借用同行的兴趣。单条仍保留原布局，预算探针稳定。
+该纯函数复制输入，不改事实、源画像、画像选择顺序或导演视图，不做字符串摘要。
 
 `soul/` 包实现了用户理解的核心逻辑，包括：
 
@@ -87,6 +108,7 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像；同一 dialogue 实例逐轮串行执行普通与工具调用，用户 turn 在真实回复完成前仅为临时历史，异常/取消只回滚本轮且不触发学习 |
 | Agent 显式聊天笔记 | ✅ | 通过 LLMService.memory 读取有界 agent_notes，仅 chat 且角色允许 read_memory 时加入 user 引用；原消息、system 与学习载荷不变 |
 | Agent 表达风格 | ✅ | `stream_agent_reply(persona_id=...)` 为 chat scope 叠加已冻结的表达模板；natural、legacy 与非 chat 保持原 prompt，风格不更改学习输入或权限 |
+| Agent 正文协议隔离 | ✅ | 向 `AgentLoop.run(original_user_message=...)` 单独传入用户原文，防止语言规则中的 JSON 保留指令或引用笔记误关闭协议检查；历史与学习接收检查后的 `final`，不记录已移除的工具封套 |
 | SocraticDialogue.stream_agent_reply()（M2） | ✅ | 多跳 agent loop 的对话侧入口（`POST /api/chat/agent/stream` 调用）：在 `_respond_lock` 下与 `respond()` 串行，复用共享朋友人设与长期记忆，采用按当前请求调整深度的聊天风格（简单问题简答、复杂任务充分展开，追问遵循共享收敛规则，访谈由用户探索意愿触发）；显式 `session_id` 的短期历史按会话隔离，首次使用从本会话 durable rows 恢复；`dialogue_binding` 同时用于 prompt 和学习冻结锚；user turn 先 append（loop 异常/空答复回滚本轮且不触发学习），完成后 append agent 答复并按 learning mode 走与 `respond()` 相同的 `_queue_dialogue_learning()` 提交（queued / legacy_direct / reply_only_test 语义一致） |
 | SocraticDialogue.respond_stream()（issue #83） | ✅ | `respond()` 的流式变体：逐 token yield 回复增量（`LLMService.stream_socratic_dialogue()`），历史追加 / 回滚 / 学习语义与 `respond()` 完全一致；工具回合保持一次性工具流、最终回复作为单个 delta 吐出；service 缺少流式方法时回退一次性 `complete_socratic_dialogue()`。CLI `chat` 与 legacy `/api/chat/stream` 均走此路径 |
 | 对话内链接摄入（issue #83，`sources/link_ingest.py`） | ✅ | `SocraticDialogue` 可选接收 `LinkIngestor`；`respond()`、`respond_stream()` 与 `stream_agent_reply()` 在 user turn append 后、LLM 调用前对消息做链接预处理：提取 URL（无 `://` 快速短路）→ 展开 b23.tv / xhslink.com 短链（跟随重定向，8s 超时 + 256 KiB 上限 + 非 HTML 拒绝，httpx 一律 `trust_env=False`）→ 按 `sources/platforms.py` 注册表识别平台（bilibili 复用 `BilibiliAPIClient.get_video_info` 拿标题/简介/UP 主/标签，其余平台抓 title/description/og 元数据）→ 摘要块注入当轮 prompt（历史与审计仍存用户原文，仅靠 `relation_prefix` 让后续轮次知道「分享了链接《…》」），并把每个抓取成功的链接经注入的 `event_sink`（生产 = `MemoryManager.propagate_event`）记为 `share` 事件（显式正向偏好，默认强度 0.85，用户消息摘录进 `comment_text`）。单链接失败降级为「仅链接」形态进上下文，事件写入失败只记 WARNING，绝不阻塞聊天；未接 ingestor 时 prompt 逐字节不变 |
@@ -126,7 +148,7 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 | 对话确认入口与锚（Wave A–D + 单队列 cutover，v0.3.182+） | ✅ | `DialogueAnchorManager` 持久化至多一个 `{kind,ref,generation,established_at,unrelated_streak,origin_turn_id,ambiguous_count}`，四种释放为结算、连续两轮 unrelated、2h TTL、replaced。card discuss 在 admission 先建立 owner reservation，worker 内把 durable payload 从 `pending` 改为 `discussing` 后建锚；建锚失败立即补偿回 `pending`。不存在 `attempt_token/discussing_at` CAS 或 stale scanner；GET 只提交 `card.reconcile`，由 worker 把没有对应 active anchor 的 orphan `discussing` 校正回 `pending`。学习任务入 LLM 前校验一次 ref+generation；LLM 返回后的首个持久副作用由 `note_relation(expected_generation=...)` 在同一状态锁内完成重读+CAS，engine 必须消费返回值，失配整批丢弃、WARNING 并写 `anchor_stale_generation_drop`。结算赢家 payload 固化 `anchor_generation`，applied 收据只能释放该代，同 ref 新锚不会被旧收据碰掉。待聊列表主动 open 以 `pending_open` 建锚且不受 12h/72h 时间 gate；这种卡片仍保持 `pending`，其 defer 会先持久化 `deferred`，再按 origin turn + generation 精确释放锚，不能只覆盖传统 `discussing` 卡。系统疑惑提问也建锚，系统假设卡等待用户操作。Dialogue 回灌统一读取所有 session 的 completed `{chat,hypothesis,confusion}` scope（含 agent-only 疑惑 question，probe 仍排除），而 API turn 列表继续按 session 过滤；durable 请求把产生端 session 逐请求传给学习 payload。新客户端只在对话卡片主动结算假设，三处认知更新区与 CLI 列表均只读；deprecated legacy API 仅为旧客户端转发兼容。归属矩阵、ambiguous/Jaccard 防双计与 confusion FIFO 语义不变。 |
 | Turn 级上下文绑定（2026-08-01） | ✅ | `DialogueTurnContext` / `DialogueTurnBinding` 是 frozen typed value object；digest 覆盖 canonical target 事实而不覆盖 capture 时间。API 在 user INSERT 前冻结 `kind/ref/generation/title/evidence`，`SocraticDialogue`、learn queue、engine analyzer、raw event、candidate/ledger provenance 与 settlement 只消费同一 binding；bound stale 只能 drop，不能读取 current anchor 猜测归属。CLI/OpenClaw 继续显式 `legacy_direct` 兼容。 |
 | 三端「聊聊口味」长列表与证据展示（v0.3.191+） | ✅ | `/web`、`/m/` 与扩展 side panel 的确认卡 / 疑惑提问都按自然高度进入独立滚动区，不会在固定页高中共同缩短后被裁掉；待聊 inbox 自己限高滚动，底部 composer 始终留在视口。三端重绘遵循 stick-to-bottom：只有读者原本贴近底部或主动发送 / 进入页面时才跟随最新消息，向上阅读则保留 `scrollTop`，并按 durable turn id 恢复已展开依据；移动端额外保留草稿与焦点。共享 renderer 会过滤纯数字、UUID、事件 / note 前缀、BVID 与裸哈希等机器 ID，若无可读证据则整块「依据」隐藏；这只是 UI 展示清洗，不修改 durable payload 或内部证据归属。移动 Web、桌面 Web 与扩展 side panel 现按 `session=popup` 读取并对齐 `{chat,hypothesis,confusion,probe,avoidance_probe}` 可见历史；`delight` 仍留在推荐卡的独立内聊中。真实三端请求验证覆盖长卡、待聊独立滚动、探针聊天跨消息 / 主对话恢复、结算状态跨客户端投影与 composer 可见性。 |
-| 对话窗口 + 时间事实（v0.3.182+） | ✅ | `DIALOGUE_WINDOW_TURNS=20`：`_history_to_messages` 截断到最近 20 轮。legacy 历史保留创建时定死的本地绝对前缀 `[MM-DD HH:mm]`；Agent 历史以引用记录分开保存 `role`、`content`、`local_time` 和可选 `reply_context`，避免时间标签成为回答模板。SQLite 无时区 `created_at` 仍由公开 `format_dialogue_turn_timestamp(..., local_timezone=...)` 单点转本地；当前时间只追加在当轮 user prompt 尾部。legacy 非 CLI Dialogue 回灌所有 session 的 completed `chat/hypothesis/confusion`（probe 排除），显式 Agent `session_id` 仅恢复本会话；API 可见列表仍按 session 过滤。 |
+| 对话窗口 + 时间事实（v0.3.182+） | ✅ | `DIALOGUE_WINDOW_TURNS=20`：`_history_to_messages` 截断到最近 20 轮。legacy 历史保留创建时定死的本地绝对前缀 `[MM-DD HH:mm]`；Agent 历史以引用记录分开保存 `role`、`content`、`local_time` 和可选 `reply_context`，避免时间标签成为回答模板。有较早轮次时，将最新用户发言及其后全部记录单列为时间更晚的最近一轮，减少相似编号混淆；两段合起来仍保留完整窗口、后续假设/疑惑卡片和原顺序。SQLite 无时区 `created_at` 仍由公开 `format_dialogue_turn_timestamp(..., local_timezone=...)` 单点转本地；当前时间只追加在当轮 user prompt 尾部。legacy 非 CLI Dialogue 回灌所有 session 的 completed `chat/hypothesis/confusion`（probe 排除），显式 Agent `session_id` 仅恢复本会话；API 可见列表仍按 session 过滤。 |
 | 对话结算 settles（v0.3.182+；单队列 executor） | ✅ | `build_dialogue_insight_prompt(..., anchor=None)` 保持模块级静态 system + `sort_keys=True`，无锚输入/输出逐字节不变；非空 anchor 只在 user message 加契约。`learn_from_dialogue` 仅在**无活锚的 scope='chat'** 处理检索式 settles；锚定轮跳过检索式 settles，`support/contradict/revise/answer` 由锚处理器在当前 worker 内调用 `_apply_*`。普通 `speculation/insight/confusion` settles 同样直接调用 worker-only apply，不再 submit 自己，也不直调旧 direct executor。apply 总是先采用 stored winner payload，按 frozen kind/ref/generation 做 exact validation；stale/failed dependency 在 receipt 前终止。故障边界固定为 event → object → derived → rebuild marker → `applied=1` → projection → anchor release，并提供七个精确 checkpoint。object、derived upsert、marker set-union 与 ledger stable key 均可安全重放；`applied=1` 后只走 publication-only，不再调用前三类 mutator。白名单仍等于当轮 `active_list`，台账保留 `turn_id`；hash8=SHA-256(NFC+strip+空白折叠)hex 前 8，碰撞升 hex16。 |
 | 疑惑对象「看不懂」（`soul/confusion.py` + `confusions` 表，v0.3.175+） | ✅ | 当系统无法干净解读某行为时产出**疑惑**（不写画像，只驱动澄清与冻结）。两产生源：①觉察——`analyze_with_confusions()` + 独立 builder `build_awareness_with_confusions_prompt`（静态 system，入 invariance 清单；`analyze()`/`build_awareness_prompt` 一字不动，`cognition_cycle` 切新 API 属有意变更），候选 ≤2/轮、白名单校验落库；②推测僵局——`SpeculatorTickResult.stalemate`=expire 时 `0<confirmation_count<threshold`（现存字段判定），pipeline 转疑惑。状态机 `open→clarifying→resolved\|dismissed`（+TTL `expired`）；`clarifying` 全局 ≤1 由 partial unique index 跨连接原子保证。TTL 扫描并入 12h `cognition_cycle` |
 | 疑惑澄清三路 + 唯一结算所有者 + 冻结（v0.3.182+） | ✅ | **ask**：durable chat `scope="confusion"` 先 claim `clarifying` 并立即建锚，72h 冷却持久化于 `asked_at`；待聊列表的显式用户 open 可传 `ignore_cooldown`，只绕过时间冷却，数据库 partial unique index 的全局 `clarifying <= 1` 仍强制生效。API 完成侧效应不再调用 `resolve/defer`，唯一所有者是串行学习队列中的锚处理器。分类结果先写 `confusions.replay_queue`（FIFO、上限 5、超限逐出最旧并记 dropped 台账），队头失败保留，新轮只能入尾；成功后从队头续跑。四种锚释放都会清队列并记 dropped；12h `CognitionCycle` 先重放**任意状态的非空队列**（覆盖 resolve 已提交、pop 前崩溃的 terminal 行，并续做未 applied 对象收据），再扫描晚于 ask receipt 且 completed、尚无 payload receipt 的 classification gap。三出口仍为 `real_interest` / `proxy_behavior` / `dismissed`；两次 ambiguous 走 defer，恢复 open 行时不重复增加 defer_count。topic 冻结与 held-update 重放状态机保持不变。 |
@@ -1030,6 +1052,8 @@ queue/guard。每个 `SocraticDialogue` 实例用独立异步锁串行执行完�
 
 `stream_agent_reply()` 使用 `build_socratic_dialogue_prompt(..., socratic=False)`，提供按需深度风格；新旧入口同时共享 `build_socratic_dialogue_prompt()` 的收敛规则：明确需求直接回应，普通需求默认最多澄清一轮，主动探索连续两轮提问后总结并等待用户继续。信息足够即可结束，不以画像完整为继续追问的理由。最近 20 轮历史作为一份明确标注的 JSON 引用记录进入上下文，原角色、原正文、本地时间和回复目标分字段保存，不再把系统时间前缀拼到历史 assistant 消息上作为回答示范。已有历史中泄露的标签仍保留在原文中，时间问答和明确引用不丢信息；不清洗模型输出或修改数据库。该选择不增加分类模型调用、不缩减复杂任务预算，旧 `respond()` 的历史格式保持，但同样遵循共享收敛规则；其苏格拉底式探索仅在用户主动要求时使用。
 
+Agent 引用历史在存在较早用户轮次时分成两个 JSON 段：较早历史，以及明确标注时间更晚的最近一轮。分界取最后一条历史用户发言，最近段同时保留它之后的助手答复、独立假设卡片和疑惑问题；两段不重复、不删减记录，仍放在同一个 user 引用消息内。当前用户请求和冻结的 `dialogue_binding` 留在最后的独立消息中，不因历史分段而改变回复目标。此调整修复了真实模型在密集相似数字历史中把最新原文误读为较早值的复现；原失败请求经生产渲染器分段后，真实 GPT-6 Luna 连续 3 次准确复述，另外两组名称/数字变体也通过。该回放只证明所测请求，不代表任意模型均能保证逐字复述。
+
 `stream_agent_reply()` 在构建本轮上下文时读取 `LLMService.memory.render_agent_notes_prompt()`，
 仅 chat scope 且角色可 read_memory 时作为 user 引用加入；每轮重新读取，因此笔记
 更正/删除从后续对话生效。共享纪律明确网页、搜索摘要和笔记都不是执行指令。
@@ -1039,6 +1063,13 @@ queue/guard。每个 `SocraticDialogue` 实例用独立异步锁串行执行完�
 要求优先，非 natural 风格优先于旧全局语气中的冲突措辞；功能角色与工具审批规则不变。
 
 `stream_agent_reply(..., session_id="chat-…", dialogue_binding=binding)` 接受独立对话 id 和已冻结的回复目标。短期 prompt 只包含该会话近期完成的消息；长期画像与记忆继续共享。省略 `session_id` 的旧调用保留共享历史兼容，`clear_history()` 同时清除全部内存会话历史。绑定的卡片/问题标题进入本轮 prompt，同一 binding 随学习任务提交并冻结目标锚，避免把回复记到后来切换的目标上。
+
+`stream_agent_reply()` 将模型提示词与原始用户请求分开传给 loop：`user_message` 仍包含
+时间、引用资料和输出语言规则，`original_user_message` 只包含当轮用户原文。工具协议正文
+检查据此保留用户主动索要的 JSON/代码/原值，而不会把系统附加的“Keep JSON keys”误当作
+原样输出请求。`final` 同时作为历史和学习队列的答复；协议空答复纠正后仍失败时沿用异常
+回滚，不形成成功的空会话。旧单跳 `respond()` / `respond_stream()` 不经过此 AgentLoop
+检查；详见 [Agent 模块](agent.md#agentloop)。
 
 ### DialogueAnchorManager / ConfusionManager
 

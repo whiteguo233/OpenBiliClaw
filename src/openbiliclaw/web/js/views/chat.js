@@ -1421,6 +1421,19 @@ function render() {
   const inputRow = document.createElement("div");
   inputRow.className = "chat-input-row";
 
+  const sourceGuide = document.createElement("details");
+  sourceGuide.className = "chat-source-guide";
+  sourceGuide.innerHTML = `
+    <summary>添加来源 · 说明与示例</summary>
+    <div class="chat-source-guide-body" role="region" aria-label="添加来源说明与示例" tabindex="0">
+      <p>把网站或 RSS 地址发给阿B，说明想看什么。试跑确认后，就会定期采集，通过筛选的内容会进入推荐。</p>
+      <p class="chat-source-guide-example"><strong>网站示例</strong>“帮我添加这个网站：[网址]，只看轻小说相关内容。”</p>
+      <p class="chat-source-guide-example"><strong>RSS 示例</strong>“订阅这个 RSS：[订阅地址]，每天采集一次。”</p>
+      <p>需要登录或验证时，阿B会引导你操作。频率、占比和启停在「自定义来源」管理。</p>
+      <p>采集问题会在来源卡提示；完整异常历史可在桌面网页「设置 → 日志 → 异常报警」查看。</p>
+    </div>`;
+  inputRow.appendChild(sourceGuide);
+
   let textarea = document.createElement("textarea");
   textarea.className = "chat-input";
   textarea.id = "chat-input";

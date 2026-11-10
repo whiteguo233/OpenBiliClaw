@@ -12,6 +12,7 @@ import argparse
 import json
 import mimetypes
 import threading
+import time
 from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,7 +74,9 @@ class SurfaceStub:
 
 
 @contextmanager
-def surface_server(port: int = 0) -> Iterator[tuple[str, SurfaceStub]]:
+def surface_server(
+    port: int = 0, *, recommendation_delay: float = 0.0
+) -> Iterator[tuple[str, SurfaceStub]]:
     state = SurfaceStub()
 
     class Handler(BaseHTTPRequestHandler):
@@ -141,6 +144,8 @@ def surface_server(port: int = 0) -> Iterator[tuple[str, SurfaceStub]]:
                     }
                 )
             elif path == "/api/recommendations":
+                if recommendation_delay:
+                    time.sleep(recommendation_delay)
                 self._reply({"items": synthetic_cards()})
             elif path == "/api/recommendations/platform-availability":
                 self._reply({"total_available": 3, "by_platform": {"instagram": 3}})
@@ -232,7 +237,11 @@ def test_instagram_coverless_cards_keep_actions_visible(
         errors: list[str] = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.add_init_script("localStorage.setItem('openbiliclaw.webui.autoLoadOnScroll', '0')")
-        page.goto(f"{base_url}/{surface}/")
+        # The shell's load event precedes its asynchronous recommendation fetch.
+        # Keep the rendering assertion's budget separate from data loading.
+        with page.expect_response(base_url + "/api/recommendations") as recommendations:
+            page.goto(f"{base_url}/{surface}/")
+        assert recommendations.value.status == 200
         selector = ".video-card" if surface == "web" else ".card"
         cards = page.locator(selector)
         playwright_api.expect(cards).to_have_count(3)
@@ -281,7 +290,12 @@ def test_instagram_coverless_cards_keep_actions_visible(
 def test_instagram_mobile_scroll_keeps_chat_action_above_floating_control(width: int) -> None:
     """A completed scroll must not let the back-to-top button steal the tap."""
     playwright_api = pytest.importorskip("playwright.sync_api")
-    with surface_server() as (base_url, _state), playwright_api.sync_playwright() as playwright:
+    # Exercise a response beyond the default 5s UI assertion timeout but within
+    # the app's existing 12s read budget. Card rendering still gets its own 5s.
+    with (
+        surface_server(recommendation_delay=6.0 if width == 768 else 0.0) as (base_url, _state),
+        playwright_api.sync_playwright() as playwright,
+    ):
         browser = playwright.chromium.launch(channel="chrome", headless=True)
         context = browser.new_context(viewport={"width": width, "height": 844})
         context.route(
@@ -291,7 +305,9 @@ def test_instagram_mobile_scroll_keeps_chat_action_above_floating_control(width:
             ),
         )
         page = context.new_page()
-        page.goto(base_url + "/m/")
+        with page.expect_response(base_url + "/api/recommendations") as recommendations:
+            page.goto(base_url + "/m/")
+        assert recommendations.value.status == 200
         cards = page.locator(".card")
         playwright_api.expect(cards).to_have_count(3)
         cards.nth(2).scroll_into_view_if_needed()

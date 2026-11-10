@@ -58,7 +58,7 @@ def inventory(root: Path = ROOT) -> list[dict[str, str]]:
                 fn = ast.unparse(node.func)
                 leaf = self.aliases.get(fn, fn.rsplit(".", 1)[-1])
                 family = ""
-                route = "LLMService -> sponsored SDK"
+                route = "LLMService -> configured instance chain; free adapter -> SDK"
                 if (
                     "/api/" in self.rel
                     and self.scope == "probe_config_service"
@@ -87,7 +87,7 @@ def inventory(root: Path = ROOT) -> list[dict[str, str]]:
                     or "llm" in fn.lower()
                     or "registry" in fn.lower()
                 ):
-                    family, route = "text/structured", "project helper / Registry -> sponsored SDK"
+                    family, route = "text/structured", "project helper / Registry -> configured instance; free adapter -> SDK"
                 elif (
                     leaf in {"_collect_text", "_collect_text_with_last", "collect_json", "query"}
                     and "/eval/" in self.rel
@@ -99,7 +99,7 @@ def inventory(root: Path = ROOT) -> list[dict[str, str]]:
                 elif leaf in {"embed", "embed_document", "embed_image"}:
                     family, route = (
                         "embedding_image" if leaf == "embed_image" else "embedding_text",
-                        "EmbeddingService -> sponsored adapter (isolated cache)",
+                        "EmbeddingService -> independent configured embedding; free BGE adapter preserves cache",
                     )
                 elif leaf == "complete_provider" and "/api/" in self.rel:
                     family, route = "probe", "explicit configured-provider connectivity check"

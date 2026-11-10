@@ -1369,7 +1369,7 @@ wheels = [
 
 [[package]]
 name = "openbiliclaw"
-version = "0.3.234"
+version = "0.3.235"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1384,6 +1384,7 @@ dependencies = [
     { name = "httpx", extra = ["socks"] },
     { name = "openai" },
     { name = "pillow" },
+    { name = "playwright" },
     { name = "prompt-toolkit" },
     { name = "pydantic" },
     { name = "qrcode" },
@@ -1441,13 +1442,14 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "google-genai", specifier = ">=1.66" },
     { name = "httpcore", specifier = ">=1.0,<2" },
-    { name = "httpx", extras = ["socks"], specifier = ">=0.28" },
+    { name = "httpx", extras = ["socks"], specifier = ">=0.28,<1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "ollama", marker = "extra == 'local-llm'", specifier = ">=0.4" },
     { name = "openai", specifier = ">=1.0,<3" },
     { name = "opencc-python-reimplemented", marker = "extra == 'dev'", specifier = ">=0.1.7" },
     { name = "pillow", specifier = ">=10.0" },
-    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40" },
+    { name = "playwright", specifier = ">=1.48" },
+    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.48" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyinstaller", marker = "extra == 'packaging'", specifier = ">=6.11" },

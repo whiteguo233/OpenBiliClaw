@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,7 @@ from openbiliclaw.decision.models import (
     ScoreQuestion,
 )
 from openbiliclaw.discovery import jev_evaluator as evaluator_module
+from openbiliclaw.discovery.eval_payload import InputBudgetFailure
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 
 if TYPE_CHECKING:
@@ -50,16 +52,16 @@ def native_evidence(
         "topic": "t1",
         "franchise": "u",
         "style": "deep_focus",
-        "temporal_class": "evergreen",
-        "validity": "none",
-        "evidence": "u",
-        "deadline": "u",
+        "temporal": "evergreen",
+        "evidence": "e0",
     }
     answers: dict[str, DecisionAnswer] = {}
     for key, question in request.questions.items():
         _, field = key.split(".")
         if isinstance(question, ChoiceQuestion):
             selected = (choices or {}).get(key, (choices or {}).get(field, defaults[field]))
+            if field == "evidence" and selected not in question.criteria:
+                selected = next(iter(question.criteria))
             answers[key] = ChoiceAnswer(
                 choice=selected,
                 probabilities={option: float(option == selected) for option in question.criteria},
@@ -112,6 +114,129 @@ class NativeProvider:
         pass
 
 
+async def test_local_preparation_does_not_block_the_service_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    yielded: list[bool] = []
+    source_view = evaluator_module.candidate_text_view
+
+    def slow_local_view(*args: Any, **kwargs: Any) -> Any:
+        # The callback is queued after evaluation starts. A synchronous packer
+        # prevents it from running; a worker can wait without stalling HTTP.
+        yielded.append(release.wait(timeout=1))
+        return source_view(*args, **kwargs)
+
+    monkeypatch.setattr(evaluator_module, "candidate_text_view", slow_local_view)
+    provider = NativeProvider()
+    adapter = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+    task = asyncio.create_task(adapter.evaluate(profile_summary={}, content_items=[ITEM]))
+    asyncio.get_running_loop().call_soon(release.set)
+    try:
+        result = await task
+    finally:
+        release.set()
+    assert yielded and all(yielded), "local packing blocked the shared service event loop"
+    assert isinstance(result[0], dict)
+    assert len(provider.requests) == 1
+
+
+async def test_cancellation_during_local_preparation_never_dispatches_a_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = asyncio.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    loop = asyncio.get_running_loop()
+    source_view = evaluator_module.candidate_text_view
+
+    def held_view(*args: Any, **kwargs: Any) -> Any:
+        loop.call_soon_threadsafe(entered.set)
+        try:
+            assert release.wait(timeout=10), "test did not release local preparation"
+            return source_view(*args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(evaluator_module, "candidate_text_view", held_view)
+    provider = NativeProvider()
+    adapter = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+    task = asyncio.create_task(adapter.evaluate(profile_summary={}, content_items=[ITEM]))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 10)
+    assert provider.requests == []
+
+
+async def test_default_batch_fills_selected_window_beyond_four_candidates() -> None:
+    model = "operator-roomy-jev"
+    provider = NativeProvider(
+        lambda request: native_evidence(request).model_copy(
+            update={"requested_model": model, "actual_model": model}
+        )
+    )
+    budget = resolve_jev_context(model, {model: JevContextLimits(128000, 128000)})
+    adapter = JevContentEvaluator(
+        provider, model=model, context_budget=budget, config=JevEvaluationConfig()
+    )
+    items = [{**ITEM, "content_id": f"candidate-{index}"} for index in range(8)]
+    results = await adapter.evaluate(profile_summary={}, content_items=items)
+    assert all(isinstance(row, dict) for row in results)
+    assert len(provider.requests) == 1
+    assert len(provider.requests[0].questions) == 64
+    assert budget.fits_request(provider.requests[0])
+
+
+async def test_short_later_candidate_fills_an_earlier_request_without_reassessment() -> None:
+    provider = NativeProvider(
+        lambda request: native_evidence(
+            request, levels={"c0.score": 6.0, "c1.score": 7.0, "c2.score": 8.0}
+        )
+    )
+    adapter = JevContentEvaluator(
+        provider,
+        model=MODEL,
+        config=JevEvaluationConfig(
+            max_calls=2, max_request_bytes=48000, max_state_question_bytes=24000
+        ),
+    )
+    items = [
+        {**ITEM, "content_id": name, "body_text": text * length}
+        for name, text, length in (
+            ("medium", "a", 9000),
+            ("large", "b", 15000),
+            ("small", "c", 5000),
+        )
+    ]
+    results = await adapter.evaluate(profile_summary={}, content_items=items)
+    assert all(isinstance(row, dict) for row in results)
+    assert [row["score"] for row in results] == pytest.approx([6 / 9, 7 / 9, 8 / 9])
+    assert [
+        set(key.split(".")[0] for key in request.questions) for request in provider.requests
+    ] == [{"c0", "c2"}, {"c1"}]
+    assert sum(len(request.questions) for request in provider.requests) == 24
+    assert all(resolve_jev_context(MODEL).fits_request(request) for request in provider.requests)
+
+
+async def test_automatic_window_uses_room_previously_reserved_as_extra_byte_headroom() -> None:
+    provider = NativeProvider()
+    adapter = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+    items = [{**ITEM, "content_id": str(index), "body_text": "x" * 10000} for index in range(2)]
+    results = await adapter.evaluate(profile_summary={}, content_items=items)
+    assert all(isinstance(row, dict) for row in results)
+    assert len(provider.requests) == 1
+    measured = resolve_jev_context(MODEL).measure(
+        provider.requests[0].state, provider.requests[0].questions
+    )
+    assert 24000 < measured.max_state_question_bytes <= 32000
+    assert measured.request_bytes <= 64000
+
+
 def evaluator(
     provider: NativeProvider,
     **config_overrides: Any,
@@ -153,7 +278,7 @@ async def test_complete_typed_result_uses_rubric_not_distribution_confidence() -
     provider = NativeProvider()
     result = await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM])
     assert len(provider.requests) == 1
-    assert len(provider.requests[0].questions) == 10
+    assert len(provider.requests[0].questions) == 8
     assert provider.requests[0].purpose == "EVALUATE"
     row = result[0]
     assert row is not None
@@ -170,15 +295,44 @@ async def test_complete_typed_result_uses_rubric_not_distribution_confidence() -
     assert len(row["reason"]) <= 30
 
 
+async def test_offered_temporal_choices_cannot_create_an_invalid_class_mode_pair() -> None:
+    """Independent native questions must not require coordinated choices to be valid."""
+
+    def select_first_temporal_options(request: DecisionRequest) -> DecisionEvidence:
+        choices = {
+            key: next(iter(question.criteria))
+            for key, question in request.questions.items()
+            if isinstance(question, ChoiceQuestion)
+            and key.split(".")[1] not in {"reason", "topic", "franchise", "style"}
+        }
+        return native_evidence(request, choices=choices)
+
+    provider = NativeProvider(select_first_temporal_options)
+    result = await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM])
+    assert isinstance(result[0], dict), (
+        "legal independent choices produced invalid temporal evidence"
+    )
+    assert len(provider.requests) == 1
+
+
+async def test_temporal_outcomes_do_not_duplicate_classes_for_each_source_sentence() -> None:
+    provider = NativeProvider()
+    await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM])
+    question = provider.requests[0].questions["c0.temporal"]
+    assert isinstance(question, ChoiceQuestion)
+    assert len(question.criteria) == 8  # Six classes plus two durable, hook-only variants.
+    assert len(set(question.criteria.values())) == len(question.criteria)
+
+
 async def test_question_count_guard_moves_whole_candidates_without_repeat_evaluation() -> None:
     provider = NativeProvider()
     rows = await evaluator(provider, max_questions_per_request=10).evaluate(
         profile_summary={}, content_items=[ITEM] * 5
     )
     assert all(row is not None for row in rows)
-    assert [len(request.questions) for request in provider.requests] == [10] * 5
+    assert [len(request.questions) for request in provider.requests] == [8] * 5
     keys = [key for request in provider.requests for key in request.questions]
-    assert len(keys) == len(set(keys)) == 50
+    assert len(keys) == len(set(keys)) == 40
 
 
 async def test_candidate_text_is_shared_once_instead_of_repeated_in_evidence_question() -> None:
@@ -191,7 +345,7 @@ async def test_candidate_text_is_shared_once_instead_of_repeated_in_evidence_que
     wire = json.dumps(request.model_dump(mode="json"), ensure_ascii=False)
     assert wire.count(sentence) == 1
     assert sentence not in json.dumps(
-        request.questions["c0.evidence"].model_dump(mode="json"), ensure_ascii=False
+        request.questions["c0.temporal"].model_dump(mode="json"), ensure_ascii=False
     )
 
 
@@ -207,7 +361,7 @@ async def test_long_source_adapts_locally_preserving_conditions_and_original_inp
     assert original == before
     assert len(provider.requests) == 1
     request = provider.requests[0]
-    assert len(request.questions) == 10
+    assert len(request.questions) == 8
     content = request.state["untrusted_candidates"][0]["content"]
     assert content["text_coverage"]["is_partial"] is True
     visible = [span["text"] for span in content["text_spans"].values()]
@@ -225,11 +379,11 @@ async def test_packing_guards_do_not_split_or_silently_shorten_a_question(
         profile_summary={}, content_items=[ITEM, ITEM]
     )
     if "max_question_bytes" in guard:
-        assert rows == [None, None]
+        assert all(isinstance(row, InputBudgetFailure) for row in rows)
         assert not provider.requests
     else:
         assert all(row is not None for row in rows)
-        assert [len(request.questions) for request in provider.requests] == [10, 10]
+        assert [len(request.questions) for request in provider.requests] == [8, 8]
 
 
 async def test_more_than_choice_limit_of_explicit_conditions_stays_pending() -> None:
@@ -240,7 +394,7 @@ async def test_more_than_choice_limit_of_explicit_conditions_stays_pending() -> 
             {"body_text": "\n".join(f"条件{i}：除非验证否则不要使用。" for i in range(255))}
         ],
     )
-    assert result == [None]
+    assert len(result) == 1 and isinstance(result[0], InputBudgetFailure)
     assert not provider.requests
 
 
@@ -336,7 +490,7 @@ async def test_explicit_unknown_is_not_a_provider_failure_or_shared_franchise() 
     provider = NativeProvider(
         lambda request: native_evidence(
             request,
-            choices={"topic": "u", "style": "u", "temporal_class": "unknown"},
+            choices={"topic": "u", "style": "u", "temporal": "unknown"},
         )
     )
     row = (await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM]))[0]
@@ -396,9 +550,10 @@ async def test_exact_byte_boundaries_include_questions_and_envelopes(budget: str
         await evaluator(exact, **{budget: bound}).evaluate(profile_summary={}, content_items=[ITEM])
     )[0] is not None
     over = NativeProvider()
-    assert await evaluator(over, **{budget: bound - 1}).evaluate(
+    failed = await evaluator(over, **{budget: bound - 1}).evaluate(
         profile_summary={}, content_items=[ITEM]
-    ) == [None]
+    )
+    assert len(failed) == 1 and isinstance(failed[0], InputBudgetFailure)
     assert not over.requests
 
 
@@ -408,16 +563,17 @@ async def test_long_cjk_candidate_rejected_without_network_or_truncation() -> No
         profile_summary={},
         content_items=[{**ITEM, "body_text": "汉" * 12_000}, ITEM],
     )
-    assert result[0] is None and result[1] is not None
+    assert isinstance(result[0], InputBudgetFailure) and isinstance(result[1], dict)
     assert len(provider.requests) == 1
     assert all(key.startswith("c1.") for key in provider.requests[0].questions)
 
 
 async def test_oversize_profile_fails_without_dropping_dislikes() -> None:
     provider = NativeProvider()
-    assert await evaluator(provider).evaluate(
+    failed = await evaluator(provider).evaluate(
         profile_summary={"dislikes": ["不能删去" * 3000]}, content_items=[ITEM, ITEM]
-    ) == [None, None]
+    )
+    assert len(failed) == 2 and all(isinstance(row, InputBudgetFailure) for row in failed)
     assert not provider.requests
 
 
@@ -466,7 +622,7 @@ async def test_invalid_native_answers_never_leak_partial_scores(corruption: str)
         evidence = native_evidence(request)
         answers = dict(evidence.answers)
         if corruption == "missing":
-            del answers["c0.deadline"]
+            del answers["c0.temporal"]
         elif corruption == "extra":
             answers["c9.score"] = answers["c0.score"]
         elif corruption == "type":
@@ -488,21 +644,33 @@ async def test_invalid_native_answers_never_leak_partial_scores(corruption: str)
     ) == [None]
 
 
-@pytest.mark.parametrize(
-    "choices",
-    [
-        {"validity": "fresh_core", "evidence": "u"},
-        {"temporal_class": "evergreen", "validity": "event_expired_core", "evidence": "e0"},
-        {"temporal_class": "unknown", "validity": "fresh_hook", "evidence": "e0"},
-        {"temporal_class": "current", "validity": "event_expired_core", "evidence": "e0"},
-        {"validity": "none", "evidence": "e0"},
-    ],
-)
-async def test_inconsistent_or_ungrounded_temporal_claim_is_not_complete_unknown(
-    choices: dict[str, str],
-) -> None:
-    provider = NativeProvider(lambda request: native_evidence(request, choices=choices))
-    assert await evaluator(provider).evaluate(profile_summary={}, content_items=[ITEM]) == [None]
+async def test_every_offered_joint_alternative_is_complete_and_source_grounded() -> None:
+    from openbiliclaw.discovery.temporal import (
+        ground_temporal_evaluation,
+        parse_temporal_evaluation,
+    )
+
+    item = {
+        "title": "报名截止至 2026年10月3日 18:00 北京时间",
+        "body_text": "该版本已被替代。\n活动已经结束。\n如果活动已结束，请等待下次通知。",
+    }
+    provider = NativeProvider()
+    await evaluator(provider).evaluate(profile_summary={}, content_items=[item])
+    question = provider.requests[0].questions["c0.temporal"]
+    assert isinstance(question, ChoiceQuestion)
+    assert 3 < len(question.criteria) <= 255
+    assert "versioned_version_superseded_core_e1" in question.criteria
+    assert "current_event_expired_core_e2" in question.criteria
+    assert not any("event_expired" in key and key.endswith("e3") for key in question.criteria)
+    for option in question.criteria:
+        provider.respond = lambda request, option=option: native_evidence(
+            request, choices={"temporal": option}
+        )
+        row = (await evaluator(provider).evaluate(profile_summary={}, content_items=[item]))[0]
+        assert isinstance(row, dict), option
+        parsed = parse_temporal_evaluation(row)
+        assert parsed.evidence_complete, option
+        assert ground_temporal_evaluation(parsed, content_text=item) == parsed, option
 
 
 async def test_valid_temporal_claim_uses_exact_candidate_excerpt_and_deadline() -> None:
@@ -510,18 +678,15 @@ async def test_valid_temporal_claim_uses_exact_candidate_excerpt_and_deadline() 
     provider = NativeProvider(
         lambda request: native_evidence(
             request,
-            choices={
-                "temporal_class": "current",
-                "validity": "deadline_core",
-                "evidence": "e0",
-                "deadline": "d0",
-            },
+            choices={"temporal": "current_deadline_core_e0_d0", "evidence": "e1"},
         )
     )
     row = (
         await evaluator(provider).evaluate(
             profile_summary={},
-            content_items=[{"title": title}],
+            # The independent representative excerpt must never override the
+            # exact source already bound to a selected hard deadline.
+            content_items=[{"title": title, "body_text": "课程介绍算法与数据结构。"}],
             evaluated_at="2026-10-02T00:00:00Z",
         )
     )[0]
@@ -538,25 +703,19 @@ async def test_valid_temporal_claim_uses_exact_candidate_excerpt_and_deadline() 
 async def test_incomplete_or_invalid_timestamps_are_never_deadline_options(timestamp: str) -> None:
     provider = NativeProvider()
     await evaluator(provider).evaluate(profile_summary={}, content_items=[{"title": timestamp}])
-    question = provider.requests[0].questions["c0.deadline"]
+    question = provider.requests[0].questions["c0.temporal"]
     assert isinstance(question, ChoiceQuestion)
-    assert set(question.criteria) == {"u"}
+    assert not any("deadline" in key for key in question.criteria)
 
 
 async def test_qualified_future_state_is_not_evidence_of_expiry() -> None:
-    provider = NativeProvider(
-        lambda request: native_evidence(
-            request,
-            choices={
-                "temporal_class": "versioned",
-                "validity": "version_superseded_core",
-                "evidence": "e0",
-            },
-        )
-    )
-    assert await evaluator(provider).evaluate(
+    provider = NativeProvider()
+    await evaluator(provider).evaluate(
         profile_summary={}, content_items=[{"title": "如果这个版本已被替代，重新核验支持状态"}]
-    ) == [None]
+    )
+    question = provider.requests[0].questions["c0.temporal"]
+    assert isinstance(question, ChoiceQuestion)
+    assert not any("superseded" in key for key in question.criteria)
 
 
 async def test_many_excerpt_choices_use_an_explicit_partial_view_in_one_call() -> None:
@@ -568,7 +727,7 @@ async def test_many_excerpt_choices_use_an_explicit_partial_view_in_one_call() -
     assert len(provider.requests) == 1
     content = provider.requests[0].state["untrusted_candidates"][0]["content"]
     assert content["text_coverage"]["is_partial"] is True
-    assert len(provider.requests[0].questions["c0.evidence"].criteria) <= 255
+    assert len(provider.requests[0].questions["c0.temporal"].criteria) <= 255
 
 
 async def test_provider_failure_does_not_fabricate_zero_relevance(caplog: Any) -> None:
@@ -670,7 +829,7 @@ async def test_timeout_is_one_total_deadline_not_per_item_retry(
     )
     assert len(provider.requests) == 1
     assert provider.requests[0].deadline_monotonic == 100.2
-    assert len(provider.requests[0].questions) < 10 * 10  # More batches were waiting.
+    assert len(provider.requests[0].questions) < 8 * 10  # More batches were waiting.
 
 
 async def test_caller_cancellation_propagates() -> None:
@@ -779,8 +938,8 @@ def test_unpinned_model_is_rejected_before_requests(model: str) -> None:
         {"max_calls": 0},
         {"max_calls": True},
         {"budget_seconds": float("nan")},
-        {"max_request_bytes": 48001},
-        {"max_state_question_bytes": 24001},
+        {"max_request_bytes": 64001},
+        {"max_state_question_bytes": 32001},
         {"topic_labels": ["重复", "重复"]},
         {"franchise_labels": ["unknown"]},
     ],

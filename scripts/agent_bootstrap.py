@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -2973,19 +2974,97 @@ def local_install(project_dir: Path, install_cmd: str | None, python_override: s
     run_streaming([str(pip), "install", "-e", ".[dev]"], cwd=project_dir)
 
 
-def local_serve_command(project_dir: Path, host: str, port: int) -> list[str]:
-    """Return the command used to start the API server in local mode."""
-
+def local_runtime_command(project_dir: Path) -> list[str]:
+    """Select the installed runtime shared by deployment preparation and serving."""
     if detect_uv():
-        return ["uv", "run", "openbiliclaw", "serve-api", "--host", host, "--port", str(port)]
+        return ["uv", "run", "openbiliclaw"]
 
     venv_bin = project_dir / (".venv/Scripts" if os.name == "nt" else ".venv/bin")
     openbiliclaw = venv_bin / "openbiliclaw"
     if openbiliclaw.exists():
-        return [str(openbiliclaw), "serve-api", "--host", host, "--port", str(port)]
+        return [str(openbiliclaw)]
 
     python = venv_bin / ("python.exe" if os.name == "nt" else "python")
-    return [str(python), "-m", "openbiliclaw.cli", "serve-api", "--host", host, "--port", str(port)]
+    return [str(python), "-m", "openbiliclaw.cli"]
+
+
+def local_runtime_environment(project_dir: Path) -> dict[str, str]:
+    """Pin both child processes to this deployment; let config resolve data_dir."""
+    env = dict(os.environ)
+    env["OPENBILICLAW_PROJECT_ROOT"] = str(project_dir.resolve())
+    # This internal supervisor fence belongs to the parent instance, not to a
+    # new deployment. User-facing config/environment data_dir overrides remain.
+    env.pop("OPENBILICLAW_RUNTIME_DATA_DIR", None)
+    return env
+
+
+def local_serve_command(project_dir: Path, host: str, port: int) -> list[str]:
+    """Return the command used to start the API server in local mode."""
+    return local_runtime_command(project_dir) + ["serve-api", "--host", host, "--port", str(port)]
+
+
+def prepare_ego_for_deployment(project_dir: Path, mode: str) -> dict[str, Any]:
+    """Prepare once during local macOS deployment, without blocking other features on failure."""
+    reason = (
+        "docker_runtime_unsupported"
+        if mode == "docker"
+        else "platform_unsupported"
+        if sys.platform != "darwin"
+        else "external_host"
+        if any(
+            os.environ.get(name)
+            for name in (
+                "OPENBILICLAW_EGO_BROWSER",
+                "OPENBILICLAW_EGO_SERVER_NAME",
+                "OPENBILICLAW_EGO_PROFILE",
+            )
+        )
+        else ""
+    )
+    if reason:
+        return {"status": "skipped", "reason": reason, "available": False}
+    info("Preparing a private Ego Lite environment; the first download can take several minutes.")
+    command = local_runtime_command(project_dir) + ["sources", "prepare-ego"]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(project_dir),
+            env=local_runtime_environment(project_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1800,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "detail": "ego_setup_timeout", "available": False}
+    except OSError:
+        return {"status": "failed", "detail": "ego_setup_runtime_unavailable", "available": False}
+    # The CLI prints indented JSON; startup log lines may precede it. Never
+    # print raw stdout/stderr, which could contain unrelated config diagnostics.
+    payload: dict[str, Any] = {}
+    decoder = json.JSONDecoder()
+    for index, line in enumerate(result.stdout.splitlines(keepends=True)):
+        if not line.lstrip().startswith("{"):
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(
+                "".join(result.stdout.splitlines(keepends=True)[index:]).lstrip()
+            )
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and "setup_state" in parsed:
+            payload = parsed
+            break
+    if (
+        result.returncode == 0
+        and payload.get("setup_state") == "ready"
+        and payload.get("available") is True
+    ):
+        return {"status": "ready", "available": True}
+    detail = str(payload.get("detail", ""))
+    if not re.fullmatch(r"ego_setup_[a-z_]{1,80}", detail):
+        detail = "ego_setup_not_ready" if payload else "ego_setup_command_failed"
+    return {"status": "failed", "detail": detail, "available": False}
 
 
 def _connect_host_for_bind_host(host: str) -> str:
@@ -3184,6 +3263,7 @@ def start_local_backend(project_dir: Path, host: str, port: int) -> subprocess.P
         return subprocess.Popen(
             cmd,
             cwd=str(project_dir),
+            env=local_runtime_environment(project_dir),
             stdout=log_file,
             stderr=log_file,
             creationflags=0x00000008 | 0x00000200,
@@ -3191,6 +3271,7 @@ def start_local_backend(project_dir: Path, host: str, port: int) -> subprocess.P
     return subprocess.Popen(
         cmd,
         cwd=str(project_dir),
+        env=local_runtime_environment(project_dir),
         stdout=log_file,
         stderr=log_file,
         start_new_session=True,
@@ -3738,6 +3819,19 @@ def run(args: argparse.Namespace) -> int:
             except RuntimeError as exc:
                 emit(BootstrapResult("error", str(exc), {"step": "sponsored_runtime_install"}))
                 return 3
+
+    ego_setup = prepare_ego_for_deployment(project_dir, mode)
+    emit(
+        BootstrapResult(
+            "warning" if ego_setup["status"] == "failed" else "ok", "ego_preparation", ego_setup
+        )
+    )
+    if ego_setup["status"] == "failed":
+        info(
+            "Warning: Ego Lite is not ready; other installation steps will continue. "
+            "The backend retries preparation in the background; settings or "
+            "'openbiliclaw sources prepare-ego' can retry explicitly."
+        )
 
     if args.skip_start:
         remaining = detect_missing_secrets(project_dir)

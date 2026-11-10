@@ -229,7 +229,7 @@ def test_aggregate_release_helper_lists_safari_dmg_when_asset_exists() -> None:
 def test_extension_release_workflow_builds_safari_dmg_with_or_without_apple_credentials() -> None:
     workflow = read_text(".github/workflows/release-extension.yml")
 
-    assert "runs-on: macos-14" in workflow
+    assert "runs-on: macos-15" in workflow
     assert "npm run package:safari -- --notarize" in workflow
     assert "npm run package:safari" in workflow
     assert "unsigned ad-hoc Safari DMG" in workflow

@@ -1,0 +1,85 @@
+{
+  "ego_version": "0.6.2.9",
+  "sample_interval_requested_seconds": 0.02,
+  "scope": "isolated official managed macOS Ego, no personal profile or production server",
+  "network_note": "System DNS resolved public hosts to 198.18.0.0/15. Real collection used live Cloudflare DoH preflight in the private verification process; production DNS and proxy settings are unchanged.",
+  "checks": {
+    "probe": {
+      "samples": 802,
+      "duration_seconds": 28.601,
+      "foreground_samples": 0,
+      "visible_window_samples": 379,
+      "description": "Rejected candidate: OS hidden/background launch still displayed onboarding windows."
+    },
+    "formal": {
+      "samples": 267,
+      "duration_seconds": 9.824,
+      "foreground_samples": 0,
+      "visible_window_samples": 100,
+      "description": "Before fix: two production adapter openings displayed native windows; network guard rejected system fake IP DNS before navigation."
+    },
+    "fresh": {
+      "samples": 1250,
+      "duration_seconds": 44.471,
+      "foreground_samples": 0,
+      "visible_window_samples": 0,
+      "description": "After fix: verified signed app with a completely new profile; actual onboarding and native handshake, no model or website calls."
+    },
+    "live": {
+      "samples": 492,
+      "duration_seconds": 17.882,
+      "foreground_samples": 0,
+      "visible_window_samples": 0,
+      "description": "After fix: two successful Solidot collection rounds with cold host restart and one manual-session screenshot using live DoH preflight."
+    }
+  },
+  "live_results": [
+    {
+      "step": 0,
+      "time": 1794077434.376137,
+      "status": "ok",
+      "error": "",
+      "detail": "",
+      "items": [
+        {
+          "title": "Silver Lake 和 PIF 磋商收购 Unity Software",
+          "url": "https://www.solidot.org/story?sid=85816"
+        },
+        {
+          "title": "中国三季度 CO2 排放下降 3%",
+          "url": "https://www.solidot.org/story?sid=85817"
+        },
+        {
+          "title": "NASA 通过 AI 生成图像宣布 X-70 试验机",
+          "url": "https://www.solidot.org/story?sid=85818"
+        }
+      ]
+    },
+    {
+      "step": 1,
+      "time": 1794077440.13248,
+      "status": "ok",
+      "error": "",
+      "detail": "",
+      "items": [
+        {
+          "title": "Silver Lake 和 PIF 磋商收购 Unity Software",
+          "url": "https://www.solidot.org/story?sid=85816"
+        },
+        {
+          "title": "中国三季度 CO2 排放下降 3%",
+          "url": "https://www.solidot.org/story?sid=85817"
+        },
+        {
+          "title": "NASA 通过 AI 生成图像宣布 X-70 试验机",
+          "url": "https://www.solidot.org/story?sid=85818"
+        }
+      ]
+    },
+    {
+      "step": "screenshot",
+      "time": 1794077444.926481,
+      "bytes": 78551
+    }
+  ]
+}

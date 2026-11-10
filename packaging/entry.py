@@ -84,8 +84,12 @@ def _verify_packaged_sponsored_runtime(resources: Path) -> None:
     # signing/installation without making model calls or disclosing credentials.
     result = subprocess.run(
         [
-            str(binary), "--policy", str(bundle / "sponsored-policy.json"),
-            "--signature", str(bundle / "sponsored-policy.sig"), "--check-policy",
+            str(binary),
+            "--policy",
+            str(bundle / "sponsored-policy.json"),
+            "--signature",
+            str(bundle / "sponsored-policy.sig"),
+            "--check-policy",
         ],
         capture_output=True,
         timeout=30,
@@ -519,7 +523,10 @@ def _ensure_embedding_model_async() -> None:
 
         cfg = load_config()
         emb = cfg.llm.embedding
-        if cfg.llm.sponsored.uses_cloud_embedding:
+        if (
+            cfg.llm.embedding.provider == "siliconflow_free"
+            or cfg.llm.sponsored.uses_cloud_embedding
+        ):
             return  # Free text vectors use cloud BGE, including with chat fallback.
         if str(emb.provider).strip().lower() != "ollama":
             return
@@ -627,12 +634,17 @@ def _seed_bundled_embedding_model(bundled_resources: Path, config_path: Path) ->
         from openbiliclaw.runtime.ollama_supervisor import start_managed_ollama_at
 
         cfg = load_config()
-        if cfg.llm.sponsored.uses_cloud_embedding:
+        if (
+            cfg.llm.embedding.provider == "siliconflow_free"
+            or cfg.llm.sponsored.uses_cloud_embedding
+        ):
             return False  # Preserve the local seed until local embedding is selected.
         provider = str(cfg.llm.embedding.provider).strip().lower()
         if provider not in ("", "ollama"):
             return False  # user chose a remote embedding provider — respect it
-        if cfg.llm.sponsored.enabled:
+        from openbiliclaw.config import uses_siliconflow_free
+
+        if uses_siliconflow_free(cfg.llm):
             from urllib.parse import urlsplit
 
             selected_model = cfg.llm.embedding.model.strip()
@@ -1232,7 +1244,9 @@ def main() -> None:
 
         initial_config, _ = load_config_with_diagnostics()
         if initial_config.llm.sponsored.relay_url or installed_runtime_command():
-            initial_config.llm.sponsored = replace(initial_config.llm.sponsored, enabled=True)
+            initial_config.llm.sponsored = replace(
+                initial_config.llm.sponsored, enabled=True, fallback_to_other_free_model=False
+            )
             save_config(initial_config)
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
@@ -1294,7 +1308,9 @@ def main() -> None:
     if os.environ.get("OPENBILICLAW_SELFTEST"):
         if getattr(sys, "frozen", False):
             _verify_packaged_sponsored_runtime(bundled_resources)
-            if seeded and (runtime_config is None or not runtime_config.llm.sponsored.enabled):
+            from openbiliclaw.config import uses_siliconflow_free
+
+            if seeded and (runtime_config is None or not uses_siliconflow_free(runtime_config.llm)):
                 raise RuntimeError("Fresh packaged config did not enable its built-in provider")
         create_app()
         _close_splash()
@@ -1415,7 +1431,11 @@ def main() -> None:
 
     import uvicorn
 
-    app = create_app()
+    # Prepare managed Ego during desktop deployment, after migration and
+    # single-instance guards resolve the active data directory. The API owns
+    # the background task; selftests and worker children do not opt in.
+    app = create_app(prepare_ego_on_startup=True)
+
     if getattr(app, "state", None) is not None:
         app.state.api_listen_host = host
         app.state.api_listen_port = port

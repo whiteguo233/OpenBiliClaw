@@ -1,0 +1,155 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "event_count": 200,
+  "calls": [
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 84.54
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 122.28
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 37.22
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33239,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 34.95
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33246,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 31.92
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33247,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 22.79
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33200,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 61.17
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 18723,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 17.59
+    },
+    {
+      "caller": "soul.profile_build",
+      "task_id": "llm.structured",
+      "input_bytes": 9648,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 6.44
+    }
+  ],
+  "progress": [
+    {
+      "done": 1,
+      "total": 8,
+      "seconds": 84.8
+    },
+    {
+      "done": 2,
+      "total": 8,
+      "seconds": 122.02
+    },
+    {
+      "done": 3,
+      "total": 8,
+      "seconds": 122.6
+    },
+    {
+      "done": 4,
+      "total": 8,
+      "seconds": 154.53
+    },
+    {
+      "done": 5,
+      "total": 8,
+      "seconds": 157.56
+    },
+    {
+      "done": 6,
+      "total": 8,
+      "seconds": 177.33
+    },
+    {
+      "done": 7,
+      "total": 8,
+      "seconds": 194.93
+    },
+    {
+      "done": 8,
+      "total": 8,
+      "seconds": 238.5
+    }
+  ],
+  "planned_batches": 8,
+  "deadlines": {
+    "idle": 4290.0,
+    "absolute": 12270.0
+  },
+  "preference_seconds": 238.53,
+  "ok": true,
+  "total_seconds": 244.98
+}

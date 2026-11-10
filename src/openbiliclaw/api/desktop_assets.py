@@ -25,6 +25,7 @@ DESKTOP_SCRIPTS = (
     "/shared/dialogue-confirmation.js",
     "/shared/agent-chat.js",
     "/shared/source-status.js",
+    "/shared/custom-sources.js",
     "/shared/i18n.js",
     "/shared/director-client.js",
     "/shared/sponsored-settings.js",
@@ -36,6 +37,7 @@ DESKTOP_SCRIPTS = (
 _STYLESHEETS = (
     "/web/assets/css/app.css",
     "/web/assets/css/classic.css",
+    "/shared/custom-sources.css",
     "/shared/jev-settings.css",
     "/shared/sponsored-settings.css",
 )

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.234"
+version = "0.3.235"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,10 +25,10 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx[socks]>=0.28",
+    "httpx[socks]>=0.28,<1",
     # Already installed by HTTPX; identify its CA bundle for image TLS reuse.
     "certifi",
-    # Public network-backend API pins cover-image connections against DNS rebinding.
+    # Public network-backend APIs pin Web and cover-image connections against DNS rebinding.
     "httpcore>=1.0,<2",
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
@@ -67,6 +67,9 @@ dependencies = [
     "cryptography>=41",
     "apscheduler>=3.10",
     "uvicorn>=0.32",
+    # Include the driver for chat-created browser sources in every install mode;
+    # Chromium itself is downloaded explicitly through the UI or browser install.
+    "playwright>=1.48",
 ]
 
 [project.optional-dependencies]
@@ -92,7 +95,8 @@ eval = [
     "claude-agent-sdk>=0.1",
 ]
 browser = [
-    "playwright>=1.40",
+    # Compatibility alias; the runtime driver is now a core dependency.
+    "playwright>=1.48",
 ]
 tls = [
     "cryptography>=41",

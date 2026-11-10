@@ -36,17 +36,20 @@ def _references(content: str) -> list[dict[str, Any]]:
 
 async def test_listed_source_can_be_identified_for_toggle(database: Database) -> None:
     registry = build_agent_tool_registry(AgentToolContext(database=database))
-    await registry.dispatch(
+    first = await registry.dispatch(
         "create_source",
-        {"source_type": "web", "name": "同名订阅", "strategy": "search", "query": "机械键盘"},
+        {"source_type": "bilibili", "name": "同名订阅", "strategy": "search", "query": "机械键盘"},
     )
-    await registry.dispatch(
+    second = await registry.dispatch(
         "create_source",
-        {"source_type": "web", "name": "同名订阅", "strategy": "search", "query": "露营"},
+        {"source_type": "bilibili", "name": "同名订阅", "strategy": "search", "query": "露营"},
     )
+    assert first.ok, first.content
+    assert second.ok, second.content
 
     listed = await registry.dispatch("list_sources", {})
     recipes = database.get_all_recipes()
+    assert len(recipes) == 2
     for recipe in recipes:
         assert recipe["id"] in listed.content
         assert recipe["config"]["query"] in listed.content

@@ -40,9 +40,12 @@ def select_local_embedding(config: Config) -> None:
 
 
 class SponsoredEmbeddingAdapter:
-    name = "sponsored"
+    name = "siliconflow_free"
     _base_url = "https://api.siliconflow.cn/v1"
     supports_image_embedding = False
+
+    def __init__(self, settings: Any = None) -> None:
+        self._settings = settings
 
     @staticmethod
     def is_multimodal_embedding_model(model: str) -> bool:
@@ -51,7 +54,7 @@ class SponsoredEmbeddingAdapter:
     async def embed(self, text: str, *, model: str = EMBEDDING_MODEL) -> list[float]:
         if model != EMBEDDING_MODEL:
             raise ValueError("embedding model is fixed by the signed contract")
-        provider = shared_sponsored_provider()
+        provider = shared_sponsored_provider(model="Qwen/Qwen3-8B", settings=self._settings)
         if provider is None:
             raise SponsoredUnavailableError("sponsored embedding runtime unavailable")
         return list(await provider.embedding(text))
@@ -75,7 +78,7 @@ def build_sponsored_embedding_service(config: Config) -> EmbeddingService:
     )
     cache.initialize()
     return EmbeddingService(
-        SponsoredEmbeddingAdapter(),
+        SponsoredEmbeddingAdapter(config.llm.sponsored),
         model=EMBEDDING_MODEL,
         cache_model=EMBEDDING_MODEL,
         persistent_cache=cache,

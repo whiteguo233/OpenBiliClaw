@@ -34,8 +34,14 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.parametrize("separate_worker", [False, True])
+@pytest.mark.parametrize("echo_tailnet", [False, True])
+@pytest.mark.parametrize("echo_locale", [False, True])
 async def test_free_model_switch_applies_while_learning_is_running(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, separate_worker: bool
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    separate_worker: bool,
+    echo_tailnet: bool,
+    echo_locale: bool,
 ) -> None:
     import sys
 
@@ -55,6 +61,14 @@ async def test_free_model_switch_applies_while_learning_is_running(
     ctx.config.llm.sponsored = SponsoredRuntimeSettings(enabled=True, runtime_path=sys.executable)
     save_config(ctx.config, tmp_path / "config.toml")
     install_sponsored_settings(ctx.config.llm.sponsored)
+    from openbiliclaw.llm.registry import build_llm_registry
+
+    ctx.llm_registry = build_llm_registry(ctx.config)
+    ctx.llm_service.registry = ctx.llm_registry
+    alternate_id = next(
+        i for i, item in ctx.config.llm.instances.items() if item.model == "Qwen/Qwen3.5-4B"
+    )
+    old_adapter = ctx.llm_registry.get("siliconflow-free")
     preserved = (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
     finish = asyncio.Event()
     work = ctx.task_registry.track("active_background_learning", finish.wait())
@@ -64,9 +78,18 @@ async def test_free_model_switch_applies_while_learning_is_running(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8420"
         ) as client:
-            response = await client.put(
-                "/api/config", json={"llm": {"sponsored": {"model": "Qwen/Qwen3.5-4B"}}}
-            )
+            update = {
+                "llm": {
+                    "default_chain": [alternate_id, "siliconflow-free"],
+                },
+            }
+            if echo_locale:
+                # Desktop serializes the equivalent canonical language tag.
+                update["language"] = "zh-Hans"
+            if echo_tailnet:
+                # Both settings UIs echo unchanged Tailnet settings on save.
+                update["tailnet"] = (await client.get("/api/config")).json()["tailnet"]
+            response = await client.put("/api/config", json=update)
             assert response.status_code == 202, response.text
             for _ in range(100):
                 status = (await client.get("/api/config/apply-status")).json()
@@ -77,8 +100,11 @@ async def test_free_model_switch_applies_while_learning_is_running(
         drain.assert_not_called()
         assert not work.done()
         assert preserved == (ctx.soul_engine, ctx.dialogue_settlement_queue, ctx.runtime_controller)
-        assert ctx.config.llm.sponsored.model == "Qwen/Qwen3.5-4B"
-        assert current_sponsored_settings().model == "Qwen/Qwen3.5-4B"
+        assert ctx.config.llm.instances["siliconflow-free"].model == "Qwen/Qwen3-8B"
+        assert ctx.llm_registry.get()._model == "Qwen/Qwen3.5-4B"
+        assert ctx.llm_registry.get("siliconflow-free") is old_adapter
+        assert old_adapter._model == "Qwen/Qwen3-8B"
+        assert not current_sponsored_settings().enabled
         assert app.state.backend_config_generation == int(separate_worker)
     finally:
         finish.set()
@@ -336,7 +362,7 @@ def test_user_provider_fallback_change_requires_registry_rebuild() -> None:
     candidate = copy.deepcopy(config)
     candidate.llm.sponsored = replace(candidate.llm.sponsored, fallback_to_user_provider=True)
     try:
-        assert not ctx.try_apply_sponsored_config(candidate)
+        assert not ctx.try_apply_llm_instance_config(candidate)
         assert ctx.config is config
     finally:
         install_sponsored_settings(previous)
@@ -416,3 +442,20 @@ async def test_cookie_settings_keep_full_rebuild_even_when_coalesced_with_agent_
     assert ctx.account_sync_service.x_client._cookie == new_cookie
     if mode != "direct":
         assert ctx.agent_loop.max_steps == 63
+
+
+@pytest.mark.parametrize("language", ["en-US", "zh-Hant"])
+def test_chain_switch_with_real_language_change_still_requires_rebuild(
+    monkeypatch: pytest.MonkeyPatch, language: str
+) -> None:
+    from openbiliclaw.llm.base import LLMRegistry
+
+    config = Config(language="zh", llm=LLMConfig(instance_routing=True, default_chain=["old"]))
+    registry = LLMRegistry()
+    monkeypatch.setattr(registry, "is_chat_capable", lambda _instance: True)
+    ctx = RuntimeContext(config=config, llm_registry=registry)
+    candidate = copy.deepcopy(config)
+    candidate.llm.default_chain = ["new"]
+    candidate.language = language
+    assert not ctx.try_apply_llm_instance_config(candidate)
+    assert ctx.config is config

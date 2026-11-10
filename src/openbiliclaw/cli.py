@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import math
 import os
 import re
 import shutil
@@ -136,14 +137,19 @@ def _profile_analysis_timeout_seconds(
     event_count: int,
     requested: float | None,
     concurrency: int = 1,
+    batch_count: int | None = None,
 ) -> float | None:
     """Return stage-2's bounded wall clock for this bootstrap size."""
     if requested is not None:
         return requested if requested > 0 else None
-    chunks = max(
-        1,
-        (max(0, event_count) + DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE - 1)
-        // DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    chunks = (
+        max(1, batch_count)
+        if batch_count is not None
+        else max(
+            1,
+            (max(0, event_count) + DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE - 1)
+            // DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+        )
     )
     waves = (chunks + max(1, concurrency) - 1) // max(1, concurrency)
     return max(
@@ -158,6 +164,8 @@ def _profile_analysis_deadlines(
     event_count: int,
     requested: float | None,
     concurrency: int = 1,
+    batch_count: int | None = None,
+    request_timeout_seconds: float | None = None,
 ) -> tuple[float | None, float | None]:
     """Return stage 2's ``(idle_seconds, absolute_seconds)`` deadline pair.
 
@@ -171,9 +179,30 @@ def _profile_analysis_deadlines(
         event_count=event_count,
         requested=None,
         concurrency=concurrency,
+        batch_count=batch_count,
     )
     absolute = max(_INIT_PROGRESS_ABSOLUTE_SECONDS, scaled or 0.0)
-    return _INIT_PROGRESS_IDLE_SECONDS, absolute
+    idle = _INIT_PROGRESS_IDLE_SECONDS
+    if request_timeout_seconds is not None and request_timeout_seconds > 0:
+        from openbiliclaw.soul.preference_analyzer import (
+            PREFERENCE_RATE_LIMIT_MAX_RETRIES,
+            PREFERENCE_RATE_LIMIT_RETRY_SECONDS,
+        )
+
+        # A timed-out parent may need two sequential halves. Budget all three
+        # requests plus each request's bounded cooldowns, not a 300s guess.
+        # This is a worst-case cancellation ceiling, never an ETA.
+        chunk_budget = 3 * (
+            request_timeout_seconds
+            + PREFERENCE_RATE_LIMIT_MAX_RETRIES * PREFERENCE_RATE_LIMIT_RETRY_SECONDS
+        )
+        chunks = max(1, batch_count or math.ceil(event_count / DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE))
+        waves = math.ceil(chunks / max(1, concurrency))
+        idle = max(idle, chunk_budget + _INIT_PROFILE_ANALYSIS_RECOVERY_RESERVE_SECONDS)
+        absolute = max(
+            absolute, waves * chunk_budget + _INIT_PROFILE_ANALYSIS_RECOVERY_RESERVE_SECONDS
+        )
+    return idle, absolute
 
 
 def _timeout_minutes(seconds: float) -> int:
@@ -535,7 +564,7 @@ _EXTENSION_PRESENCE_REQUIRED_WARNING = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Mapping
+    from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
     from http.server import ThreadingHTTPServer
 
 
@@ -545,7 +574,7 @@ def _print_page_title(title: str, subtitle: str = "") -> None:
     console.print(Panel.fit(body, border_style="cyan"))
 
 
-def _print_status_panel(kind: str, title: str, body: str) -> None:
+def _print_status_panel(kind: str, title: str, body: str | Text) -> None:
     """Render a status panel with consistent visual semantics."""
     styles = {
         "success": "green",
@@ -557,7 +586,7 @@ def _print_status_panel(kind: str, title: str, body: str) -> None:
     console.print(Panel(body, title=title, border_style=styles.get(kind, "cyan")))
 
 
-def _print_key_value_table(title: str, rows: list[tuple[str, str]]) -> None:
+def _print_key_value_table(title: str, rows: Sequence[tuple[str, str | Text]]) -> None:
     """Render a key-value table for status-like commands."""
     table = Table(title=title, show_header=False, box=None, pad_edge=False)
     table.add_column("key", style="bold cyan", no_wrap=True)
@@ -565,6 +594,15 @@ def _print_key_value_table(title: str, rows: list[tuple[str, str]]) -> None:
     for key, value in rows:
         table.add_row(key, value)
     console.print(table)
+
+
+_TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _plain_terminal_text(value: object, *, style: str | None = None) -> Text:
+    """Render untrusted text literally after removing terminal controls."""
+    sanitized = _TERMINAL_CONTROL_RE.sub("", str(value))
+    return Text(sanitized, style=style) if style is not None else Text(sanitized)
 
 
 def _format_pause_on_disconnect_status(
@@ -1269,7 +1307,7 @@ def _run_api_server(*, host: str = "0.0.0.0", port: int = 8420) -> None:
         os.environ["OPENBILICLAW_FULL_WORKER"] = "1"
         recommendation_transport = ensure_recommendation_transport_env(load_config().data_path)
 
-    api_app = create_app()
+    api_app = create_app(prepare_ego_on_startup=True)
     state = getattr(api_app, "state", None)
     if state is not None:
         state.api_listen_host = host
@@ -2533,6 +2571,14 @@ def _save_embedding_config(
     from openbiliclaw.config import load_config_with_diagnostics, save_config
 
     config, diagnostics = load_config_with_diagnostics()
+    if config.llm.embedding.provider != provider:
+        config.llm.embedding.api_key = ""
+        config.llm.embedding.base_url = ""
+    if provider == "siliconflow_free":
+        config.llm.embedding.output_dimensionality = 1024
+        config.llm.embedding.multimodal_enabled = False
+        config.llm.embedding.fallback_enabled = False
+        config.llm.embedding.fallback_provider = ""
     config.llm.embedding.provider = provider
     config.llm.embedding.model = model
     if config.llm.sponsored.enabled and provider == "ollama":
@@ -2964,9 +3010,8 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
 def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool = False) -> None:
     """Phase 3 — embedding service (v0.3.20+ "有默认值的取舍提问").
 
-    Default = 1 (本地 Ollama bge-m3). Mirrors the question shape used by
-    docs/agent-install.md: each option carries a tradeoff explanation,
-    "不确定就回 1". Two advanced branches (custom OpenAI-compatible
+    Default = free (硅基流动 BGE-M3), with local Ollama as option 1.
+    Each option carries a tradeoff explanation. Two advanced branches (custom OpenAI-compatible
     endpoint / pin a different provider) are kept but de-emphasized so
     普通用户 don't get derailed.
 
@@ -2992,9 +3037,10 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         '"这条和你之前喜欢的那条是不是同一类"。和聊天 LLM 是分开的。[/dim]\n'
     )
     options = (
+        ("free", "硅基流动（免费 · BGE-M3）", "无需 Key、无需下载，独立于 LLM 实例"),
         (
             "1",
-            "本地 Ollama bge-m3 ★默认推荐",
+            "本地 Ollama bge-m3",
             "免费 / 离线 / 不消耗主 LLM 配额(自动装 Ollama + 拉 568MB 模型)",
         ),
         (
@@ -3019,11 +3065,26 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         table.add_row(label, name, desc)
     console.print(table)
     console.print(
-        "[dim]Tip:不确定就选 1。日常推荐质量已经够用且不消耗主 LLM 配额。"
-        "想再准一点选 2(Gemini),需要去 https://aistudio.google.com/apikey 拿 Key。[/dim]"
+        "[dim]推荐 free：硅基流动 BGE-M3，无需 Key 或本地下载。"
+        "希望本地运行选 1；已有其他服务可以选择对应 Provider。[/dim]"
     )
 
-    choice = typer.prompt("请选择 embedding 方案", default="1").strip()
+    choice = typer.prompt("请选择 embedding 方案", default="free").strip()
+
+    if choice in {"free", "siliconflow_free"}:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.sponsored_bundle import BundleError, ensure_runtime
+
+        settings = load_config().llm.sponsored
+        try:
+            if not settings.runtime_path and not settings.relay_url:
+                ensure_runtime()
+        except BundleError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            return
+        _save_embedding_config(provider="siliconflow_free", model="BAAI/bge-m3")
+        console.print("[green]已选择硅基流动免费 BGE-M3 Embedding。[/green]")
+        return
 
     if choice in {"0", "skip", "跳过"}:
         console.print("[dim]已跳过 embedding 配置,不修改当前设置。[/dim]")
@@ -3236,7 +3297,7 @@ def _interactive_runtime_config_setup() -> None:
       4) Optional per-module overrides (advanced, default skip).
     """
     _print_page_title("初始化前配置引导", "选 LLM、配 Embedding、填 B 站 Cookie")
-    console.print("[cyan]free.[/cyan] 硅基流动免费方案（默认，无需 Key，含 BGE-M3 文本向量）")
+    console.print("[cyan]free.[/cyan] 硅基流动（免费 · 预置 LLM 实例，无需 Key）")
     _print_provider_table()
 
     while True:
@@ -3265,14 +3326,52 @@ def _interactive_runtime_config_setup() -> None:
             except BundleError as exc:
                 console.print(f"[yellow]{exc}[/yellow]")
                 continue
-            cfg.llm.sponsored = replace(
-                cfg.llm.sponsored,
-                enabled=True,
-                model=DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL,
-                embedding_mode="cloud" if embedding_choice == "1" else "local",
-                fallback_to_other_free_model=True,
-                fallback_to_user_provider=False,
+            from openbiliclaw.config import (
+                effective_llm_instances,
+                effective_llm_routes,
             )
+
+            selected_model = DEFAULT_CHAT_MODEL if chosen == "1" else ALTERNATE_CHAT_MODEL
+            instances = effective_llm_instances(cfg.llm)
+            instance_id = next(
+                (
+                    key
+                    for key, item in instances.items()
+                    if item.provider_type == "siliconflow_free" and item.model == selected_model
+                ),
+                "siliconflow-free",
+            )
+            for bucket, route in effective_llm_routes(cfg.llm).items():
+                setattr(cfg.llm, bucket, route)
+            cfg.llm.instances = instances
+            cfg.llm.default_chain = [instance_id]
+            cfg.llm.instance_routing = True
+            cfg.llm.builtin_providers_version = 2
+            protected_ids = {
+                item
+                for route in effective_llm_routes(cfg.llm).values()
+                if not route.inherit
+                for item in route.chain
+            }
+            for issue in _diagnostics.issues:
+                parts = issue.field.split(".")
+                if issue.severity != "blocking" or len(parts) < 2 or parts[0] != "llm":
+                    continue
+                blocked_id = parts[2] if len(parts) > 3 and parts[1] == "instances" else parts[1]
+                if blocked_id in instances and blocked_id not in {instance_id, *protected_ids}:
+                    instances[blocked_id].enabled = False
+            if embedding_choice == "1":
+                cfg.llm.embedding = replace(
+                    cfg.llm.embedding,
+                    provider="siliconflow_free",
+                    model="BAAI/bge-m3",
+                    api_key="",
+                    base_url="",
+                    output_dimensionality=1024,
+                    fallback_enabled=False,
+                    fallback_provider="",
+                    multimodal_enabled=False,
+                )
             if embedding_choice == "2":
                 from openbiliclaw.llm.sponsored_embedding import select_local_embedding
 
@@ -3294,7 +3393,7 @@ def _interactive_runtime_config_setup() -> None:
                 "硅基流动 BGE-M3" if embedding_choice == "1" else f"本地 {cfg.llm.embedding.model}"
             )
             console.print(
-                f"[green]已选择 {cfg.llm.sponsored.model} + {embedding_label}；"
+                f"[green]已选择 LLM 实例 {selected_model} + Embedding {embedding_label}；"
                 "初始化将验证真实连接。[/green]"
             )
             return
@@ -8845,10 +8944,19 @@ def _maybe_update_init_source_shares(event_counts: Mapping[str, int]) -> None:
 
     try:
         from openbiliclaw.config import load_config, save_config
-        from openbiliclaw.runtime.source_policy import source_enabled_map
+        from openbiliclaw.runtime.source_policy import (
+            enabled_source_recipe_available,
+            source_enabled_map,
+        )
 
         cfg = load_config()
-        enabled_sources = source_enabled_map(cfg)
+        enabled_sources = source_enabled_map(
+            cfg,
+            database=_get_runtime_database(),
+            enabled_recipe_available=lambda source: enabled_source_recipe_available(
+                _get_runtime_database(), source
+            ),
+        )
         selected = _select_init_source_shares(
             event_counts,
             enabled_sources=enabled_sources,
@@ -10833,10 +10941,20 @@ async def run_guided_init(
     # ones. ``profile_analysis_budget`` remains the number published to the GUI
     # as ``progress.max_seconds`` — it is now the absolute ceiling, i.e. still
     # the only limit that can end the stage on the clock.
+    expected_chunk_total = soul_engine.preference_analysis_batch_count(
+        events, event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
+    )
+    analysis_service = getattr(getattr(soul_engine, "_preference_analyzer", None), "registry", None)
+    analysis_registry = getattr(analysis_service, "registry", analysis_service)
+    request_budget = getattr(analysis_registry, "request_timeout_seconds", None)
+    if not isinstance(request_budget, (int, float)) or isinstance(request_budget, bool):
+        request_budget = None
     profile_analysis_idle_budget, profile_analysis_budget = _profile_analysis_deadlines(
         event_count=len(events),
         requested=profile_analysis_timeout_seconds,
         concurrency=profile_analysis_concurrency,
+        batch_count=expected_chunk_total,
+        request_timeout_seconds=request_budget,
     )
     stage2_marker = _InitProgressMarker()
 
@@ -10848,11 +10966,6 @@ async def run_guided_init(
     # count onto coordinator.stage_progress for the GUI. ``_chunk_progress`` is
     # a live mirror the heartbeat reads so every tick shows "已完成 X/N 批";
     # when a chunk hangs that count freezes next to the growing clock.
-    expected_chunk_total = max(
-        1,
-        (len(events) + DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE - 1)
-        // DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
-    )
     _chunk_progress = {"done": 0, "total": expected_chunk_total}
     stage2_started_at = asyncio.get_running_loop().time()
 
@@ -17638,6 +17751,378 @@ def discover_douyin(
     )
 
 
+@app.command("discover-web")
+def discover_web(
+    recipe_id: str = typer.Option(
+        ...,
+        "--recipe-id",
+        help="要只读预览的已保存 Web recipe ID。",
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=50, help="预览条数上限。"),
+) -> None:
+    """只读执行一个已保存的公开 Web recipe；不写候选、游标或 memory。"""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.protocol import SourceRecipe
+    from openbiliclaw.sources.web_adapter import WebSourceAdapter
+    from openbiliclaw.sources.web_recipe import (
+        WebRecipeValidationError,
+        build_web_recipe,
+        is_compiled_public_web_recipe,
+        web_recipe_payload_from_existing,
+    )
+
+    selected_id = recipe_id.strip()
+    if not selected_id:
+        raise typer.BadParameter("recipe ID 不能为空。", param_hint="--recipe-id")
+
+    config = load_config()
+    web_config = getattr(getattr(config, "sources", None), "web", None)
+    if web_config is None or not bool(getattr(web_config, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Web 公开发现未启用",
+            "请先在 config.toml 中启用 [sources.web].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    try:
+        stored = next(
+            (
+                row
+                for row in database.get_all_recipes()
+                if str(row.get("id") or "") == selected_id
+                and str(row.get("source_type") or "").strip().lower() == "web"
+            ),
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI boundary with actionable failure
+        _print_status_panel("error", "无法读取 Web recipe", str(exc)[:240])
+        raise typer.Exit(code=1) from exc
+    if stored is None:
+        _print_status_panel(
+            "warning",
+            "找不到 Web recipe",
+            f"没有 ID 为 {selected_id!r} 的 Web recipe；可先通过来源设置创建。",
+        )
+        raise typer.Exit(code=1)
+    if not is_compiled_public_web_recipe(stored):
+        _print_status_panel(
+            "warning",
+            "不是正式公开 Web recipe",
+            "该 ID 属于历史 web_extract 浏览器抽取配置；只读预览仅接受 "
+            "feed、sitemap 或 listing recipe。",
+        )
+        raise typer.Exit(code=1)
+    if not bool(stored.get("enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Web recipe 未启用",
+            "这个 recipe 不会被调度；请先启用后再做只读预览。",
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        editable = web_recipe_payload_from_existing(stored, {})
+        compiled = build_web_recipe(
+            editable,
+            recipe_id=selected_id,
+            created_by=str(stored.get("created_by") or "user"),
+        )
+    except WebRecipeValidationError as exc:
+        _print_status_panel("error", "Web recipe 不符合当前安全契约", str(exc))
+        raise typer.Exit(code=1) from exc
+    recipe = SourceRecipe(**compiled)
+    adapter = WebSourceAdapter(
+        llm_service=None,
+        request_timeout_seconds=float(getattr(web_config, "request_timeout_seconds", 15)),
+        max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+        max_redirects=int(getattr(web_config, "max_redirects", 5)),
+    )
+    try:
+        result = asyncio.run(
+            adapter.fetch_result(
+                recipe,
+                cast("Any", None),
+                limit=limit,
+                # Deliberately empty: a preview neither consumes nor commits the
+                # scheduler-owned validators/cursor in web_source_state.
+                state={},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - stable CLI failure surface
+        _print_status_panel("error", "Web recipe 预览失败", str(exc)[:240])
+        raise typer.Exit(code=1) from exc
+
+    _print_page_title("Web Recipe 只读预览", f"{recipe.name} · {recipe.strategy}")
+    _print_key_value_table(
+        "执行摘要",
+        [
+            ("Recipe ID", recipe.id),
+            ("状态", result.status),
+            ("发现条数", str(len(result.items))),
+            ("范围完整", "是" if result.scope_complete else "否"),
+            ("持久化", "未写入候选池、seen、cursor、memory"),
+        ],
+    )
+    if result.error_code:
+        console.print(f"  [yellow]错误代码：{result.error_code}[/yellow]")
+    if result.detail:
+        console.print(f"  [dim]{result.detail}[/dim]")
+    for index, item in enumerate(result.items[:limit], start=1):
+        _print_key_value_table(
+            f"发现 {index}",
+            [
+                ("标题", str(getattr(item, "title", "") or "（暂无）")),
+                _content_author_row(item),
+                ("来源策略", str(getattr(item, "source_strategy", "") or recipe.strategy)),
+                ("链接", str(getattr(item, "content_url", "") or "（暂无）")),
+            ],
+        )
+
+    if result.status not in {"ok", "empty", "not_modified"}:
+        _print_status_panel(
+            "warning",
+            "Web recipe 预览未完整成功",
+            result.detail or result.error_code or result.status,
+        )
+        raise typer.Exit(code=1)
+    if not result.items:
+        _print_status_panel(
+            "info",
+            "本次没有可预览内容",
+            result.detail or f"上游返回状态：{result.status}。",
+        )
+
+
+@app.command("probe-web")
+def probe_web(
+    url: str = typer.Argument(..., help="要只读探测的公开网站或 Feed/Sitemap URL。"),
+) -> None:
+    """Probe one public URL and print typed Web recipe candidates without saving."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.web_probe import probe_public_web_url
+
+    requested_url = url.strip()
+    if not requested_url:
+        raise typer.BadParameter("URL 不能为空。", param_hint="URL")
+
+    config = load_config()
+    web_config = getattr(getattr(config, "sources", None), "web", None)
+
+    try:
+        result = asyncio.run(
+            probe_public_web_url(
+                requested_url,
+                timeout_seconds=float(getattr(web_config, "request_timeout_seconds", 15)),
+                max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+                max_redirects=int(getattr(web_config, "max_redirects", 5)),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - stable CLI failure surface
+        _print_status_panel(
+            "error",
+            "网站自动探测失败",
+            _plain_terminal_text(str(exc)[:240]),
+        )
+        raise typer.Exit(code=1) from exc
+
+    _print_page_title("Web 网站自动探测", "只读探测 · 预览后再保存")
+    _print_key_value_table(
+        "探测摘要",
+        [
+            ("请求 URL", _plain_terminal_text(result.requested_url)),
+            ("最终 URL", _plain_terminal_text(result.final_url or "（未取得）")),
+            ("页面标题", _plain_terminal_text(result.page_title or "（未提供）")),
+            ("状态", result.status),
+            ("候选方案", str(len(result.candidates))),
+            ("持久化", "未创建 recipe，未写候选池、seen、cursor 或 memory"),
+        ],
+    )
+    if result.detail:
+        console.print(_plain_terminal_text(f"  {result.detail}", style="dim"))
+    for index, candidate in enumerate(result.candidates, start=1):
+        _print_key_value_table(
+            f"方案 {index}",
+            [
+                ("策略", candidate.strategy),
+                ("置信度", candidate.confidence),
+                ("发现方式", candidate.discovery_method),
+                ("入口", _plain_terminal_text(candidate.entry_url)),
+                (
+                    "建议名称",
+                    _plain_terminal_text(candidate.recipe.get("name") or "（未命名）"),
+                ),
+                ("说明", _plain_terminal_text(candidate.detail)),
+            ],
+        )
+        for sample_index, sample in enumerate(candidate.sample_items[:3], start=1):
+            _print_key_value_table(
+                f"  内容预览 {sample_index}",
+                [
+                    ("标题", _plain_terminal_text(sample.title or "（暂无）")),
+                    ("作者", _plain_terminal_text(sample.author_name or "（暂无）")),
+                    (
+                        "发布时间",
+                        _plain_terminal_text(sample.published_at or "（暂无）"),
+                    ),
+                    ("链接", _plain_terminal_text(sample.content_url or "（暂无）")),
+                ],
+            )
+
+    if result.status != "ready" or not result.candidates:
+        _print_status_panel(
+            "info",
+            "没有找到可直接采用的 Web 方案",
+            _plain_terminal_text(result.detail or "可在桌面 Web 或插件里手动填写 typed recipe。"),
+        )
+        raise typer.Exit(code=1)
+    _print_status_panel(
+        "success",
+        "已生成可编辑方案，但尚未保存",
+        "请在桌面 Web 或插件的「设置 → 平台源 → 公开 Web」检查并采用方案，再点击「添加网站」。",
+    )
+
+
+def _run_web_formal_discovery(*, limit: int, force: bool = False) -> None:
+    """Run one formal public-Web cycle through the shared candidate pipeline."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.web_producer import WebDiscoveryProducer
+    from openbiliclaw.sources.web_adapter import WebSourceAdapter
+
+    _require_runtime_config()
+    config = load_config()
+    web_config = getattr(getattr(config, "sources", None), "web", None)
+    if web_config is None or not bool(getattr(web_config, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Web 公开发现未启用",
+            "请先在配置页或 config.toml 中启用 [sources.web].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    soul_engine = _build_soul_engine()
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    request_timeout_seconds = int(getattr(web_config, "request_timeout_seconds", 15))
+    adapter = WebSourceAdapter(
+        llm_service=None,
+        request_timeout_seconds=float(request_timeout_seconds),
+        max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+        max_redirects=int(getattr(web_config, "max_redirects", 5)),
+    )
+    producer = WebDiscoveryProducer(
+        database=database,
+        adapter=adapter,
+        candidate_pipeline=candidate_pipeline,
+        enabled=True,
+        lease_seconds=int(getattr(web_config, "lease_seconds", 300)),
+        request_timeout_seconds=request_timeout_seconds,
+        soul_engine=soul_engine,
+    )
+    try:
+        result = asyncio.run(producer.produce_if_due(limit=limit, force=force))
+    except Exception as exc:  # noqa: BLE001 - stable CLI failure surface
+        _print_status_panel("error", "Web discovery 执行失败", str(exc)[:240])
+        raise typer.Exit(code=1) from exc
+
+    reason = str(result.get("reason") or "error")
+    discovered = int(cast("Any", result.get("discovered") or 0))
+    enqueued = int(cast("Any", result.get("enqueued") or 0))
+    raw_recipe_results = result.get("recipe_results")
+    recipe_results = raw_recipe_results if isinstance(raw_recipe_results, dict) else {}
+    recipe_summaries: list[str] = []
+    recipe_statuses: set[str] = set()
+    for recipe_id, raw_outcome in recipe_results.items():
+        outcome = raw_outcome if isinstance(raw_outcome, dict) else {}
+        status = str(outcome.get("status") or "unknown")
+        recipe_statuses.add(status)
+        error_code = str(outcome.get("error_code") or "")
+        recipe_summary = f"{recipe_id}:{status}"
+        if error_code:
+            recipe_summary += f" error={error_code}"
+        recipe_summaries.append(recipe_summary)
+    recipe_status_text = "、".join(recipe_summaries) or "（本轮未领取 recipe）"
+    if reason == "ok" and recipe_statuses & {
+        "degraded",
+        "login_required",
+        "rate_limited",
+        "failed",
+    }:
+        # The producer deliberately preserves successful handoffs from peer
+        # recipes.  Keep that data, but do not let productive supply hide a
+        # degraded/failed sibling from CLI automation.
+        reason = "partial"
+
+    _print_page_title("Web 内容发现", "正式 producer · recipes · candidate pipeline")
+    if reason in {"ok", "valid_empty", "partial"}:
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "web"),
+                ("调度结果", reason),
+                ("Recipe 状态", recipe_status_text),
+            ],
+        )
+        if reason == "ok":
+            for index, item in enumerate(
+                getattr(candidate_pipeline, "last_admitted_items", ())[:5],
+                start=1,
+            ):
+                _print_discovered_content_preview(item, index)
+            return
+        if reason == "valid_empty":
+            _print_status_panel(
+                "info",
+                "Web discovery 有效完成但没有新候选",
+                "已观察到合法空结果、未修改响应，或本轮内容均已见过。",
+            )
+            return
+        _print_status_panel(
+            "warning",
+            "Web discovery 部分完成",
+            "已成功入池的候选会保留；未完整的 recipe 不会把本轮 scope/validator/cursor "
+            f"误记为完整。详情：{recipe_status_text}",
+        )
+        raise typer.Exit(code=1)
+
+    if reason == "throttled":
+        _print_status_panel(
+            "info",
+            "Web discovery 尚未到期",
+            "所有启用 recipe 都仍在调度间隔或冷却期内；可使用 --force 忽略普通间隔，"
+            "但不会绕过活动 lease。",
+        )
+        return
+    if reason == "no_recipes":
+        _print_status_panel(
+            "warning",
+            "没有启用的 Web recipe",
+            "请先在桌面端或扩展来源设置中添加并启用 Feed、Sitemap 或静态列表 recipe。",
+        )
+        raise typer.Exit(code=1)
+    if reason == "disabled":
+        _print_status_panel(
+            "warning",
+            "Web 公开发现未启用",
+            "请先在配置页或 config.toml 中启用 [sources.web].enabled。",
+        )
+        raise typer.Exit(code=1)
+    _print_status_panel(
+        "error",
+        "Web discovery 未完整成功",
+        f"调度结果：{reason}；recipe 详情：{recipe_status_text}",
+    )
+    raise typer.Exit(code=1)
+
+
 @app.command("profile-repair-provenance")
 def profile_repair_provenance(
     apply: bool = typer.Option(
@@ -17784,7 +18269,7 @@ def discover(
         "-s",
         help=(
             "触发发现的内容源：bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、"
-            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 instagram。"
+            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo、instagram 或 web。"
         ),
         case_sensitive=False,
     ),
@@ -17794,7 +18279,7 @@ def discover(
         False,
         "--force",
         help=(
-            "xiaohongshu / bangumi / github / v2ex / weibo / instagram："
+            "xiaohongshu / bangumi / github / v2ex / weibo / instagram / web："
             "忽略最小调度间隔强制执行一次。"
         ),
     ),
@@ -17904,6 +18389,16 @@ def discover(
         _run_weibo_discovery(limit=limit, force=force)
         return
 
+    if source_normalized == "web":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "web 渠道按各 recipe 保存的 feed / sitemap / listing 策略执行，已忽略策略过滤。",
+            )
+        _run_web_formal_discovery(limit=limit, force=force)
+        return
+
     if source_normalized in {"instagram", "ig"}:
         if strategies:
             _print_status_panel(
@@ -17918,7 +18413,7 @@ def discover(
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
             "bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（gh）、"
-            "linuxdo、v2ex、weibo、instagram。"
+            "linuxdo、v2ex、weibo、instagram、web。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)
@@ -18298,20 +18793,10 @@ def config_show() -> None:
         "cli.config_show.row.llm_chain" if instance_routing else "cli.config_show.row.llm"
     )
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
-    if cfg.llm.sponsored.enabled:
-        from openbiliclaw.llm.sponsored_profiles import CONTEXT_WINDOWS
+    from openbiliclaw.sponsored_status import sponsored_status
 
-        window = CONTEXT_WINDOWS.get(cfg.llm.sponsored.model, 0)
-        embedding_label = (
-            "硅基流动 BGE-M3"
-            if cfg.llm.sponsored.uses_cloud_embedding
-            else f"本地 {cfg.llm.embedding.model}"
-        )
-        llm_value = f"免费 · {cfg.llm.sponsored.model} ({window} tokens) + {embedding_label}"
-        from openbiliclaw.sponsored_status import sponsored_status
-
-        for notice in sponsored_status(cfg)["notices"]:
-            console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
+    for notice in sponsored_status(cfg)["notices"]:
+        console.print(f"[yellow]{notice['title']}：{notice['message']}[/yellow]")
     from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
 
     try:
@@ -18750,6 +19235,17 @@ def health_check() -> None:
             console.print(f"    原因: {result.error}")
 
 
+@browser_app.command("install")
+def browser_install(with_system_deps: bool = False) -> None:
+    """安装自定义 Discover 流程使用的 Chromium（Linux 可包含系统依赖）。"""
+    from openbiliclaw.sources.browser_install import install_browser_runtime
+
+    result = asyncio.run(install_browser_runtime(with_system_deps=with_system_deps))
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["installed"]:
+        raise typer.Exit(code=1)
+
+
 @browser_app.command("status")
 def browser_status() -> None:
     """检查 agent-browser 是否可用."""
@@ -18799,6 +19295,11 @@ def browser_content(url: str) -> None:
 
     _print_page_title("页面内容")
     console.print(Panel(content, border_style="cyan"))
+
+
+from openbiliclaw.cli_custom_sources import sources_app  # noqa: E402
+
+app.add_typer(sources_app, name="sources")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,9 @@
-"""Process-wide Sponsored Runtime settings installed by config loading.
+"""Shared release transport settings and per-install status/relay identity.
 
-The open-source core constructs ``LLMService`` in many places (API runtime,
-CLI, soul engine, OpenClaw bootstrap). Passing a new field through every
-constructor would be invasive for a setting that is process-wide by nature:
-the official build has one configuration and a bounded pool of runtime children.
-
-``load_config_with_diagnostics`` installs the ``[llm.sponsored]`` table here;
-``LLMService`` reads it lazily on the first sponsored task and still honors the
-development env bootstrap as a fallback. Tests call the reset helper directly.
+Normal free LLM instances own their model and an immutable transport snapshot;
+embedding is configured independently. This binding supplies installation state
+and the explicit legacy harness bootstrap, not application model routing.
+Config loading migrates the retired global switch into ordinary instance chains.
 """
 
 from __future__ import annotations
@@ -20,7 +16,8 @@ if TYPE_CHECKING:
 
 from openbiliclaw.runtime.relay_release import official_relay_url
 
-DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS = 180.0
+DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS = 1200.0
+SPONSORED_EMBEDDING_TIMEOUT_SECONDS = 180.0
 
 
 @dataclass(frozen=True)
@@ -28,6 +25,8 @@ class SponsoredRuntimeSettings:
     """Validated ``[llm.sponsored]`` configuration."""
 
     enabled: bool = False
+    # enabled/model/embedding_mode/fallback flags are retained for migration and
+    # explicitly injected legacy harnesses. Native routes use instance models.
     # Executable path or command line for obc-sponsored-runtime. Official
     # installers point at the bundled binary; source builds leave it empty.
     runtime_path: str = ""

@@ -685,7 +685,7 @@ test("settings page round-trips Linux.do config without a cookie field", () => {
     assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
   }
 
-  const card = popupHtml.match(/data-source-card="linuxdo"[\s\S]*?data-source-card="pool"/)?.[0] ?? "";
+  const card = popupHtml.match(/data-source-card="linuxdo"[\s\S]*?data-source-card="v2ex"/)?.[0] ?? "";
   assert.doesNotMatch(card, /id="cfgLinuxdoCookie"|<textarea/);
   assert.match(card, /公开发现无需登录/);
   assert.match(card, /浏览器插件后，可增强收藏、点赞和阅读记录/);

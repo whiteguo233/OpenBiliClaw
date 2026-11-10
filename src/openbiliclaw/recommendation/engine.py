@@ -821,8 +821,10 @@ class RecommendationEngine:
         another platform into the response, and letting the client filter it
         away would hide the drift instead of surfacing it.
 
-        Classification must use ``source_family`` — the same function storage
-        counts and selects with — not ``source_platform`` alone. Legacy rows
+        Public scopes use canonical content family; a Web tab includes custom
+        sources without changing their independent quota ownership. Internal
+        callers may still scope to a registered source ID. Classification uses
+        ``source_family``, not ``source_platform`` alone. Legacy rows
         carry their platform only in the ``source`` strategy prefix
         (``zhihu-hot``), and ``_rows_to_discovered`` defaults their blank
         ``source_platform`` to bilibili; judging by that column would discard
@@ -835,7 +837,7 @@ class RecommendationEngine:
         leaked: list[str] = []
         for item in candidates:
             family = source_family(item.source_strategy, item.source_platform)
-            if family == scope:
+            if scope == family or scope == item.source_id:
                 kept.append(item)
             else:
                 leaked.append(f"{item.bvid}@{family}")
@@ -5527,6 +5529,8 @@ class RecommendationEngine:
                 content_type=str(row.get("content_type", "") or "video"),
                 body_text=str(row.get("body_text", "") or ""),
                 source_metadata=self._parse_source_metadata(row.get("source_metadata", "{}")),
+                source_id=str(row.get("source_id") or ""),
+                source_name=str(row.get("source_name") or ""),
             )
             for row in rows
         ]

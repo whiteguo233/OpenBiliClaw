@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
+OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 和自定义网站发现流程（兼容公开 Web recipe） 等来源帮你发现那些你会喜欢但自己找不到的内容。
 
 **核心理念**：
 - 不是冷冰冰的推荐算法，而是一个**有温度的 AI 朋友**
@@ -287,36 +287,28 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 
 ## 3. 系统架构
 
-免费模型方案通过共享配置接入全部日常文本任务；图片理解是可选增量能力，BGE-M3 仅生成文本向量。组件发行前仍保留明确的不可用状态，详见[实现决策](plans/2026-11-04-sponsored-user-flow.md)。
+免费服务预置为普通 LLM 实例与独立 Embedding Provider，使用现有调用链与选择入口。图片能力可选，BGE-M3 仅生成文本向量；受保护传输封装在 adapter 内。
 
 ```text
 trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
 source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
 
-Built-in SiliconFlow provider in setup / popup / desktop / mobile / CLI → llm.sponsored config
-  → LLMService / Registry / eval → selected signed 8B or 4B task
-  → EmbeddingService → cloud BGE-M3 signed task (default, separate cache provenance)
-  → optional HTTPS relay: device proof + short session + replay/central quota → server Rust pool
-  → local compatibility mode: bounded Rust workers (1 interactive + 2 background; shared quota ledger)
-  → SiliconFlow SSE / embeddings
-  → Core schema / evidence validation
-      ├ passive portrait: source-backed information preferences
-      ├ invalid temporal fields: one narrow LLM correction → source validation
-      └ awareness batch vs lookback → reject foreign citations → one corrective retry
-  → normal profile, discovery, recommendation, agent flows
-Local embedding choice: EmbeddingService → Ollama (independent endpoint/cache, no sponsored key)
-Auth failure / signed-policy expiry → durable capability status → settings + message notices
-  → update application / installer OR configure a user-owned API key
-Free availability fallback: 8B ⇄ 4B; BYOK only after explicit opt-in
-  → shared 30s first-output budget; no replay after output
-Silent transient chat failure → persisted retry count (max 2) → durable worker
-Output/tool checkpoint → interrupted turn stops; reconnect reuses completed result
-Git / Docker / desktop install + updater → pinned catalog / Ed25519 verification
-  → required pinned SDK staging → offline self-check → versioned bundle / atomic activation
-  → prefer current Core pin over stale active SDK after application update
-Agent exact memory lookup → JSON Pointer → bounded original value (no bulk-context guessing)
-Free director → ordered refs → deterministic pairing → unchanged horizon validation
-Optional image understanding: 4B; image embeddings: unavailable in the free profile
+Setup / popup / desktop / mobile / CLI → ordinary config API
+  ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
+  │   → LLMService → LLMRegistry → selected provider adapter
+  │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
+  └ llm.embedding → independent EmbeddingService
+      ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)
+      └ Ollama / other provider → its own endpoint and vector space
+Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
+  OR configured HTTPS relay → device proof / short session → server Rust pool
+Results → existing schema, source-evidence and temporal validation → normal business flow
+Free tool bridge → tagged actions / identified results; ordinary JSON stays data
+Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
+Wrapped runtime cause → bounded durable retry only before output or tool execution
+Fallback → only the explicit ordered chain; no replay after streamed output or tools
+Credential / policy failure → capability-scoped durable status → settings + message notices
+Git / Docker / desktop + updater → pinned SDK verification → atomic activation
 ```
 
 ```text
@@ -352,6 +344,14 @@ config save → safe API handoff → committed generation (wait for settings que
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume
 
+Jev settings test (Web / actual MV3 / mobile Web)
+  → authenticated draft probe → synthetic profile + one candidate → full evaluator (8 questions)
+  → one native HTTP attempt → safe result; no config/DB write or real-profile read
+full Jev evaluation → joint temporal outcome + representative excerpt (8 questions / item)
+                    → hard-state claims bound to exact source and deadline → atomic validation
+                    → native INVALID / contradiction → typed refusal → lease-CAS parking
+                    → no same-context retry; recovery after endpoint/evidence context change
+
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory
@@ -377,11 +377,19 @@ candidate full evaluator (settings switch; LLM default):
   Web / popup / mobile shared Jev connection form → config API → validated local settings
     → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
   Jev: local profile catalog → per-candidate projection + selected-model context budget
+    mandatory baseline + optional positive facts (borrow room before excerpting)
     + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
-    → jev_context whole source spans / coverage → complete-question-group batch packing
+    → detached snapshot → worker-thread source spans / coverage + profile projection
+    → service-loop complete-question-group batch packing (cancellation dispatches nothing)
+    → identical selected profile fields shared once → first-fit open-batch backfill
+    dual byte ceilings use configured capacity integers (no extra 25%); not exact tokenizer
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
-    Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
+    Jev: 8 questions / candidate; joint temporal outcome + independent representative excerpt
+      hard-state options bind class/scope/state/source/deadline before one native request
+      controlled taxonomy / IP + exact source spans + model-bound dual byte guards
   → shared metadata validation / separate cache → admission / legacy pool recovery
+  local input overflow → typed InputBudgetFailure → lease-CAS failed_eval (no retry)
+    → profile / negative evidence / evaluator context changed → bounded requeue
 
 interactive (dialogue / config probe / agent.chat / agent.task) ┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
@@ -438,6 +446,26 @@ XHS/DY/YT/Zhihu/Reddit/Linux.do/V2EX/Weibo task final: canonical staged result (
 V2EX identity ladder: PAT verified > browser observed > config/accepted
                     → mismatch pauses account projection only
                     → resolved identity-scoped seen/affinity + complete favorite 2-miss outbox
+Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial → budget approval → source_id (independent share/cadence)
+                     Ego trial failure → DOM-proven href / scoped structural candidate → one retrial → structural scope review → persist verified plan only
+                     User link hints → page-local boolean query checks → redacted authoring evidence
+                     Same-container repeated rows → bounded common structure → recurring selectors with original filters
+                     → same-site versioned workflows → HTTP feeds / native Ego Lite → ordinary pending_eval → pool
+                     public DNS preflight → all-fake-IP system answers → bounded verified DoH; unsafe answers fail closed
+                     HTTP pins public IPs; Ego keeps native socket routing and explicit direct-host rules
+                     Independent new source → own task-space session; shared Ego profile cookies, explicit reuse preserved
+                     login/verification → durable pause → attention API → Web/native inbox + settings
+                     3 ordinary failures / manual action → fenced SQLite transition → API diagnostics.alert relay
+                       → existing anomaly feed + native history; success clears current warning, preserves recovery history
+                       → human takeover → successful resume/trial → same draft/workflow
+                     Blocked verification iframe → bounded origin choices → web/native explicit consent → interactive scope only
+                     Interactive owned iframe → document/login guard before resume → shared request/byte budget; popups/workers blocked
+                     desktop / popup / mobile → peer source settings cards + source_name labels
+                     macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
+                     Explicit host routing → private network.json → system manual proxy rules + exact direct hosts on cold start
+                     Committed parsed DOM stable 8s / complete DOM stable 1.5s → unchanged extraction/scope verification
+                     Preparation complete / last session closed → shared 120s idle grace → stop only without session leases; CLI exit cleanup
+                     Managed opening timeout → cleanup → idle-only managed host restart → one retry with saved task identity within original total budget
 GitHub official REST API → public repository search/ranked/latest → raw text-card candidate
 GitHub account scope: PAT `/user` verified > explicit public username accepted
                     → durable id mismatch pauses personal bootstrap only
@@ -469,6 +497,9 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → session metadata.persona → turn-frozen agent_persona (expression only)
                  → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
                  → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → raw user intent + ToolTextGuard(delta/final) + explicit named-call evidence
+                 → missing evidence / protocol-only reply → one corrective attempt
+                 → third identical read plan after two unchanged successful rounds → tool-free summary
                  → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
                  → completion CAS + learning/effects; repeated turn → persisted event replay
                  → hard_write call → ApprovalStore pending card → approve endpoint re-dispatch → config_update_hook → settings apply queue / last-good + ledger audit
@@ -635,6 +666,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 海外网络：config/UI -> direct|system|custom -> LLM/YT/GitHub 来源/更新/统计 │   │
+│  │ 公开 Feed → network 路由 → 本机 DNS / 代理 DoH → 固定 IP → robots │   │
 │  │ 国内客户端保持独立直连；微博 httpx trust_env=false，不消费海外路由策略 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -747,15 +779,15 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 ├──────────────────────────────────────────────────────────────┤
 │           多源适配层 (SourceAdapter Protocol, v0.3.0+)         │
 │  ┌──────────────┐  ┌──────────────────┐  ┌─────────────┐    │
-│  │ 后端 API 来源 │  │ 登录态扩展任务桥   │  │ Web Adapter │    │
-│  │ Bili/BGM/WB/GH│  │ XHS/DY/YT/ZH/RD   │  │ (Playwright │    │
-│  │ 官方/只读 HTTP│  │ Linux/V2EX/Weibo   │  │ + LLM 抽取) │    │
-│  │ + 各自 producer│ │ bounded task/result│  │             │    │
+│  │ 后端 API 来源 │  │ 登录态扩展任务桥   │  │ Web 来源    │    │
+│  │ Bili/BGM/WB/GH│  │ XHS/DY/YT/ZH/RD   │  │ source_id   │    │
+│  │ 官方/只读 HTTP│  │ Linux/V2EX/Weibo   │  │ workflows   │    │
+│  │ + 各自 producer│ │ bounded task/result│  │ HTTP/浏览器 │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Web 抽取 → 完整 URL 身份 → 去重；原生平台 ID 保留           │ │
 │  │ GitHub/Instagram init → 所选 producer → 评估/文案 → 可用库存 │ │
-│  │ sources.platforms：十四平台 alias / strategy / URL host      │ │
+│  │ sources.platforms：十五来源 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -804,6 +836,24 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   首个 complete 收藏 scope 种基线；后续连续两次缺失 -> durable retract/restore │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ Dynamic Web: 原话预算 + chat prepare/trial -> approval -> source_id + 独立份额/间隔 │ │
+│  │   Ego 草稿失败 -> href 证据／原范围结构候选 -> 一次重试 -> 结构修正审核实际样例 -> 验证后保存 │ │
+│  │   用户链接模板 -> 页面内路径／参数布尔证据 -> 查询值仍脱敏               │ │
+│  │   同容器重复行 -> 有界共享结构证据 -> 避免固定单条内容编号，保留过滤条件 │ │
+│  │   同站多个 versioned workflow -> HTTP Feed/Ego Lite -> ordinary eval/pool │ │
+│  │   全合成 DNS -> 有界 DoH 验证；HTTP 固定公网 IP，Ego 仅预检、原出口不变 │ │
+│  │   失败阈值／人工处理 -> SQLite 转移记录 -> API 异常事件流；恢复保留历史 │ │
+│  │   独立新来源 -> 独立 task space 会话；profile Cookie 共享、显式会话可复用 │ │
+│  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
+│  │   自有交互 iframe -> 恢复前守卫 -> 共享请求/流量预算；弹窗/worker 拒绝 │ │
+│  │   被拒验证框 -> 有界域名选项 -> Web/原生逐域确认；普通广告不授权     │ │
+│  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
+│  │   显式域名路由 → 私有 network.json → 系统手动代理 + 精确域名直连 │ │
+│  │   准备完成 / 末个会话关闭 → 120 秒保温 → 租约保护回收；CLI 退出清理 │ │
+│  │   托管初始只读打开超时 → 清理 → 原总预算内复用身份重试一次         │ │
+│  │ Legacy HTTP recipe: URL probe -> draft -> explicit add/create_source approval │ │
+│  │   feed/sitemap/listing -> exact-origin + robots + DNS pin -> shared eval │ │
+│  │   token-fenced lease + state/seen；此兼容路径不支持登录/JS/任意 crawl │ │
 │  │ InstagramDiscoveryProducer: optional-session topic/creator → canonical public media → eval │ │
 │  │   liked/saved/following → like/favorite/follow；sessionid 只作 bool，账号由 current-user 正证 │ │
 │  └──────────────────────────────────────────────────────┘   │
@@ -949,7 +999,7 @@ query inspiration → configured provider chain
 - [ ] 完善的安装和使用文档
 - [ ] 插件商店发布
 - [ ] 社区 Skill 市场
-- [x] 跨平台内容发现（已落地 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / 通用 Web，后续继续扩展更多 adapter；GitHub 分支验收状态以专用 ledger 为准）
+- [x] 跨平台内容发现（已落地 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / 动态网站来源及旧版公开 Web recipe，后续继续扩展更多 adapter；来源与执行环境的真实验收状态以各自 ledger 为准）
 
 ---
 
@@ -974,3 +1024,5 @@ TikTok 封面：`image_cache → DoH 解析/公网地址验证 → IP 固定（�
 
 
 中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。
+
+请求预算数据流（2026-11-08，待发布）：`llm.timeout → LLM 注册表 / 免费适配器 → Rust IPC timeout_ms → HTTP 剩余预算`。初始化根据注册表预算计算阶段期限；组件边界和签名模型输入不变。

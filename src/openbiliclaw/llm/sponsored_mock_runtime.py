@@ -75,7 +75,13 @@ def _validate_execute(frame: Mapping[str, Any]) -> tuple[str, str, str]:
     from .consolidation_prompt import render_consolidation_user
     from .sponsored_tasks import validate_task_input
 
-    if set(frame) != {"type", "id", "task_id", "contract_version", "input"}:
+    fields = {"type", "id", "task_id", "contract_version", "input"}
+    if "--request-timeouts" in sys.argv and "timeout_ms" in frame:
+        fields.add("timeout_ms")
+        milliseconds = frame["timeout_ms"]
+        if type(milliseconds) is not int or not 1 <= milliseconds <= 3_600_000:
+            raise ValueError("CONTRACT_MISMATCH")
+    if set(frame) != fields:
         raise ValueError("CONTRACT_MISMATCH")
     payload = frame.get("input")
     if not isinstance(payload, dict):
@@ -134,6 +140,7 @@ def main() -> int:
             "core": str(hello.get("core") or ""),
             "policy_version": policy_version,
             "streaming": "--stream" in sys.argv,
+            "request_timeouts": "--request-timeouts" in sys.argv,
             "contracts": {c.policy_key: c.system_prompt_sha256 for c in DEFAULT_SPONSORED_REGISTRY},
         },
     )

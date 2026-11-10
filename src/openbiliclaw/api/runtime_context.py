@@ -41,7 +41,10 @@ from openbiliclaw.config import (
 from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
-from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+from openbiliclaw.runtime.source_policy import (
+    effective_pool_source_shares,
+    enabled_source_recipe_available,
+)
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
@@ -79,14 +82,6 @@ _LIVE_AGENT_CONFIG_FIELDS = frozenset(
         "task_max_steps",
     }
 )
-_LIVE_SPONSORED_CONFIG_FIELDS = frozenset(
-    {
-        "model",
-        "fallback_to_other_free_model",
-        "notify_on_fallback",
-        "request_timeout_seconds",
-    }
-)
 
 
 class _BackgroundTaskHost(Protocol):
@@ -100,8 +95,18 @@ class _BackgroundTaskHost(Protocol):
     state: Any
 
 
-def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
-    return effective_pool_source_shares(config)
+def _pool_source_shares_from_config(
+    config: Any,
+    *,
+    database: Any | None = None,
+) -> dict[str, int]:
+    """Project source shares without reserving Web quota for zero recipes."""
+
+    return effective_pool_source_shares(
+        config,
+        database=database,
+        enabled_recipe_available=lambda source: enabled_source_recipe_available(database, source),
+    )
 
 
 def _persist_agent_config(config: Any) -> str:
@@ -1217,30 +1222,53 @@ class RuntimeContext:
                 "watchdog assumes ownership)"
             )
 
-    def try_apply_sponsored_config(self, new_config: Config) -> bool:
-        """Publish free-model routing choices without draining mutation owners.
+    def try_apply_llm_instance_config(self, new_config: Config) -> bool:
+        """Switch the default instance chain without interrupting active learning.
 
-        In-flight requests retain their immutable provider/model snapshot. Every
-        later request resolves the new selection; embedding space stays BGE-M3.
-        Enabling/disabling the runtime or changing any other setting rebuilds.
+        Instances, module routes and embedding space stay fixed. Existing
+        requests retain their selected adapter; subsequent calls use the new
+        order. Endpoint edits and module-route changes require rebuilding.
         """
         from openbiliclaw.config import Config
-        from openbiliclaw.sponsored_runtime_state import install_sponsored_settings
+        from openbiliclaw.llm.base import LLMRegistry
 
         current = self.config
-        if self.degraded or not isinstance(current, Config) or not isinstance(new_config, Config):
+        registry = self.llm_registry
+        if (
+            self.degraded
+            or not isinstance(current, Config)
+            or not isinstance(new_config, Config)
+            or not isinstance(registry, LLMRegistry)
+            or not current.llm.instance_routing
+            or not new_config.llm.instance_routing
+        ):
             return False
-        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
-        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
-        if not before.llm.sponsored.enabled or not after.llm.sponsored.enabled:
-            return False
-        expected = replace(
-            before.llm.sponsored,
-            **{name: getattr(after.llm.sponsored, name) for name in _LIVE_SPONSORED_CONFIG_FIELDS},
+        # Settings canonicalize legacy language aliases (zh -> zh-Hans).
+        # Equivalent tags must not turn a chain-only switch into a full drain.
+        # A real language change still differs and requires rebuilding prompts.
+        before = replace(
+            current,
+            data_dir=str(current.data_path.expanduser().resolve()),
+            language=normalize_locale(current.language),
         )
-        if replace(before, llm=replace(before.llm, sponsored=expected)) != after:
+        after = replace(
+            new_config,
+            data_dir=str(new_config.data_path.expanduser().resolve()),
+            language=normalize_locale(new_config.language),
+        )
+        chain = after.llm.default_chain
+        if not chain or any(not registry.is_chat_capable(i) for i in chain):
             return False
-        install_sponsored_settings(after.llm.sponsored, data_path=after.data_path)
+        expected_llm = replace(
+            before.llm,
+            default_chain=list(chain),
+            # Loading native routes projects these non-authoritative legacy aliases.
+            default_provider=after.llm.default_provider,
+            fallback_provider=after.llm.fallback_provider,
+        )
+        if before.llm.default_chain == chain or replace(before, llm=expected_llm) != after:
+            return False
+        registry.configure_chain(chain)
         self.config = new_config
         if self.agent_tool_context is not None:
             self.agent_tool_context.config = new_config
@@ -1856,6 +1884,22 @@ class RuntimeContext:
         xiaohongshu_adapter = XiaohongshuAdapter()
         new_discovery_engine.register_adapter(xiaohongshu_adapter)
 
+        # Register the deterministic anonymous public-Web adapter.  The
+        # adapter is always present in the formal registry so recipe CRUD and
+        # explicit discover can resolve ``source_type=web`` consistently; the
+        # producer and pool-share projection below remain independently gated
+        # by ``[sources.web].enabled`` and enabled recipe availability.
+        from openbiliclaw.sources.web_adapter import WebSourceAdapter
+
+        web_cfg = getattr(getattr(new_config, "sources", None), "web", None)
+        web_adapter = WebSourceAdapter(
+            llm_service=new_llm_service,
+            request_timeout_seconds=float(getattr(web_cfg, "request_timeout_seconds", 15)),
+            max_response_bytes=int(getattr(web_cfg, "max_response_bytes", 2_097_152)),
+            max_redirects=int(getattr(web_cfg, "max_redirects", 5)),
+        )
+        new_discovery_engine.register_adapter(web_adapter)
+
         # Register X (Twitter) adapter — server-side cookie replay, like
         # Bilibili / Douyin-direct (a real fetch(), NOT an extension stub).
         # Gated on [sources.twitter].enabled. The branch is the ONLY place
@@ -1921,6 +1965,7 @@ class RuntimeContext:
         new_github_producer: Any = None
         new_linuxdo_producer: Any = None
         new_v2ex_producer: Any = None
+        new_web_producer: Any = None
         new_weibo_producer: Any = None
         new_instagram_producer: Any = None
         if hasattr(self.database, "conn"):
@@ -2091,6 +2136,17 @@ class RuntimeContext:
                 soul_engine=new_soul_engine,
                 candidate_pipeline=new_candidate_pipeline,
                 keyword_fetch=new_keyword_fetch,
+            )
+            from openbiliclaw.runtime.web_producer import WebDiscoveryProducer
+
+            new_web_producer = WebDiscoveryProducer(
+                database=self.database,
+                adapter=web_adapter,
+                candidate_pipeline=new_candidate_pipeline,
+                enabled=bool(getattr(web_cfg, "enabled", True)),
+                lease_seconds=int(getattr(web_cfg, "lease_seconds", 300)),
+                request_timeout_seconds=int(getattr(web_cfg, "request_timeout_seconds", 15)),
+                soul_engine=new_soul_engine,
             )
             if new_bangumi_client is not None:
                 from openbiliclaw.runtime.bangumi_producer import BangumiDiscoveryProducer
@@ -2282,6 +2338,20 @@ class RuntimeContext:
             kick=_kick_source_incremental,
         )
 
+        def _custom_source_producer(source_id: str) -> Any:
+            from openbiliclaw.runtime.custom_workflow_producer import CustomWorkflowProducer
+
+            return CustomWorkflowProducer(
+                database=self.database,
+                source_id=source_id,
+                candidate_pipeline=new_candidate_pipeline,
+                soul_engine=new_soul_engine,
+                config=new_config,
+                llm_service=new_llm_service,
+                keyword_fetch_coordinator=new_keyword_fetch,
+                candidate_evaluation_owned_by_coordinator=True,
+            )
+
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
             database=self.database,
@@ -2293,7 +2363,14 @@ class RuntimeContext:
             keyword_fetch=new_keyword_fetch,
             source_incremental_sync=new_source_incremental_sync,
             pool_target_count=new_config.scheduler.pool_target_count,
-            pool_source_shares=_pool_source_shares_from_config(new_config),
+            pool_source_shares=_pool_source_shares_from_config(
+                new_config,
+                database=self.database,
+            ),
+            pool_source_shares_provider=lambda: _pool_source_shares_from_config(
+                new_config,
+                database=self.database,
+            ),
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
             trending_refresh_minutes=int(
                 getattr(new_config.scheduler, "trending_refresh_minutes", 3)
@@ -2321,6 +2398,8 @@ class RuntimeContext:
             github_producer=new_github_producer,
             linuxdo_producer=new_linuxdo_producer,
             v2ex_producer=new_v2ex_producer,
+            web_producer=new_web_producer,
+            custom_source_producer_provider=_custom_source_producer,
             weibo_producer=new_weibo_producer,
             instagram_producer=new_instagram_producer,
             scheduler_config=new_config.scheduler,
@@ -2473,6 +2552,7 @@ class RuntimeContext:
             new_github_producer,
             new_linuxdo_producer,
             new_v2ex_producer,
+            new_web_producer,
             new_weibo_producer,
             new_instagram_producer,
         ):
@@ -2587,6 +2667,7 @@ class RuntimeContext:
             new_chat_approval_store = ApprovalStore(approval_store_path)
         new_agent_tool_context = AgentToolContext(
             database=self.database,
+            llm_service=new_llm_service,
             soul_engine=new_soul_engine,
             memory_manager=self.memory_manager,
             recommendation_engine=new_recommendation_engine,

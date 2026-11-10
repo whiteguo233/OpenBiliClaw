@@ -90,9 +90,11 @@ OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当
 - **Bangumi**：匿名 search / ranked / 按日期 discovery 直接使用官方只读 API，无需登录、Cookie、token 或扩展 host permission。若要让公开收藏参与初始化画像，请在 `/setup/` 或设置页显式填写公开用户名；未填用户名时 Bangumi 不能作为唯一画像初始化来源。
 - **GitHub**：匿名 `search / ranked / latest` 直接使用官方 REST API，只接收公开 repository，无需浏览器登录、Cookie、扩展 host permission 或任务桥。若要让 public starred repositories 参与初始化，请在 `/setup/` 或设置页填写公开用户名；PAT 可选且只用于提额和 `/user` 身份核验。容器不会读取宿主机 `GITHUB_TOKEN` / `GH_TOKEN`，如需 PAT，必须在 backend 服务显式传入固定专用变量 `OPENBILICLAW_GITHUB_TOKEN` 或通过 GitHub 凭据表单保存。
 - **微博**：后端以项目自有 `httpx` client 和仅存内存的匿名 visitor 会话读取公开 search / hot-as-query-seed / creator 内容；公开路径无需登录。若在 guided init 选择微博，宿主机浏览器需登录 `m.weibo.cn`，扩展在隔离同源任务页只读收藏、关注和 mentions，并仅回传布尔登录态、uid 与规范化事件；Cookie 不进入容器，个人 bootstrap 当前为 init-only。
-- **CDP 说明**：小红书、抖音、YouTube、知乎和 Reddit 插件 fallback 都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
+- **通用 Web**：桌面 Web / 插件可把用户显式粘贴的 URL 交给容器后端做只读 authoring probe，只在 exact origin 内按 Feed → Sitemap → 确定性静态列表返回草稿与样例；「采用」只回填，显式添加才保存。正式调度只访问已保存 recipe 明确允许的公开 `feed / sitemap / listing` origin，服从 robots、公共 DNS/socket pin 与有界响应/parser，不读取宿主机浏览器登录态。当前不支持探测后自动保存、递归 crawl、登录页面或 JavaScript 渲染。
+- **CDP 说明**：小红书、抖音、YouTube、知乎和 Reddit 插件 fallback 都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给历史 `web_extract` 浏览器实验；正式 Web recipe 不使用 CDP，也不会在 HTTP 失败时回退到浏览器。
 
-详见 [配置参考 / sources.browser 段](modules/config.md#sourcesbrowser)。
+详见 [Web 来源文档](modules/web.md)与[配置参考](modules/config.md)。这次 Web 接入没有增加 Docker
+依赖、额外容器、浏览器启动参数或安装步骤。
 
 ## 快速开始
 
@@ -176,7 +178,7 @@ AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外
 - 默认 embedding 是 `ollama` + `bge-m3`，Docker 里写成 compose 网络地址 `http://ollama:11434/v1`，指向随 compose 启动的 sidecar。如果你手动填了其他 embedding endpoint，不会被覆盖。
 - **后端不再等 sidecar 拉完模型才启动**：`bge-m3` 首次下载（~568MB）期间后端已经可用，`/setup/` 的前置检查会显示 embedding 尚未就绪，拉取完成后自动通过。模型下载失败时 sidecar 守护进程仍在，重启 compose 会自动重试。
 - B 站登录态推荐用浏览器扩展：扩展装在**宿主机浏览器**里，不在容器里。你登录 bilibili.com 后，扩展会把 Cookie 自动 POST 到 `127.0.0.1:8420` 的后端接口。
-- 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / V2EX / 微博 / GitHub 都默认关闭，只有你在 `/setup/` 或设置页明确开启才会进入适用链路；需要个人浏览器信号的来源仍需在宿主机浏览器里装扩展并登录对应站点；Bangumi 与 GitHub 使用官方匿名只读 API，GitHub 不依赖扩展；微博公开请求匿名、个人 bootstrap 走扩展同源任务。镜像通过 pip 安装项目，X 的 `twitter-cli` 和 Reddit 的 `rdt-cli` 已内置。
+- 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / V2EX / 微博 / GitHub 都默认关闭，只有你在 `/setup/` 或设置页明确开启才会进入适用链路；需要个人浏览器信号的来源仍需在宿主机浏览器里装扩展并登录对应站点；Bangumi 与 GitHub 使用官方匿名只读 API，GitHub 不依赖扩展；微博公开请求匿名、个人 bootstrap 走扩展同源任务。镜像通过 pip 安装项目，X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及 Web 传输的 `httpx[socks]>=0.28,<1` / `httpcore>=1,<2` 已内置；Web 全局开关默认开启，但没有 enabled recipe 时不取数、不占 quota，无需浏览器服务。
 - `[tailnet]` 也保持默认关闭。即使从宿主机挂载一个自行编译的 helper，容器网络 / 状态目录 / 生命周期仍不属于首版受支持路径；本指南不提供这种半自定义部署的可用性承诺。
 
 ### 可选公网域名自动 HTTPS（最简方案）
@@ -580,20 +582,60 @@ curl -s http://127.0.0.1:8420/api/health | python -m json.tool
 
 v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，但手动 init 能获得更完整的初始画像（包含历史标题、作者等上下文信息）。
 
+### 自定义网站来源的浏览器执行
+
+托管 Ego 的域名直连偏好默认空列表；需要时通过 `GET/PUT /api/custom-sources/executors/ego/network` 显式保存到数据库旁 `ego-managed/network.json`。每次冷启动保留当前 macOS 手动代理与原排除项，仅增加精确域名直连；活跃会话阻止变更，PAC/WPAD 不静默降级。该设置无需重启后端，不改变系统代理，也不扩展 Windows/Linux/Docker 的支持范围。
+
+新建普通网页来源使用 Ego Lite。macOS 本机源码安装在依赖完成后自动准备，桌面包首次
+启动和实际 `start` / `serve-api` 在后台补齐未完成环境，无需等首次聊天。
+API、桌面和 CLI 服务启动检查会跳过已安装且 ready 的环境，即使 offline 也不唤醒；
+源码安装重跑仍显式准备和验证握手，必要时启动宿主。暂时的下载／安全系统命令超时在同次准备内有限重试；首次设置超时在停止宿主后重新观察恢复。
+最多三次尝试、安装预算 1200 秒、首次连接独立预算 300 秒，真实信任拒绝和未知页面仍明确失败。
+macOS 首次设置兼容官方 0.6.2.7 末页“加入用户体验计划”文案；与旧崩溃报告选项一样先关闭，仍要求三个已知选项全部取消勾选，未知选项不自动略过。
+设置中的「准备 Ego Lite」或 `sources prepare-ego` 可显式重试，聊天仍可补救未完成环境。
+已初始化的宿主可由实际网页任务或源码安装的显式握手启动，GET 状态没有这些副作用。
+准备完成与采集结束共用默认 120 秒空闲退出；源码准备命令退出时清理无活跃会话的宿主。
+复用已在线宿主也会补挂回收，正在采集或人工登录的会话由跨进程租约保护。
+macOS 托管启动统一使用官方 Ego 应用自身的无界面模式，首次设置和定时采集不显示本机
+窗口；人工登录通过用户打开的接管页截图／操作完成。源码和桌面部署共用此行为，
+无需新增依赖或配置；现有在线宿主在下次正常冷启动采用新参数，不中断活跃会话。
+但当前托管准备与原生适配器都只支持 macOS：Linux Docker 没有 Ego 宿主或远程桥接，
+即使 Docker 运行在 Mac 上，容器仍报告 `platform_supported=false` / `setup_state=unsupported`。
+容器中不能使用托管准备按钮，准备 API 返回 409，也不会自动改用 Playwright。
+`OPENBILICLAW_EGO_*` 外部宿主配置只用于同机原生连接，不提供跨容器远程桥接。
+RSS / Atom / JSON Feed 不触发 Ego 准备，仍可通过 HTTP 建源、定期发现与入池。
+
+以下仅为已保存 Playwright 流程的兼容环境：镜像默认包含 Playwright Python 依赖、匹配的 Chromium 及系统库；浏览器文件位于
+`/opt/openbiliclaw-browsers`，运行时使用 headless 模式，无须桌面环境或宿主 Mac。
+执行器启动就绪检查返回的完整 Chromium；headless 模式不依赖另一个 headless shell 文件。
+网站登录通过应用的人工接管页面完成，使用专属浏览器 profile；profile 保存在
+应用数据目录，继续使用现有数据卷，重启容器后仍可复用登录状态。
+
+浏览器版镜像只支持 `linux/amd64` 和 `linux/arm64`。`python:3.11-slim` 本身包含更多
+架构，但 Playwright Chromium 没有相应的 32 位运行环境，因此不再声称支持 arm/v7
+或 386。首次构建需要下载浏览器及 Debian 系统依赖，离线部署应预先构建镜像。
+这些 Chromium 依赖不安装 Ego Lite，也不能充当 Ego 验收证据。
+
+2026-10-03 已在 Linux/amd64 镜像中验证默认入口和健康检查、匹配 Chromium 的连续分页
+回放、超时释放 profile 以及资源失败诊断。测试使用无外网的容器内匿名 fixture，
+没有导入网站账号；arm64 和真实外站登录仍需对应环境验证，详见
+[动态网站来源验收](platform-source-acceptance.dynamic-web.md)。
 ## macOS 桌面包签名
 
 Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 拖入 Applications 后启动，升级前退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
+macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行传输；逐段校验后才缓存，服务器忽略范围时回到单流。签名、系统信任及原生握手验证仍必须全部通过。Linux/Docker 的原生 Ego 支持范围未扩大。
+
 
 ## 免费模型安装与切换
 
-初始化和配置页常驻“硅基流动免费方案”内置Provider，未启用时也保留入口。桌面新安装在随包组件验证通过后默认启用8B和云端BGE-M3；已有配置保持用户选择。后端打包和Docker构建必须成功纳入当前平台固定的已签名SDK，缺失或版本不符会中止。更新应用时优先使用新包固定版本，旧active缓存不会遮住新凭据；源码安装仍可通过初始化页准备组件。
+初始化与原有 LLM 实例列表预填“硅基流动（免费）”，Embedding Provider 下拉也提供独立选项。桌面新安装在随包组件验证通过后默认启用8B和云端BGE-M3；已有配置保持用户选择。后端打包和Docker构建必须成功纳入当前平台固定的已签名SDK，缺失或版本不符会中止。更新应用时优先使用新包固定版本，旧active缓存不会遮住新凭据；源码安装仍可通过初始化页准备组件。
 
-初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件、PC或手机配置页开启免费方案即可，切换后保存并等待运行时应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
+初始化 `/setup/` 推荐免费 Qwen3-8B，也可选 Qwen3.5-4B；文本向量默认使用云端 BGE-M3，也可在初始化或设置中选择本地Ollama。已有安装在插件/PC模型设置把免费实例加入默认链或模块链；手机可选择主实例。模型在该实例中选择8B/4B，Embedding 在原下拉框独立选择，保存并等待应用完成。免费方案不填写共享Key，不必安装Rust，云端选项不依赖本地Ollama；默认不会回退付费渠道。图片理解与图片向量不是初始化前提，BGE-M3没有图片向量。
 
 源码/AI bootstrap 安装依赖后调用 `python -m openbiliclaw.runtime.sponsored_bundle --if-available`；用户也可在初始化页点准备组件。Docker构建用同一入口把匹配平台的签名组件放到 `/opt/openbiliclaw-sponsored`，桌面打包放入资源目录。Core固定发行目录和信任公钥，先验签再执行离线自检，之后才激活；下载或验证失败不覆盖原组件。源码自动更新在重启前重新协调组件；Docker拉新镜像，桌面更新含匹配组件的新包。
 
-本分支已固定[五平台SDK发行目录](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/sponsored-runtime-2026-11-05.1)；应用改动尚需随主程序发布，旧版应用不会因为SDK发布自动获得新入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
+固定组件目录为 `sponsored-runtime-2026-11-06.2`（兼容 Core0.3.234）；本次实例统一改动尚需随应用发布，旧版应用不会因为 SDK 已发布自动获得新的统一入口。安装/打包遇到签名、摘要、平台或兼容性错误必须失败并保留原组件。Mac组件已签名公证；Windows依赖Core独立签名校验。原生安装、容器与应用整包的验收范围见[交付记录](testing/2026-11-04-sponsored-user-flow.md)。
 
 默认云端向量不触发本地权重下载/播种。选择本地向量后保留已有模型和端点（包括桌面私有11435、Docker `ollama:11434`），通过初始化前置检查/修复准备模型；本地向量不受免费Key轮换影响。凭据被撤销或组件授权到期时，设置和消息中心提示更新应用/安装包或配置自己的Key，重启后保留通知；限流不提示Key过期。升级方式与轮换步骤见[Runtime](modules/runtime.md#免费凭据状态与轮换)。
 

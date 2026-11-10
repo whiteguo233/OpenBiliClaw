@@ -277,6 +277,8 @@ class RecommendationOut(_DirectorOptionalResponse):
     content_id: str = ""
     content_url: str = ""
     source_platform: str = ""
+    source_id: str = ""
+    source_name: str = ""
     published_at: str = ""
     published_label: str = ""
     # Text-first sources (X tweet/thread): the popup renders a no-cover
@@ -484,6 +486,8 @@ class RuntimeStatusResponse(BaseModel):
     candidate_eval_pending: int = 0
     candidate_eval_backoff_until: float = 0.0
     candidate_eval_last_error: str = ""
+    candidate_eval_input_budget_blocked: int = 0
+    candidate_eval_invalid_evidence_blocked: int = 0
     candidate_eval_last_batch_seconds: float = 0.0
     candidate_eval_last_cached: int = 0
     candidate_eval_last_rejected: int = 0
@@ -628,6 +632,8 @@ class PendingDelightOut(BaseModel):
     cover_url: str = ""
     content_url: str = ""
     source_platform: str = ""
+    source_id: str = ""
+    source_name: str = ""
     published_at: str = ""
     published_label: str = ""
     content_type: str = "video"
@@ -1007,6 +1013,7 @@ class SourcesStatusResponse(BaseModel):
     v2ex: SourceStatusItem = Field(default_factory=SourceStatusItem)
     weibo: SourceStatusItem = Field(default_factory=SourceStatusItem)
     instagram: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    web: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
 class SourceVerifyResponse(BaseModel):
@@ -1183,6 +1190,7 @@ class SourcesCredentialsResponse(BaseModel):
     v2ex: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     weibo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     instagram: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    web: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
 
 
 class NotificationAckIn(BaseModel):
@@ -1709,6 +1717,8 @@ class WatchLaterItem(BaseModel):
     cover_url: str = ""
     content_url: str = ""
     source_platform: str = ""
+    source_id: str = ""
+    source_name: str = ""
     content_type: str = "video"
     added_at: str = ""
     sync_status: NativeSaveStatusOut = "pending"
@@ -1758,6 +1768,8 @@ class FavoriteItem(BaseModel):
     cover_url: str = ""
     content_url: str = ""
     source_platform: str = ""
+    source_id: str = ""
+    source_name: str = ""
     content_type: str = "video"
     added_at: str = ""
     sync_status: NativeSaveStatusOut = "pending"
@@ -2334,6 +2346,7 @@ class LLMInstanceConfigOut(LLMProviderConfigOut):
     name: str = ""
     provider_type: str = ""
     enabled: bool = True
+    read_only: bool = False
 
 
 class EmbeddingConfigOut(BaseModel):
@@ -2379,7 +2392,7 @@ class SponsoredConfigOut(BaseModel):
     fallback_to_other_free_model: bool = True
     fallback_to_user_provider: bool = False
     notify_on_fallback: bool = True
-    request_timeout_seconds: float = 180.0
+    request_timeout_seconds: float = 1200.0
     runtime_available: bool = False
     embedding_model: str = "BAAI/bge-m3"
     context_window: int = 131072
@@ -2645,6 +2658,67 @@ class WeiboSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 10
 
 
+class WebSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = True
+    request_timeout_seconds: int = Field(default=15, ge=1, le=60)
+    max_response_bytes: int = Field(default=2_097_152, ge=65_536, le=5_000_000)
+    max_redirects: int = Field(default=5, ge=0, le=10)
+    lease_seconds: int = Field(default=300, ge=30, le=3600)
+
+
+class WebProbeIn(BaseModel):
+    """Read-only request to infer public-Web source recipes from one URL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: Annotated[
+        StrictStr,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=4096),
+    ]
+
+
+class WebProbeSampleOut(BaseModel):
+    """Bounded preview item produced while probing a candidate recipe."""
+
+    title: str
+    content_url: str
+    author_name: str = ""
+    published_at: str = ""
+
+
+class WebProbeRecipeOut(BaseModel):
+    """Editable payload that still requires the normal create compiler."""
+
+    name: str
+    strategy: Literal["feed", "sitemap", "listing"]
+    config: dict[str, object]
+    target_share: int
+    enabled: bool
+
+
+class WebProbeCandidateOut(BaseModel):
+    """One observed public discovery option for a submitted URL."""
+
+    strategy: Literal["feed", "sitemap", "listing"]
+    entry_url: str
+    discovery_method: Literal["direct", "html_alternate", "well_known", "html_structure"]
+    confidence: Literal["high", "medium"]
+    detail: str
+    sample_items: list[WebProbeSampleOut] = Field(default_factory=list)
+    recipe: WebProbeRecipeOut
+
+
+class WebProbeResponse(BaseModel):
+    """Stable, body-free result of public-Web URL probing."""
+
+    status: Literal["ready", "no_match"]
+    detail: str
+    requested_url: str
+    final_url: str
+    page_title: str
+    candidates: list[WebProbeCandidateOut] = Field(default_factory=list)
+
+
 class InstagramSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     source_modes: list[str] = Field(default_factory=lambda: ["topic", "creator"])
@@ -2671,6 +2745,7 @@ class SourcesConfigOut(BaseModel):
     v2ex: V2EXSourceConfigOut = Field(default_factory=V2EXSourceConfigOut)
     weibo: WeiboSourceConfigOut = Field(default_factory=WeiboSourceConfigOut)
     instagram: InstagramSourceConfigOut = Field(default_factory=InstagramSourceConfigOut)
+    web: WebSourceConfigOut = Field(default_factory=WebSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):
@@ -2744,7 +2819,7 @@ class JevEvaluationConfigOut(BaseModel):
     franchise_labels: list[str] = Field(default_factory=list)
     max_state_question_bytes: int = 0
     max_request_bytes: int = 0
-    max_candidates_per_request: int = 4
+    max_candidates_per_request: int = 64
     max_questions_per_request: int = 0
     max_question_bytes: int = 0
     max_calls: int = 32
@@ -2758,6 +2833,7 @@ class JevProviderReadinessOut(BaseModel):
     model: str = "jev-1.13.0"
     api_key_env: str = "TYPESAFE_API_KEY"
     endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    base_url_supported: bool = True
     api_key_configured: bool = False
     credential_source: str = "missing"
     timeout_seconds: float = 2.0
@@ -2970,7 +3046,7 @@ class ConfigUpdateIn(BaseModel):
 
 
 class ConfigServiceProbeIn(BaseModel):
-    """No-write request to probe the submitted LLM or embedding config.
+    """No-write request to probe submitted LLM, Jev or embedding settings.
 
     ``llm_instance`` probes one exact endpoint instance. ``llm_chain``
     exercises the submitted global route, including sequential fallback.
@@ -2986,6 +3062,7 @@ class ConfigServiceProbeIn(BaseModel):
         "embedding",
         "llm_fallback",
         "network_proxy",
+        "jev",
     ]
     check_embedding: bool = True
     instance_id: str = ""
@@ -3005,6 +3082,7 @@ class ConfigServiceProbeResponse(BaseModel):
         "embedding",
         "llm_fallback",
         "network_proxy",
+        "jev",
     ]
     instance_id: str = ""
     provider: str = ""

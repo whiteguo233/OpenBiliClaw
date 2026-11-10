@@ -79,7 +79,7 @@
         "description": "纯本地、私有、开源的自进化跨平台内容发现 Agent，覆盖 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与开放 Web。",
         "url": "https://whiteguo233.github.io/OpenBiliClaw/",
         "downloadUrl": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest",
-        "softwareVersion": "0.3.234",
+        "softwareVersion": "0.3.235",
         "license": "https://github.com/whiteguo233/OpenBiliClaw/blob/main/LICENSE",
         "image": "https://whiteguo233.github.io/OpenBiliClaw/images/social-preview-zh.png",
         "screenshot": [
@@ -1511,7 +1511,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
             <div class="loop-index">01</div>
             <div>
               <h3 data-i18n="loopStep1Title">跨平台使用行为</h3>
-              <p data-i18n="loopStep1Text">跨平台公开内容、授权的个人信号、推荐反馈和通用 Web 页面事件进入同一事件层。</p>
+              <p data-i18n="loopStep1Text">跨平台公开内容与 Web recipe 进入候选链；授权的个人信号、推荐反馈和对话进入学习事件层。</p>
             </div>
           </article>
           <article class="loop-step reveal">
@@ -1635,7 +1635,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	          <article class="source-card reveal" data-source="web">
 	            <span>Web</span>
 	            <h3 data-i18n="sourceWebTitle">通用 Web</h3>
-            <p data-i18n="sourceWebText">通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。</p>
+	            <p data-i18n="sourceWebText">在「聊一聊」粘贴网站 URL，预览公开 Feed、Sitemap 或静态列表，确认订阅后加入内容发现；也可从设置添加。仅匿名读取公开内容，不读取登录态或运行 JavaScript。</p>
           </article>
         </div>
         <p data-i18n="sourcesNetwork">Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。插件默认包含两者的站点访问权限；请在设置中手动启用来源，并查看对应连接指南。</p>
@@ -1873,7 +1873,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         loopTitle: "自进化不是口号，而是一条闭环。",
         loopLead: "OpenBiliClaw 不只是抓取历史再生成一次画像。它会在实际使用中持续吸收新的行为、反馈和对话，让理解和推荐一起更新。",
         loopStep1Title: "跨平台使用行为",
-        loopStep1Text: "跨平台公开内容、授权的个人信号、推荐反馈和通用 Web 页面事件进入同一事件层。",
+        loopStep1Text: "跨平台公开内容与 Web recipe 进入候选链；授权的个人信号、推荐反馈和对话进入学习事件层。",
         loopStep2Title: "项目内反馈与对话",
         loopStep2Text: "你对推荐卡片的喜欢、不感兴趣、评论，以及侧边栏聊天里的明确偏好，会成为新的长期理解候选。",
         loopStep3Title: "心理画像持续深化",
@@ -1920,7 +1920,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         sourcesNetwork: "Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。插件默认包含两者的站点访问权限；请在设置中手动启用来源，并查看对应连接指南。",
         sourceInstagramEvidence: "实测范围",
 	        sourceWebTitle: "通用 Web",
-        sourceWebText: "通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。",
+        sourceWebText: "在「聊一聊」粘贴网站 URL，预览公开 Feed、Sitemap 或静态列表，确认订阅后加入内容发现；也可从设置添加。仅匿名读取公开内容，不读取登录态或运行 JavaScript。",
         screensEyebrow: "Product",
         screensTitle: "一套本地后端，五种使用入口。",
         screensLead: "浏览器插件、桌面 Web、移动 Web、Flutter 原生客户端和 DSH 客户端插件共享同一套推荐、内容库、对话与画像能力；平台登录态和只读任务仍由浏览器插件承接。",
@@ -2056,7 +2056,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         loopTitle: "Self-improving is a loop, not a slogan.",
         loopLead: "OpenBiliClaw does not just fetch history and build a one-off profile. During real use, it keeps absorbing behavior, feedback, and conversations so understanding and recommendations improve together.",
         loopStep1Title: "Cross-platform usage behavior",
-        loopStep1Text: "Public cross-platform content, authorized personal signals, recommendation feedback, and generic Web events enter the same event layer.",
+        loopStep1Text: "Public cross-platform content and Web recipes enter the candidate path; authorized personal signals, feedback, and chat enter the learning event layer.",
         loopStep2Title: "In-product feedback and chat",
         loopStep2Text: "Likes, dislikes, comments on recommendation cards, and explicit preferences from sidebar chat become long-term understanding candidates.",
         loopStep3Title: "The psychological profile deepens",
@@ -2103,7 +2103,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
         sourcesNetwork: "Instagram and TikTok need overseas connectivity. The backend follows your configured network/proxy route; browser tasks use the browser’s own proxy. Site access for both is included in the extension’s default permissions. Enable each source in Settings and check its setup guide.",
         sourceInstagramEvidence: "Tested scope",
 	        sourceWebTitle: "Generic Web",
-        sourceWebText: "Browser access plus LLM extraction bring more sites into the profile and candidate pool.",
+        sourceWebText: "Paste a website URL in Chat, preview a public Feed, Sitemap, or static list, then approve the subscription to add it to discovery. Settings also supports adding sources. Only public content is read, without login state or JavaScript.",
         screensEyebrow: "Product",
         screensTitle: "One local backend, five ways to use it.",
         screensLead: "The browser extension, desktop Web, mobile Web, native Flutter client, and DSH client plugin share recommendations, library, chat, and profile capabilities. Platform sessions and read-only tasks remain in the browser extension.",

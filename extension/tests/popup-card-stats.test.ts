@@ -64,6 +64,14 @@ test("stats element only renders when non-empty", () => {
   assert.match(appendFn, /className = "recommendation-stats"/);
 });
 
+test("public Web cards never render structurally unavailable engagement counts", () => {
+  const statsFn = popupJs.slice(
+    popupJs.indexOf("function recommendationStats"),
+    popupJs.indexOf("function recommendationStats") + 500,
+  );
+  assert.match(statsFn, /if \(isPublicWebSource\(item\)\) return "";/);
+});
+
 test("delight normalizer threads the raw count fields through", () => {
   for (const field of [
     "view_count",

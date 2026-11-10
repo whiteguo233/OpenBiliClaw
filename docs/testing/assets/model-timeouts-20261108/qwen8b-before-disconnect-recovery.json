@@ -1,0 +1,137 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "event_count": 200,
+  "calls": [
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33300,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 97.37
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33301,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 85.59
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33254,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 50.07
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33239,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 86.93
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33246,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 113.03
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33247,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 93.34
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 33200,
+      "max_tokens": 4096,
+      "effort": "",
+      "error_type": "SponsoredUpstreamError",
+      "seconds": 89.0
+    },
+    {
+      "caller": "soul.preference.chunk",
+      "task_id": "llm.structured",
+      "input_bytes": 18723,
+      "max_tokens": 4096,
+      "effort": "",
+      "ok": true,
+      "request_timeout_seconds": 1200.0,
+      "runtime_negotiated_timeouts": true,
+      "seconds": 10.74
+    }
+  ],
+  "progress": [
+    {
+      "done": 1,
+      "total": 8,
+      "seconds": 86.3
+    },
+    {
+      "done": 2,
+      "total": 8,
+      "seconds": 98.02
+    },
+    {
+      "done": 3,
+      "total": 8,
+      "seconds": 136.37
+    },
+    {
+      "done": 4,
+      "total": 8,
+      "seconds": 223.3
+    },
+    {
+      "done": 5,
+      "total": 8,
+      "seconds": 249.41
+    },
+    {
+      "done": 6,
+      "total": 8,
+      "seconds": 316.64
+    },
+    {
+      "done": 7,
+      "total": 8,
+      "seconds": 327.39
+    }
+  ],
+  "planned_batches": 8,
+  "deadlines": {
+    "idle": 4290.0,
+    "absolute": 12270.0
+  },
+  "ok": false,
+  "error_type": "PreferenceAnalysisError",
+  "total_seconds": 405.65
+}

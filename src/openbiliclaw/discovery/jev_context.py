@@ -123,9 +123,29 @@ def candidate_text_view(
         for key, span in spans.items():
             if _CONDITION.search(str(span["text"])):
                 mandatory.update(neighbors[key])
+        # Canonical JSON has additive object entries. Serialize each immutable
+        # span once, not the whole growing view for every proposal. Account for
+        # commas, selected-count digits and true->false explicitly; this is the
+        # exact same UTF-8 byte measure, not a token estimate or new selection.
+        empty_bytes = len(_json(render(set())).encode("utf-8"))
+        entry_bytes = {
+            key: len(_json(key).encode("utf-8")) + 1 + len(_json(span).encode("utf-8"))
+            for key, span in spans.items()
+        }
+
+        def packed_bytes(entries: int, count: int) -> int:
+            return (
+                empty_bytes
+                + entries
+                + max(0, count - 1)
+                + len(str(count))
+                - 1
+                + int(bool(spans) and count == len(spans))
+            )
+
         selected = mandatory
-        content = render(selected)
-        if len(selected) > 254 or len(_json(content).encode("utf-8")) > max_bytes:
+        selected_bytes = sum(entry_bytes[key] for key in selected)
+        if len(selected) > 254 or packed_bytes(selected_bytes, len(selected)) > max_bytes:
             return None
         query = _tokens(" ".join(query_texts))
         ranked = sorted(
@@ -133,12 +153,18 @@ def candidate_text_view(
             key=lambda key: (-len(_tokens(str(spans[key]["text"])) & query), int(key[1:])),
         )
         for key in ranked:
-            proposed = selected | neighbors[key]
-            if len(proposed) > 254:
+            added = neighbors[key] - selected
+            if not added or len(selected) + len(added) > 254:
                 continue
-            proposed_content = render(proposed)
-            if len(_json(proposed_content).encode("utf-8")) <= max_bytes:
-                selected, content = proposed, proposed_content
+            proposed_bytes = selected_bytes + sum(entry_bytes[ref] for ref in added)
+            if packed_bytes(proposed_bytes, len(selected) + len(added)) <= max_bytes:
+                selected.update(added)
+                selected_bytes = proposed_bytes
+        content = render(selected)
+        # Keep one final measurement as a fail-closed guard if the wire shape
+        # grows in the future without a matching additive-size update.
+        if len(_json(content).encode("utf-8")) > max_bytes:
+            return None
     return CandidateTextView(
         content=content,
         excerpts={key: str(value["text"]) for key, value in spans.items() if key in selected},

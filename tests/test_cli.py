@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,11 @@ from openbiliclaw.soul.profile import (
 @pytest.fixture(autouse=True)
 def _restore_cli_process_state() -> Iterator[None]:
     """Keep CLI-owned process globals from leaking into later tests."""
+    # Load the lazy public LLM exports before CLI tests replace LLMService.
+    # Otherwise a first import can retain the test double in SoulEngine.
+    from importlib import import_module
+
+    import_module("openbiliclaw.soul.engine")
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
     original_level = root_logger.level
@@ -43,6 +49,7 @@ def _restore_cli_process_state() -> Iterator[None]:
     original_noisy_levels = {name: logging.getLogger(name).level for name in noisy_loggers}
     runtime_components = cli_module._RUNTIME_COMPONENTS
     original_runtime_components = dict(runtime_components)
+    image_service_url = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_URL")
     runtime_components.clear()
     try:
         yield
@@ -58,6 +65,10 @@ def _restore_cli_process_state() -> Iterator[None]:
             logging.getLogger(name).setLevel(level)
         cli_module._RUNTIME_COMPONENTS.clear()
         cli_module._RUNTIME_COMPONENTS.update(original_runtime_components)
+        if image_service_url is None:
+            os.environ.pop("OPENBILICLAW_IMAGE_SERVICE_URL", None)
+        else:
+            os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = image_service_url
 
 
 def test_build_discovery_candidate_pipeline_drains_one_shot_runs_immediately() -> None:
@@ -1233,6 +1244,7 @@ def test_login_codex_import_uses_source_path(
     tmp_path: Path,
 ) -> None:
     from openbiliclaw.llm.codex_auth import CodexCredentials
+    from openbiliclaw.llm.codex_chatgpt_provider import CodexProbeResult
 
     source = tmp_path / "auth.json"
     calls: list[Path | None] = []
@@ -1243,6 +1255,12 @@ def test_login_codex_import_uses_source_path(
 
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
     monkeypatch.setattr("openbiliclaw.llm.codex_auth.import_codex_credentials", fake_import)
+    monkeypatch.setattr("openbiliclaw.llm.codex_auth.load_codex_credentials", lambda: None)
+
+    async def fake_probe(**kwargs):
+        return CodexProbeResult(ok=True, model="test-model")
+
+    monkeypatch.setattr("openbiliclaw.llm.codex_chatgpt_provider.probe_codex_llm", fake_probe)
 
     result = runner.invoke(app, ["login", "codex", "--import", "--source", str(source)])
 
@@ -2127,13 +2145,20 @@ def test_run_api_server_prints_degraded_mode_panel(
         Console(file=output, force_terminal=False, width=120),
         raising=False,
     )
-    monkeypatch.setattr(api_app, "create_app", lambda: fake_app)
+    app_calls = []
+
+    def create_deployed_app(**kwargs):
+        app_calls.append(kwargs)
+        return fake_app
+
+    monkeypatch.setattr(api_app, "create_app", create_deployed_app)
     monkeypatch.setattr(
         "uvicorn.run",
         lambda app, **kwargs: run_calls.append({"app": app, **kwargs}),
     )
 
     cli_module._run_api_server(host="127.0.0.1", port=8420)
+    assert app_calls == [{"prepare_ego_on_startup": True}]
 
     rendered = output.getvalue()
     assert "降级模式" in rendered or "Degraded mode" in rendered
@@ -4372,6 +4397,9 @@ def test_init_runs_history_preference_profile_and_discovery(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -4520,6 +4548,9 @@ def test_init_caps_bilibili_history_and_favorites_at_500_and_following_at_100(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -4637,6 +4668,9 @@ def test_init_accepts_custom_bilibili_history_favorites_and_following_limits(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
 
@@ -4743,6 +4777,9 @@ def test_init_includes_xhs_bootstrap_events(
             self.events.append(event)
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -4897,6 +4934,9 @@ def test_init_includes_douyin_bootstrap_events_in_analysis_and_profile(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
@@ -5371,6 +5411,9 @@ def test_init_youtube_env_skip_overrides_yes_flag(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -5484,6 +5527,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
         "instagram": 1,
@@ -5533,6 +5577,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
         "instagram": 1,
@@ -5582,6 +5627,9 @@ def test_init_no_xhs_flag_skips_enqueue(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
 
@@ -5690,6 +5738,9 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -5833,6 +5884,9 @@ def test_init_skips_backfill_when_pool_target_is_already_reached(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -5944,6 +5998,9 @@ def test_init_reports_partial_success_when_discovery_fails(
             return _FakeMemoryLayer()
 
     class FakeSoulEngine:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(
             self,
             events: list[dict[str, object]],
@@ -9148,6 +9205,9 @@ def _guided_init_pipeline_doubles(monkeypatch) -> dict[str, Any]:
             state["propagated"].append(event)
 
     class _Soul:
+        def preference_analysis_batch_count(self, events, *, event_chunk_size):
+            return max(1, (len(events) + event_chunk_size - 1) // event_chunk_size)
+
         async def analyze_events(self, events: list[dict[str, Any]], **kwargs: Any) -> None:
             state["analyzed"] = list(events)
 

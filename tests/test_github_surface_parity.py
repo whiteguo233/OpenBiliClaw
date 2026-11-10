@@ -96,14 +96,43 @@ def test_canonical_source_roster_matches_every_central_registration_set() -> Non
     for name, roster in rosters.items():
         _assert_same_roster(name, roster, canonical)
 
-    # Guided init covers every source family, tiktok included (its account
-    # bootstrap scopes feed profile signals since the full-source upgrade).
+    # Guided init covers account-signal families, tiktok included; Web
+    # remains discovery-only and must not enter account bootstrap.
     init_roster = tuple(_literal_assignment(app_path, "_INIT_SOURCE_ORDER"))
-    assert set(init_roster) == canonical
+    assert set(init_roster) == canonical - {"web"}
     assert "tiktok" in init_roster
 
     assert tuple(SOURCE_ORDER) == canonical_tuple
     assert tuple(_literal_assignment(app_path, "_SOURCE_SHARE_ORDER")) == canonical_tuple
+    # Public Web has discovery recipes but no account/history bootstrap. Keep
+    # complete source registration separate from the explicit guided-init contract.
+    capability_block = re.search(
+        r"const SOURCE_CAPABILITIES = Object\.freeze\(\{(.*?)\n\s*\}\);",
+        shared_source,
+        flags=re.DOTALL,
+    )
+    assert capability_block is not None
+    capabilities = dict(
+        re.findall(
+            r"([a-z0-9_]+): Object\.freeze\(\{ guidedInit: (true|false) \}\)",
+            capability_block.group(1),
+        )
+    )
+    _assert_same_roster("shared source capabilities", set(capabilities), canonical)
+    guided_init_sources = {name for name, enabled in capabilities.items() if enabled == "true"}
+    assert canonical - guided_init_sources == {"web"}
+    _assert_same_roster(
+        "API init order",
+        set(_literal_assignment(app_path, "_INIT_SOURCE_ORDER")),
+        guided_init_sources,
+    )
+    assert tuple(_literal_assignment(app_path, "_INIT_SOURCE_ORDER")) == tuple(
+        source for source in canonical_tuple if source in guided_init_sources
+    )
+    assert (
+        "SOURCE_KEYS.filter((key) => SOURCE_CAPABILITIES[key]?.guidedInit === true)"
+        in shared_source
+    )
     assert "github: Object.freeze({ guidedInit: true })" in shared_source
     assert 'github: "GitHub"' in shared_source
 

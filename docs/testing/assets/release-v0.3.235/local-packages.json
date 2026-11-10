@@ -1,0 +1,14 @@
+[
+  {
+    "file": "openbiliclaw-extension-v0.3.235-firefox.zip",
+    "bytes": 1624710,
+    "sha256": "8258bb1d1326ff576e1d4f992a536b31daa24ddf5cfd5fb475ba540b672242f9",
+    "manifest_version": "0.3.235"
+  },
+  {
+    "file": "openbiliclaw-extension-v0.3.235.zip",
+    "bytes": 1743308,
+    "sha256": "4eba3031403b9e6e9f000c0e26aed87f8ccc26712f94e00b4fd79ce60c99b1b4",
+    "manifest_version": "0.3.235"
+  }
+]

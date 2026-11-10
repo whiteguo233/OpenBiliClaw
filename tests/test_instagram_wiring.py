@@ -305,12 +305,12 @@ def test_instagram_creator_only_config_is_normalized_to_seeded_modes(
 def test_instagram_source_policy_and_canonical_registry_are_exact() -> None:
     from openbiliclaw.runtime.refresh import _PLATFORM_SOURCE_ORDER
 
-    assert SOURCE_ORDER[-1] == "instagram"
+    assert SOURCE_ORDER[-2:] == ("instagram", "web")
     assert _PLATFORM_SOURCE_ORDER == SOURCE_ORDER
     assert SOURCE_ORDER.count("instagram") == 1
     assert DEFAULT_SOURCE_ENABLED["instagram"] is False
     assert DEFAULT_POOL_SOURCE_SHARES["instagram"] == 1
-    assert CANONICAL_SOURCE_FAMILIES[-1] == "instagram"
+    assert CANONICAL_SOURCE_FAMILIES[-2:] == ("instagram", "web")
     assert normalize_source_platform("instagram") == "instagram"
     assert normalize_source_platform("ig") == "instagram"
     assert normalize_source_platform("ins") == "ins"
@@ -1268,7 +1268,7 @@ def test_instagram_formal_discover_cli_dispatch(monkeypatch: pytest.MonkeyPatch)
     assert "def _run_instagram_discovery(" in cli_source
     assert "_run_instagram_discovery(limit=limit, force=force)" in cli_source
     assert 'kick=lambda: _kick_task_dispatcher("instagram")' in cli_source
-    assert "linuxdo、v2ex、weibo 或 instagram" in cli_source
+    assert "linuxdo、v2ex、weibo、instagram 或 web" in cli_source
 
 
 def test_instagram_formal_discover_producer_kicks_instagram_dispatcher(
@@ -2632,8 +2632,9 @@ def test_instagram_api_rosters_match_source_policy() -> None:
     app_path = ROOT / "src/openbiliclaw/api/app.py"
     share_roster = _literal_module_assignment(app_path, "_SOURCE_SHARE_ORDER")
     init_roster = _literal_module_assignment(app_path, "_INIT_SOURCE_ORDER")
-    assert share_roster[-1] == "instagram"
-    # TikTok joined guided init with its account bootstrap queue; the init
-    # roster now covers every pool-share source.
+    assert share_roster[-2:] == ("instagram", "web")
+    assert share_roster == SOURCE_ORDER
+    # TikTok and Instagram use account bootstrap. Public Web sources are
+    # explicitly authorized by their source workflow, outside guided init.
     assert "tiktok" in share_roster
-    assert init_roster == tuple(share_roster)
+    assert init_roster == tuple(share_roster[:-1])

@@ -46,6 +46,7 @@
     .hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
     .hint a { color: var(--accent); text-decoration: none; }
     .hint a:hover { text-decoration: underline; }
+    .source-chat-link { display: inline-block; min-height: 44px; padding: 12px 0; }
     .model-discovery-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 8px; }
     .model-discovery-row button { min-width: 96px; padding-inline: 14px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
     .model-discovery-row button:hover { border-color: var(--accent); color: var(--accent); }
@@ -85,6 +86,8 @@
     .init-missing.init-soft .init-mark { background: rgba(244,185,66,.14); color: var(--warn); }
     .init-hint { margin: 7px 0 0 32px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
     .init-repair-btn { margin: 8px 0 0 32px; font-size: 12.5px; padding: 5px 12px; }
+    [data-init-source-options]:not([hidden]) { display: grid; gap: 8px; }
+
     .init-sources { display: grid; gap: 8px; margin: 16px 0; }
     .init-sources-title { margin: 0 0 2px; font-size: 13px; font-weight: 800; color: var(--text); }
     .init-source-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); font-size: 13px; }
@@ -145,7 +148,6 @@
   <script src="/shared/i18n.js"></script>
 <link rel="stylesheet" href="/shared/sponsored-settings.css">
 <script src="/shared/sponsored-settings.js"></script>
-<style>#setupSponsoredSettings > .sponsored-toggle{display:none}</style>
 </head>
   <body>
     <!-- weibo, instagram and tiktok are included in the shared guided-init
@@ -176,9 +178,9 @@
       <section class="panel active" data-panel="0">
         <h2>连接 AI 大脑</h2>
         <p class="sub">OpenBiliClaw 用大模型理解你、生成推荐解释。可直接使用免费方案，也可配置自己的服务商。</p>
-        <label for="provider">AI 服务商</label>
+        <label for="provider">LLM Provider</label>
         <select id="provider">
-          <option value="sponsored">硅基流动免费方案（推荐 · 无需 Key）</option>
+          <option value="siliconflow_free">硅基流动（免费 · 内置实例）</option>
           <option value="deepseek">DeepSeek（推荐 · 便宜好用）</option>
           <option value="openai">OpenAI</option>
           <option value="claude">Claude（Anthropic）</option>
@@ -191,7 +193,7 @@
           <option value="openai_compatible">OpenAI 兼容接口（自建 / 第三方）</option>
         </select>
 
-        <div id="setupSponsoredSettings"></div>
+
         <div id="byokFields">
         <div id="keyWrap">
           <label for="apiKey">API Key</label>
@@ -243,6 +245,14 @@
           <option value="max"></option>
         </datalist>
         <div class="hint" id="reasoningEffortHint">协议没有 Effort 枚举接口；这里是本地建议，也支持手填，保存后会做真实连接测试。</div>
+        <label for="setupEmbeddingProvider">Embedding Provider</label>
+        <select id="setupEmbeddingProvider">
+          <option value="siliconflow_free">硅基流动（免费 · BGE-M3 · 无需下载）</option>
+          <option value="ollama">本地 Ollama（bge-m3）</option>
+          <option value="">暂不启用</option>
+        </select>
+        <div class="hint">Embedding 独立于 LLM；本地模型可在初始化时准备，之后也可在配置页切换。</div>
+
         </div>
 
         <div class="msg" id="msg0"></div>
@@ -302,6 +312,7 @@
           <li id="biliDone" class="pending"><span class="tick">…</span><div><b>平台账号</b><br><span class="hint" id="doneBili">B 站可稍后连接；Reddit 等来源按初始化勾选项检查</span></div></li>
           <li id="initDoneRow"><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint" id="doneInit">完整画像和首轮可用推荐均已就绪</span></div></li>
         </ul>
+        <p class="hint" data-source-setup="custom-sources">想添加网站或订阅源？可以稍后在「聊一聊」提供网址或 RSS、Atom、JSON Feed 订阅链接和想看的内容，试跑后确认启用。每个来源可单独设置份额和发现频率。<a class="source-chat-link" href="/web/?chat=1">去聊一聊添加来源 →</a></p>
         <div class="row-actions">
           <button class="ghost" id="back2">← 上一步</button>
           <button class="primary" id="finish">开始使用 OpenBiliClaw →</button>
@@ -419,6 +430,7 @@
       }
     }
     const KEY_LINKS = {
+      siliconflow_free: ["", ""],
       deepseek: ["https://platform.deepseek.com/api_keys", "DeepSeek 开放平台"],
       openai: ["https://platform.openai.com/api-keys", "OpenAI Platform"],
       claude: ["https://console.anthropic.com/settings/keys", "Anthropic Console"],
@@ -431,6 +443,7 @@
       openai_compatible: ["", ""],
     };
     const DEFAULT_MODELS = {
+      siliconflow_free: "Qwen/Qwen3-8B",
       deepseek: "deepseek-v4-flash",
       openai: "gpt-5-nano",
       claude: "claude-sonnet-4-6",
@@ -603,16 +616,18 @@
 
     function renderProvider() {
       const p = $("#provider").value;
-      $("#byokFields").hidden = p === "sponsored";
-      $("#setupSponsoredSettings").hidden = p !== "sponsored";
-      if (p === "sponsored") return;
+      const free = p === "siliconflow_free";
+      $("#reasoningEffort").hidden = free;
+      document.querySelector('label[for="reasoningEffort"]').style.display = free ? "none" : "";
+      document.querySelector('label[for="model"]').textContent = free ? "选择内置模型实例" : "模型名";
+      $("#reasoningEffortHint").hidden = free;
       const isCompat = p === "openai_compatible";
       const isClaude = p === "claude";
       const isOpenAI = p === "openai";
       const codexMode = isOpenAI && $("#authMode").value === "codex_oauth";
       $("#apiKey").placeholder = savedKeyProviders.has(p) ? "已保存，留空则沿用当前 Key" : "粘贴你的 API Key";
       // Codex OAuth 复用 ChatGPT 登录态，不填 Platform API Key（issue #170）。
-      $("#keyWrap").style.display = codexMode ? "none" : "block";
+      $("#keyWrap").style.display = codexMode || free ? "none" : "block";
       $("#authWrap").style.display = isOpenAI ? "block" : "none";
       // Claude 也开放 Base URL（可选，第三方 Anthropic 协议网关，见 issue #72）
       $("#baseWrap").style.display = (isCompat || isClaude) ? "block" : "none";
@@ -633,6 +648,11 @@
         ? "已填入推荐默认模型，可按你的服务商实际模型名修改。"
         : "OpenAI 兼容接口通常需要填写你的部署名或第三方模型 ID。";
       resetModelDiscovery();
+      window.OpenBiliClawSponsoredSettings.syncInstance({
+        provider: p, model: $("#model"), status: $("#modelDiscoveryStatus"),
+      });
+      if (free) $("#modelHint").textContent = "选择内置固定实例；配置不可修改，可在设置页调整调用链。";
+
     }
 
     function renderDatalist(id, values, currentValue = "") {
@@ -676,6 +696,11 @@
     }
 
     function providerInstanceId(provider) {
+      if (provider === "siliconflow_free") {
+        return Object.keys(savedLlmInstances).find(id =>
+          savedLlmInstances[id].provider_type === provider && savedLlmInstances[id].model === $("#model").value
+        ) || "";
+      }
       let instanceId = savedLlmDefaultChain.find(
         (id) => savedLlmInstances[id]?.provider_type === provider,
       ) || Object.keys(savedLlmInstances).find(
@@ -751,7 +776,8 @@
       }
       return {
         instances,
-        default_chain: [
+        default_chain: instance.provider_type === "siliconflow_free" && !savedLlmDefaultChain.includes(instanceId)
+          ? [instanceId] : [
           instanceId,
           ...savedLlmDefaultChain.filter(
             (id) => id !== instanceId && !demotedIds.has(id),
@@ -968,13 +994,12 @@
 
     async function saveLlm() {
       const provider = $("#provider").value;
-      if (provider === "sponsored") { await saveSponsored(); return; }
       const apiKey = $("#apiKey").value.trim();
       const baseUrl = $("#baseUrl").value.trim();
       const model = $("#model").value.trim();
       const authMode = provider === "openai" ? $("#authMode").value : "";
       const codexMode = provider === "openai" && authMode === "codex_oauth";
-      if (!apiKey && !savedKeyProviders.has(provider) && !codexMode) { showMsg("#msg0", "请先填入 API Key。", "err"); return; }
+      if (!apiKey && !savedKeyProviders.has(provider) && !codexMode && provider !== "siliconflow_free") { showMsg("#msg0", "请先填入 API Key。", "err"); return; }
       if (provider === "openai_compatible" && !baseUrl) { showMsg("#msg0", "OpenAI 兼容接口需要填 Base URL。", "err"); return; }
       if (!model) { showMsg("#msg0", "请填写模型名。", "err"); return; }
 
@@ -989,7 +1014,7 @@
       pcfg.reasoning_effort = $("#reasoningEffort").value.trim();
       const instanceId = providerInstanceId(provider);
       const existingInstance = savedLlmInstances[instanceId] || {};
-      const instance = {
+      let instance = {
         ...existingInstance,
         name: existingInstance.name || provider,
         provider_type: provider,
@@ -997,11 +1022,15 @@
         ...pcfg,
       };
       if (apiKey) instance.api_key = apiKey;
+      if (provider === "siliconflow_free") {
+        if (!instanceId) { showMsg("#msg0", "内置实例尚未加载，请刷新后重试。", "err"); return; }
+        instance = { ...existingInstance };
+      }
       const routing = buildSetupLlmRouting(instanceId, instance);
       const payload = {
         suppress_background_llm_work: true,
         llm: {
-          sponsored: { enabled: false },
+          embedding: setupEmbeddingConfig(),
           routing_version: 2,
           instances: routing.instances,
           default_chain: routing.default_chain,
@@ -1014,6 +1043,25 @@
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span>保存中…';
       clearMsg("#msg0");
       try {
+        if (provider === "siliconflow_free" || payload.llm.embedding.provider === "siliconflow_free") {
+          await prepareFreeComponent();
+        }
+        if (provider === "siliconflow_free") {
+          const response = await fetchWithTimeout("/api/config/probe-service", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "llm_instance", instance_id: instanceId, config: payload }),
+          }, 190000);
+          const probe = await response.json();
+          if (!response.ok || !probe.ok) throw new Error(probe.error || "LLM 实例连接失败");
+        }
+        if (payload.llm.embedding.provider === "siliconflow_free") {
+          const response = await fetchWithTimeout("/api/config/probe-service", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "embedding", config: payload }),
+          }, 190000);
+          const probe = await response.json();
+          if (!response.ok || !probe.ok) throw new Error(probe.error || "Embedding 连接失败");
+        }
         await ensureSetupLocaleSaved();
         const r = await fetchWithTimeout("/api/config", {
           method: "PUT",
@@ -1068,56 +1116,24 @@
       }
     }
 
-    function sponsoredForm() {
-      return window.OpenBiliClawSponsoredSettings.mount($("#setupSponsoredSettings"), {
-        useOwn: () => { $("#provider").value = "deepseek"; switchProvider(); $("#apiKey").focus(); },
-        prepare: async () => {
-          const r = await fetchWithTimeout("/api/config/sponsored/prepare", { method: "POST" }, 125000);
-          if (!r.ok) throw new Error("组件准备失败，请确认已登录后重试。");
-          return await r.json();
-        },
-        probe: async sponsored => {
-          const r = await fetchWithTimeout("/api/config/probe-service", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ kind: "sponsored", config: { llm: { sponsored } } }),
-          }, 370000);
-          if (!r.ok) throw new Error("连接测试失败，请确认已登录后重试。");
-          return await r.json();
-        },
-      });
+    let savedSetupEmbedding = {};
+    let freeComponentReady = false;
+    async function prepareFreeComponent() {
+      if (freeComponentReady) return { ok: true };
+      const response = await fetchWithTimeout("/api/config/sponsored/prepare", { method: "POST" }, 125000);
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error || "免费组件准备失败");
+      freeComponentReady = true;
+      return result;
     }
-
-    async function saveSponsored() {
-      const btn = $("#saveLlm");
-      btn.disabled = true; btn.textContent = "正在准备并验证免费模型…";
-      clearMsg("#msg0");
-      try {
-        if (!sponsoredForm().ready) {
-          const r = await fetchWithTimeout("/api/config/sponsored/prepare", { method: "POST" }, 125000);
-          const result = await r.json();
-          if (!r.ok || !result.ok) throw new Error(result.error || "免费模型组件准备失败");
-        }
-        const sponsored = { ...sponsoredForm().collect(), enabled: true };
-        const probe = await fetchWithTimeout("/api/config/probe-service", { method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "sponsored", check_embedding: sponsored.embedding_mode !== "local", config: { llm: { sponsored } } }),
-        }, 370000);
-        const checked = await probe.json();
-        if (!probe.ok || !checked.ok) throw new Error(checked.error || "免费模型连接测试失败");
-        await ensureSetupLocaleSaved();
-        const r = await fetchWithTimeout("/api/config", { method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ suppress_background_llm_work: true, llm: { sponsored } }),
-        });
-        const saved = await r.json();
-        if (!r.ok) throw new Error(configSaveErrorMessage(r, saved));
-        if (saved.apply_state === "queued" || saved.apply_state === "applying") await waitForConfigApply(Number(saved.apply_revision || 0));
-        if (saved.restart_required === true) { writeSetupRestartMarker("sponsored"); waitForBackendRestart("sponsored"); return; }
-        $("#doneLlm").textContent = "已连接 · " + checked.model + (sponsored.embedding_mode === "local" ? " · 本地向量将在初始化时准备" : " + BGE-M3");
-        clearSetupRestartMarker(); setStep(1);
-      } catch (error) {
-        showTextMsg("#msg0", error.message || "免费模型配置失败", "err");
-      } finally { btn.disabled = false; btn.textContent = "保存并继续 →"; }
+    function setupEmbeddingConfig() {
+      const provider = $("#setupEmbeddingProvider").value;
+      if (provider === savedSetupEmbedding.provider) return { ...savedSetupEmbedding };
+      return {
+        provider, model: provider === "siliconflow_free" ? "BAAI/bge-m3" : provider === "ollama" ? "bge-m3" : "",
+        api_key: "", base_url: provider === "ollama" ? "http://127.0.0.1:11434/v1" : "",
+        output_dimensionality: 1024, fallback_enabled: false, fallback_provider: "", multimodal_enabled: false,
+      };
     }
 
     // Reads the same source-auth contract the settings pages render, through
@@ -1353,7 +1369,11 @@
         initBangumiUsernameTouched = true;
       });
       bangumiDetail.append(bangumiText, bangumiInput);
-      root.append(bangumiDetail);
+      const bangumiOptions = document.createElement("div");
+      bangumiOptions.dataset.initSourceOptions = "bangumi";
+      bangumiOptions.hidden = bangumiInput.disabled;
+      root.append(bangumiOptions);
+      bangumiOptions.append(bangumiDetail);
 
       // Optional personal access token: identifies the account via /v0/me and
       // reads private collections; when set the username above is auto-resolved.
@@ -1372,14 +1392,15 @@
         initBangumiToken = bangumiTokenInput.value || "";
       });
       bangumiTokenDetail.append(bangumiTokenText, bangumiTokenInput);
-      root.append(bangumiTokenDetail);
+      bangumiOptions.append(bangumiTokenDetail);
       const bangumiTokenHint = document.createElement("p");
       bangumiTokenHint.className = "hint";
       bangumiTokenHint.innerHTML = 'Bangumi 账号三选一：个人令牌最完整（自动识别当前登录账号，可读私密收藏）；公开用户名次之（只读公开收藏）；两者都留空时，只要浏览器已登录 bgm.tv，扩展会自动识别账号（只拿到账号名，可能未经校验）。<a href="https://next.bgm.tv/demo/access-token" target="_blank" rel="noopener noreferrer">生成个人令牌</a>（约 1 年有效，视同密码保管）·<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/bangumi.md#获取-bangumi-个人令牌" target="_blank" rel="noopener noreferrer">取令牌步骤</a>';
-      root.append(bangumiTokenHint);
+      bangumiOptions.append(bangumiTokenHint);
 
       root.querySelector('input[data-init-source="bangumi"]')?.addEventListener("change", (event) => {
         const checked = Boolean(event.currentTarget.checked);
+        bangumiOptions.hidden = !checked;
         bangumiInput.disabled = !checked;
         bangumiTokenInput.disabled = !checked;
       });
@@ -1400,7 +1421,11 @@
         initGitHubUsernameTouched = true;
       });
       githubDetail.append(githubText, githubInput);
-      root.append(githubDetail);
+      const githubOptions = document.createElement("div");
+      githubOptions.dataset.initSourceOptions = "github";
+      githubOptions.hidden = githubInput.disabled;
+      root.append(githubOptions);
+      githubOptions.append(githubDetail);
 
       const githubTokenDetail = document.createElement("label");
       githubTokenDetail.className = "init-source-detail";
@@ -1417,13 +1442,14 @@
         initGitHubToken = githubTokenInput.value || "";
       });
       githubTokenDetail.append(githubTokenText, githubTokenInput);
-      root.append(githubTokenDetail);
+      githubOptions.append(githubTokenDetail);
       const githubTokenHint = document.createElement("p");
       githubTokenHint.className = "hint";
       githubTokenHint.innerHTML = 'GitHub 仅导入公开 starred repositories。PAT 只用于确认账号身份和提高官方 API 限额，不读取私有仓库；留空仍可使用公开发现。<a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/github.md#pat-获取与安全" target="_blank" rel="noopener noreferrer">PAT 与安全说明</a>';
-      root.append(githubTokenHint);
+      githubOptions.append(githubTokenHint);
       root.querySelector('input[data-init-source="github"]')?.addEventListener("change", (event) => {
         const checked = Boolean(event.currentTarget.checked);
+        githubOptions.hidden = !checked;
         githubInput.disabled = !checked;
         githubTokenInput.disabled = !checked;
       });
@@ -1523,11 +1549,11 @@
     }
 
     function showInitCompletion(status = null) {
-      $("#doneEmbedding").textContent = $("#provider").value === "sponsored"
-        ? (sponsoredForm().collect().embedding_mode === "local"
+      $("#doneEmbedding").textContent = $("#setupEmbeddingProvider").value === "siliconflow_free"
+        ? "硅基流动 BGE-M3 文本向量已就绪。"
+        : $("#setupEmbeddingProvider").value === "ollama"
           ? "本地 Ollama 文本向量已就绪。"
-          : "硅基流动 BGE-M3 文本向量已就绪。")
-        : "按所选配置使用文本向量。";
+          : "按独立的 Embedding Provider 配置使用文本向量。";
       const partial = Boolean(status?.partial_success);
       $("#doneTitle").textContent = partial ? "初始化部分完成" : "就绪 🎉";
       $("#doneSummary").textContent = partial
@@ -2155,7 +2181,17 @@
             void applySetupLocale(currentConfig.language);
           }
           const llm = currentConfig?.llm || {};
-          sponsoredForm().load(llm.sponsored ? { ...llm.sponsored, enabled: true } : {});
+          freeComponentReady = llm.sponsored?.runtime_available === true;
+          savedSetupEmbedding = { ...(llm.embedding || {}) };
+          if (savedSetupEmbedding.provider) {
+            const select = $("#setupEmbeddingProvider");
+            if (![...select.options].some(option => option.value === savedSetupEmbedding.provider)) {
+              const option = document.createElement("option"); option.value = savedSetupEmbedding.provider;
+              option.textContent = `已配置：${savedSetupEmbedding.provider} · ${savedSetupEmbedding.model || ""}`;
+              select.append(option);
+            }
+            select.value = savedSetupEmbedding.provider;
+          }
           configLoaded = true;
           backendDegraded = currentConfig?.degraded === true;
           savedLlmInstances = { ...(llm.instances || {}) };
@@ -2210,7 +2246,7 @@
           const savedProvider = String(primaryInstance?.provider_type || llm.default_provider || "");
           const preferFree = llm.sponsored && savedKeyProviders.size === 0
             && (!savedProvider || savedProvider === "deepseek");
-          const prov = llm.sponsored?.enabled || preferFree ? "sponsored" : savedProvider;
+          const prov = llm.sponsored?.enabled || preferFree ? "siliconflow_free" : savedProvider;
           const optionExists = Array.from($("#provider").options).some((option) => option.value === prov);
           if (prov && optionExists) {
             $("#provider").value = prov;

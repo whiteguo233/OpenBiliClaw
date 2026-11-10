@@ -1,5 +1,13 @@
 # Desktop packaging
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 预置服务与本地向量播种 | 桌面首次配置落为普通免费实例及独立 BGE-M3 Provider；自检按实际路由判断。云端向量不触发本地权重播种；本地自定义端口/模型保持。签名组件的固定版本、归档验签与 staging 入口不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 免费组件构建门禁（2026-11-06）
 
 | 已实现能力 | 合同 |
@@ -23,6 +31,7 @@ The bundled desktop Web offers LAN, Tailscale and public scan targets. A browser
 
 | Feature | Status | Contract |
 | --- | --- | --- |
+| Ego native workflow resources | Implemented | The wheel includes `sources/ego_host.mjs` and `sources/ego_dom.mjs`. The desktop spec explicitly stages both under `openbiliclaw/sources`, beside `ego_executor.py`, so the native host's relative module import works from frozen paths. The upstream Ego Lite app is prepared automatically at macOS deployment startup, in a private managed directory outside the signed OpenBiliClaw bundle; it does not wait for the first chat. Bundling these modules does not itself establish an available host or successful website trial. |
 | Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
 | macOS crypto linkage | Implemented | `validate_macos_crypto_linkage()` rejects dynamically linked OpenSSL before PyInstaller; Mac CI installs with `OPENSSL_STATIC=1` and without wheel cache, avoiding a Homebrew/Python libssl collision. |
 | Verified free-model runtime | Implemented | Stage the Core-pinned native SDK after PyInstaller, preserve its independently signed bytes when signing the outer app, and verify the manifest again afterward. Frozen startup reconstructs its packaged SDK path, so it does not block login-item registration as a temporary external setting. |
@@ -49,6 +58,16 @@ Free-runtime packaging uses `openbiliclaw.runtime.sponsored_bundle.stage_runtime
 
 Public helpers in `packaging/build.py`: `validate_macos_signing`, `sign_macos_app`, `notarize_macos_artifact`, `notarize_macos_app`, `staple_macos_artifact`; `make_macos_dmg(..., notarized=True)` selects the signed installation instructions after successful app notarization.
 
+The Ego adapter resolves `ego_host.mjs` beside its Python module and passes its file URI to Ego's native Node channel. The host then imports `./ego_dom.mjs`; preserve both file names and their directory when staging desktop data. These are application-owned modules, not workflow-supplied scripts. The wheel's existing `src/openbiliclaw` package inclusion also carries these files; no separate build option is needed.
+
+`EgoSetupManager` in `sources/ego_setup.py` and the bounded `ego_onboarding.py` driver handle deployment preparation. A signed drag-install DMG has no post-install hook: the first actual desktop launch performs this part of deployment. After migration, the single-instance/data guards, and final configuration resolution, `packaging/entry.py` calls `create_app(prepare_ego_on_startup=True)`. The API owns one background preparation task without blocking HTTP or the UI; selftests, duplicate launches, and worker children do not opt in. The build itself never initializes a user's Ego environment.
+
+On macOS, preparation downloads the official app, verifies its Apple signature and identity, installs it under `<active database directory>/ego-managed`, and initializes a private profile and named host. This runtime directory is outside the signed application bundle. The desktop/API/CLI service-start check skips a ready, installed environment even if offline, without redownloading or launching the host. Source installer reruns instead call explicit `sources prepare-ego`, which verifies the native handshake and may start an offline host. Failed preparation is retried at the next service start, not in a loop; the settings action and `openbiliclaw sources prepare-ego` remain explicit retry paths. Shutdown cancels and awaits the API-owned preparation task. The installer removes only `com.apple.FinderInfo` and `com.apple.ResourceFork` from its new staged copy before strict signature verification, preserving quarantine, provenance and bundle contents; it does not weaken Gatekeeper checks.
+
+Complete official downloads are cached as `installer.dmg`. Missing bundle/CLI or invalid signing identity invalidates only this regular managed cache, so the next preparation can download again; it never retries in a loop. System trust refusals, timeouts, cancellation and ambiguous mount failures preserve the cache and report their failure. The CLI is checked before moving the staged bundle into its final installation path.
+
+Initialization uses a temporary loopback CDP endpoint only for the known official onboarding page, skips personal-data import, and disables the default-browser, Dock and crash-report options. It then restarts the owned host without the debugging port and verifies the native channel. Actual website workflows use that native channel. An initialized host restarts on demand; read-only status never starts it. Any explicit `OPENBILICLAW_EGO_BROWSER`, `OPENBILICLAW_EGO_SERVER_NAME` or `OPENBILICLAW_EGO_PROFILE` value opts out of managed preparation. Windows and Linux/Docker native Ego execution remain unsupported; HTTP feeds do not require Ego. See [configuration](config.md#ego-lite-执行宿主) and [installation guidance](../agent-install.md#dynamic-website-discovery-browser-runtime).
+
 ## CI configuration
 
 Set these GitHub Actions repository secrets (same names used by Safari):
@@ -63,13 +82,15 @@ Set these GitHub Actions repository secrets (same names used by Safari):
 
 This repository has all five secrets configured; hosted arm64/x64 lean builds passed on 2026-10-06 (see [acceptance record](../testing/2026-10-05-macos-signing.md#hosted-signed-installer-acceptance--2026-10-06)). Both desktop GitHub Actions workflows **always require all five secrets**. Missing credentials, an invalid identity, failed notarization or failed verification stop the macOS job; there is no hosted ad-hoc fallback. The former `MACOS_SIGNING_ENABLED` variable is no longer read, including a stale `false` value. Local Xcode login does **not** configure GitHub runners. The action does not modify Safari's signing selection.
 
-`release-desktop.yml` handles lean and with-embedding arm64 releases; `build-installers.yml` handles native manual arm64/x64 builds on `macos-15` / `macos-15-intel`. Use the manual `macos_only=true` input to validate both Mac architectures without starting Windows; do not combine it with `windows_only=true`. Signing credentials are validated before dependencies and runtimes are downloaded. Both workflows smoke-test the frozen macOS backend with an isolated profile and run the bundled Tailnet helper self-test after packaging. Windows signing is outside this change. No new runtime dependencies, source installer, Docker steps, application configuration or browser/mobile APIs are introduced.
+`release-desktop.yml` handles lean and with-embedding arm64 releases; `build-installers.yml` handles native manual arm64/x64 builds on `macos-15` / `macos-15-intel`. Use the manual `macos_only=true` input to validate both Mac architectures without starting Windows; do not combine it with `windows_only=true`. Signing credentials are validated before dependencies and runtimes are downloaded. Both workflows smoke-test the frozen macOS backend with an isolated profile and run the bundled Tailnet helper self-test after packaging. Windows signing is outside the signing workflow change. Signing itself adds no runtime dependencies, source-installer or Docker steps; managed Ego preparation is the separate runtime flow described above.
 
 ## Diagnostics and verification
 
 `dist/notary-logs/` holds submission ID, final status and Apple diagnostic JSON, also uploaded by CI on failure. A wait timeout (90 minutes per submission) does not imply rejection. Use `xcrun notarytool info ID --keychain-profile PROFILE --keychain PATH` or `wait ID --keychain-profile PROFILE --keychain PATH` before retrying; do not blindly resubmit. For an accepted timed-out submission, use `notarytool log ID --keychain-profile PROFILE PATH`, then staple/validate the exact submitted app or DMG. Rebuilds change signatures and may require another submission.
 
 Automated checks cover nested-code ordering, symlink/data exclusion, incomplete credentials, Apple rejection/timeouts and signed DMG contents. Release acceptance also requires real `codesign --verify --deep --strict`, `stapler validate`, `spctl --assess`, and a frozen application startup with an isolated data directory. Gatekeeper verification must not clear quarantine. A first internet-download confirmation is normal.
+
+`tests/test_ego_packaging.py` checks the desktop spec's actual resource entries and imports the staged native host from a temporary path containing spaces and non-ASCII characters. This verifies the relative JavaScript module dependency without launching Ego or accessing a browser profile. `tests/test_packaging_entry.py` covers deployment opt-in after the migration guards and final config, plus selftest/duplicate-instance exclusions. These tests do not establish a completed PyInstaller build, signed installer, or actual Ego connection.
 
 Official references: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
@@ -89,3 +110,11 @@ Runner reference: [GitHub hosted runner images](https://github.com/actions/runne
 Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runner对cryptography 50.0.2进行了源码编译，动态链接Homebrew OpenSSL；PyInstaller同时收集Python自己的旧libssl，导致已公证应用启动时报 `_SSL_get0_group_name` 缺失。两条Mac构建工作流现在以 `OPENSSL_STATIC=1` 安装依赖并禁用wheel缓存，构建入口在PyInstaller之前用otool拒绝动态libssl/libcrypto。已有环境需先执行 `OPENSSL_STATIC=1 python -m pip install --force-reinstall --no-cache-dir cryptography`；该配置只作用于构建，不改变用户配置或SDK签名。依据：[cryptography静态构建说明](https://cryptography.io/en/latest/installation/#building-cryptography-on-macos)。
 
 安全SDK目录更新为 `sponsored-runtime-2026-11-06.1`，后端/桌面/Docker沿用固定目录强制验签暂存流程；五个平台发行、Mac旧账本兼容、公开下载与损坏包拒绝的证据见[安全验收](../testing/2026-11-06-security-metadata.md)。SDK发行不等于主应用整包已发布。
+
+### v0.3.235 组件兼容发行
+
+正式桌面与 Docker 构建继续自动纳入已验签 Rust SDK。本版固定 `sponsored-runtime-2026-11-08.1`，manifest 严格支持 Core 0.3.235；旧版 0.3.234 的组件不能直接复用。构建入口与配置不变，Mac 两架构组件均已签名公证，Windows 保持 manifest 验签；整包构建结果单独记入[发行验收](../testing/2026-11-08-release-v0.3.235.md)。
+
+### Intel 已验证产物发布
+
+`publish-intel-installer.yml` 手动接收版本、成功的 `build-installers.yml` run ID 和已复核 DMG SHA-256。先确认构建提交等于对应 desktop tag，再下载该次 Intel 产物、校验版本／架构／提交后缀与字节摘要，将同一包附到 desktop 和 aggregate release。不会重新构建，不替换已有不同摘要的资产；仅移除文件名的构建 SHA 后缀，包内签名、公证和字节保持。脚本接口是 `.github/scripts/promote-intel-installer.py verify-source|publish`，仅供发布 CI 使用，不新增用户 CLI／配置。

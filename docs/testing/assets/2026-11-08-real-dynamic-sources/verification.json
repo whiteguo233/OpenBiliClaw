@@ -1,0 +1,161 @@
+{
+  "foreground": {
+    "samples": 46356,
+    "elapsed_seconds": 2039.4,
+    "running_samples": 22833,
+    "foreground_samples": 0,
+    "max_visible_windows": 0,
+    "running_intervals": [
+      {
+        "start": 1794079846.329791,
+        "end": 1794079859.883203
+      },
+      {
+        "start": 1794079860.0937629,
+        "end": 1794079981.6393719
+      },
+      {
+        "start": 1794080392.495295,
+        "end": 1794080562.528054
+      },
+      {
+        "start": 1794080749.171591,
+        "end": 1794081006.206142
+      },
+      {
+        "start": 1794081128.8147578,
+        "end": 1794081327.0921512
+      },
+      {
+        "start": 1794081327.550123,
+        "end": 1794081474.505793
+      },
+      {
+        "start": 1794081654.837578,
+        "end": 1794081807.0884519
+      }
+    ]
+  },
+  "responsive": [
+    {
+      "width": 1440,
+      "height": 1000,
+      "scrollWidth": 1440,
+      "scrollHeight": 1000,
+      "chatHeight": 330.15625,
+      "mainWidth": 1120,
+      "conversationWidth": 1120,
+      "draft": "未发送验收草稿：请添加网站和 RSS 来源",
+      "guideHeight": 209.953125,
+      "sideHidden": true,
+      "focus": "chatInput"
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "scrollWidth": 1024,
+      "scrollHeight": 768,
+      "chatHeight": 166.28125,
+      "mainWidth": 960,
+      "conversationWidth": 960,
+      "draft": "未发送验收草稿：请添加网站和 RSS 来源",
+      "guideHeight": 155.5625,
+      "sideHidden": true,
+      "focus": "chatInput"
+    },
+    {
+      "width": 960,
+      "height": 540,
+      "scrollWidth": 960,
+      "scrollHeight": 791,
+      "chatHeight": 270,
+      "mainWidth": 896,
+      "conversationWidth": 896,
+      "draft": "未发送验收草稿：请添加网站和 RSS 来源",
+      "guideHeight": 155.5625,
+      "sideHidden": true,
+      "focus": "chatInput"
+    },
+    {
+      "width": 888,
+      "height": 511,
+      "scrollWidth": 888,
+      "scrollHeight": 776,
+      "chatHeight": 255.5,
+      "mainWidth": 824,
+      "conversationWidth": 824,
+      "draft": "未发送验收草稿：请添加网站和 RSS 来源",
+      "guideHeight": 155.5625,
+      "sideHidden": true,
+      "focus": "chatSideToggle"
+    }
+  ],
+  "runs": [
+    {
+      "workflow_id": "8b2397cc-1685-4eeb-b3d2-203ab61e16c0",
+      "version": 1,
+      "executor": "ego",
+      "status": "ok",
+      "started_at": 1794080801.060374,
+      "completed_at": 1794080815.869859,
+      "discovered_count": 3,
+      "enqueued_count": 3,
+      "error": ""
+    },
+    {
+      "workflow_id": "8b2397cc-1685-4eeb-b3d2-203ab61e16c0",
+      "version": 2,
+      "executor": "ego",
+      "status": "ok",
+      "started_at": 1794080875.8777971,
+      "completed_at": 1794080886.081828,
+      "discovered_count": 3,
+      "enqueued_count": 0,
+      "error": ""
+    },
+    {
+      "workflow_id": "31a30243-5af0-4f22-a03d-2782bd568d15",
+      "version": 1,
+      "executor": "http",
+      "status": "ok",
+      "started_at": 1794080917.96386,
+      "completed_at": 1794080920.3104799,
+      "discovered_count": 3,
+      "enqueued_count": 3,
+      "error": ""
+    },
+    {
+      "workflow_id": "8b2397cc-1685-4eeb-b3d2-203ab61e16c0",
+      "version": 2,
+      "executor": "ego",
+      "status": "ok",
+      "started_at": 1794081186.199921,
+      "completed_at": 1794081206.8228009,
+      "discovered_count": 3,
+      "enqueued_count": 0,
+      "error": ""
+    },
+    {
+      "workflow_id": "4b3adf52-b3cc-45d3-bd8d-0cc7f78ffa41",
+      "version": 1,
+      "executor": "ego",
+      "status": "ok",
+      "started_at": 1794081326.9778671,
+      "completed_at": 1794081354.292379,
+      "discovered_count": 3,
+      "enqueued_count": 3,
+      "error": ""
+    },
+    {
+      "workflow_id": "4b3adf52-b3cc-45d3-bd8d-0cc7f78ffa41",
+      "version": 1,
+      "executor": "ego",
+      "status": "ok",
+      "started_at": 1794081654.455501,
+      "completed_at": 1794081686.805904,
+      "discovered_count": 3,
+      "enqueued_count": 0,
+      "error": ""
+    }
+  ]
+}

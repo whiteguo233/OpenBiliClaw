@@ -92,9 +92,13 @@ class SponsoredRelayProvider(SponsoredProvider):
             headers = signed_headers(self._device, "/v1/task", body, self._token)
             try:
                 async with (
-                    asyncio.timeout(self._request_timeout),
+                    asyncio.timeout(self._operation_timeout(contract.operation)),
                     self._http.stream(
-                        "POST", self.url + "/v1/task", content=body, headers=headers
+                        "POST",
+                        self.url + "/v1/task",
+                        content=body,
+                        headers=headers,
+                        timeout=self._operation_timeout(contract.operation),
                     ) as response,
                 ):
                     if response.status_code != 200:

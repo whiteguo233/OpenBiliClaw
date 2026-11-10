@@ -63,9 +63,16 @@ BUILTIN_TOOL_WHITELISTS: dict[str, set[str]] = {
         "query_discovery_pool",
         "get_watch_history",
         "list_sources",
+        "probe_web_source",
+        "prepare_discovery_source",
+        "trial_discovery_source",
+        "activate_discovery_source",
+        "manage_discovery_source",
         "get_config",
         "submit_feedback",
         "save_item",
+        "create_source",
+        "toggle_source",
     },
     "taste-explorer": {
         "search_web",
@@ -91,6 +98,11 @@ BUILTIN_TOOL_WHITELISTS: dict[str, set[str]] = {
         "search_web",
         "read_webpage",
         "list_sources",
+        "probe_web_source",
+        "prepare_discovery_source",
+        "trial_discovery_source",
+        "activate_discovery_source",
+        "manage_discovery_source",
         "get_config",
         "create_source",
         "toggle_source",
@@ -198,6 +210,14 @@ def test_builtin_whitelists_match_registered_tools() -> None:
                 assert tool is not None
                 if tool_name == "delete_memory":
                     assert skill.name in {"taste-companion", "taste-explorer"}
+                    assert tool.permission_level == "hard_write"
+                elif tool_name in {
+                    "create_source",
+                    "toggle_source",
+                    "activate_discovery_source",
+                    "manage_discovery_source",
+                }:
+                    assert skill.name == "taste-companion"
                     assert tool.permission_level == "hard_write"
                 else:
                     assert tool.permission_level != "hard_write"

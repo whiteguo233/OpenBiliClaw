@@ -1,5 +1,13 @@
 # 推荐导演：三策略与屏级运行时
 
+## Provider 结构统一（2026-11-06，应用待发布）
+
+| 已实现能力 | 公共接口与行为 |
+| --- | --- |
+| 导演模型路由统一 | 规划器按 `uses_sponsored_route(service, caller)` 选择免费顺序引用契约，不再依赖全局开关；`plan` 输入、确定性配对和 horizon 校验不变。 |
+
+配置见 [Config](config.md#硅基流动作为普通-provider)，验证见 [本次验收](../testing/2026-11-06-unified-providers.md)。
+
 ## 免费模型紧凑规划（2026-11-06）
 
 | 已实现能力 | 合同 |
@@ -38,6 +46,10 @@
 ```
 
 ## 已实现能力
+
+完整候选评估借用 `DirectorRuntime.jev_evaluator` 时，runtime 将已校验端点作为
+`provider_identity` 传入，供缓存与证据停放恢复使用（不含 Token）。这不改变下面的
+屏级逐对／修补问题合同，8 题联合时效方案仅用于[完整候选评估](discovery.md)。
 
 | 能力 | 合同 |
 |---|---|

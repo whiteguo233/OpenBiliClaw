@@ -183,7 +183,9 @@ def test_agent_transcript_keeps_window_roles_and_reply_context_without_mutation(
     messages = dialogue._history_to_messages(as_transcript=True)
 
     assert len(messages) == 1 and messages[0]["role"] == "user"
-    records = json.loads(messages[0]["content"].split("\n", 1)[1])
+    earlier_block, recent_block = messages[0]["content"].split("\n\n", 1)
+    recent = json.loads(recent_block.split("\n", 1)[1])
+    records = json.loads(earlier_block.split("\n", 1)[1]) + recent
     assert len(records) == DIALOGUE_WINDOW_TURNS * 2
     assert records[0] == {"role": "user", "content": "用户消息5", "local_time": "07-22 09:30"}
     assert records[-1] == {
@@ -192,6 +194,7 @@ def test_agent_transcript_keeps_window_roles_and_reply_context_without_mutation(
         "local_time": "07-22 09:30",
     }
     assert records[-2]["reply_context"] == "[回复卡片「喜欢安静的科普」]"
+    assert recent == records[-2:]
     assert "当前用户消息" not in messages[0]["content"]
     assert dialogue._history_to_messages() == legacy_before
 
