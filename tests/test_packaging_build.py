@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import zipfile
 from pathlib import Path
 
@@ -23,6 +24,24 @@ def _load_build_module():
 
 
 build_module = _load_build_module()
+
+
+def test_large_macos_dmg_reserves_volume_overhead(tmp_path: Path, monkeypatch) -> None:
+    app = tmp_path / "OpenBiliClaw.app"
+    app.mkdir()
+    seed_size = 1_200 * 1024**2
+    with (app / "bge-m3").open("wb") as seed:
+        seed.truncate(seed_size)
+
+    def verify_capacity(_dmg_path, _volume_name, *, settings):
+        size = settings.get("size", "0m")
+        assert size.endswith("m")
+        assert int(size[:-1]) * 1024**2 >= seed_size + 256 * 1024**2
+
+    monkeypatch.setitem(sys.modules, "dmgbuild", types.SimpleNamespace(build_dmg=verify_capacity))
+    monkeypatch.setitem(sys.modules, "dmgbuild.core", types.SimpleNamespace(DMGError=RuntimeError))
+    monkeypatch.setattr(build_module, "_write_macos_drag_background", lambda path: path / "bg.png")
+    build_module._make_macos_drag_dmg(app, tmp_path / "OpenBiliClaw.dmg")
 
 
 @pytest.mark.parametrize("library", ["libssl.3.dylib", "libcrypto.3.dylib"])

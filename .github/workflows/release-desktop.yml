@@ -12,6 +12,11 @@ name: Release Desktop Installers
 # Signed/notarized Intel x64 builds use the manual build-installers.yml workflow.
 on:
   workflow_dispatch:
+    inputs:
+      embedding_backfill_tag:
+        description: "Publish only a missing arm64 with-embedding DMG to this existing desktop tag"
+        type: string
+        required: false
   push:
     tags:
       - "desktop-v*"
@@ -19,6 +24,9 @@ on:
 # Needs write access to publish the Release (build-installers.yml stays read-only).
 permissions:
   contents: write
+
+env:
+  DESKTOP_RELEASE_TAG: ${{ inputs.embedding_backfill_tag || github.ref_name }}
 
 jobs:
   macos:
@@ -28,7 +36,7 @@ jobs:
       # fail-fast off so a failing variant doesn't cancel the other.
       fail-fast: false
       matrix:
-        variant: [lean, with-embedding]
+        variant: ${{ fromJSON(inputs.embedding_backfill_tag && '["with-embedding"]' || '["lean","with-embedding"]') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -83,7 +91,12 @@ jobs:
         id: ver
         run: |
           # desktop-v0.3.102 -> v0.3.102 (a tagged release IS the version; no SHA stamp).
-          v="${GITHUB_REF_NAME#desktop-}"
+          v="${DESKTOP_RELEASE_TAG#desktop-}"
+          expected="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$DESKTOP_RELEASE_TAG" != "desktop-v$expected" ]; then
+            echo "Desktop release tag must match pyproject version: desktop-v$expected"
+            exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Produce bge-m3 seed (with-embedding only)
@@ -157,6 +170,7 @@ jobs:
 
   windows:
     name: Windows installer (.exe, ${{ matrix.variant }})
+    if: ${{ !inputs.embedding_backfill_tag }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -355,6 +369,7 @@ jobs:
         run: ls -lhR release-artifacts || true
 
       - name: Publish GitHub pre-release
+        if: ${{ !inputs.embedding_backfill_tag }}
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -412,6 +427,7 @@ jobs:
           done
 
       - name: Update aggregate latest release
+        if: ${{ !inputs.embedding_backfill_tag }}
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -419,3 +435,25 @@ jobs:
           CHANNEL: desktop
           ASSET_GLOBS: release-artifacts/*.dmg release-artifacts/*.exe
         run: bash .github/scripts/sync-aggregate-release.sh
+
+      - name: Add the missing macOS embedding installer to both releases
+        if: ${{ inputs.embedding_backfill_tag }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${DESKTOP_RELEASE_TAG#desktop-}"
+          asset="OpenBiliClaw-macos-${version}-arm64-with-embedding.dmg"
+          installer="release-artifacts/$asset"
+          test -s "$installer"
+          digest="sha256:$(sha256sum "$installer" | cut -d' ' -f1)"
+          for tag in "$DESKTOP_RELEASE_TAG" "openbiliclaw-$version"; do
+            published="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq \
+              '.assets[] | select(.name == "'"$asset"'") | [.state, .digest] | join(" ")')"
+            if [ -z "$published" ]; then
+              gh release upload "$tag" "$installer" --repo "$GITHUB_REPOSITORY"
+            elif [ "$published" != "uploaded $digest" ]; then
+              echo "Refusing to replace the existing $asset on $tag"
+              exit 1
+            fi
+          done

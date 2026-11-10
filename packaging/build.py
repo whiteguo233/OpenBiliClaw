@@ -717,9 +717,22 @@ def _make_macos_drag_dmg(app_bundle: Path, dmg_path: Path) -> None:
             ["codesign", "--verify", "--deep", "--strict", str(Path(mount_point) / app_bundle.name)]
         )
 
+    # dmgbuild assumes 4 KiB allocation blocks. Reserve room for larger blocks
+    # and HFS metadata when the bundle includes the full local model seed.
+    allocation = 16 * 1024
+    mebibyte = 1024**2
+    volume_bytes = 256 * mebibyte
+    for directory, _, filenames in os.walk(app_bundle):
+        volume_bytes += allocation
+        for filename in filenames:
+            size = (Path(directory) / filename).lstat().st_size
+            volume_bytes += max(allocation, ((size + allocation - 1) // allocation) * allocation)
+    volume_mib = (volume_bytes + mebibyte - 1) // mebibyte
+
     with tempfile.TemporaryDirectory(prefix="obc-dmg-guide-") as directory:
         settings = {
             "format": "UDZO",
+            "size": f"{volume_mib}m",
             "files": [(str(app_bundle.resolve()), app_bundle.name)],
             "symlinks": {"Applications": "/Applications"},
             "default_view": "icon-view",
