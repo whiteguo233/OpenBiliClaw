@@ -16,7 +16,9 @@ The core public structured views:
 * :func:`build_query_generation_profile_summary` — query-trimmed taste shape for
   discovery keyword/domain generation (MMR-diversified, embedding-optional).
 * :func:`build_cognition_profile_view_v1` — uncapped, deterministic cognition
-  projection split into cache-stable soul/preference and volatile context.
+  projection split into cache-stable soul/preference and volatile context;
+  archived positive interests are filtered, and the unbounded
+  ``archived_interests`` ledger never reaches a prompt.
 
 This module was carved out of ``discovery/strategies/_utils.py`` verbatim
 (Task 5, Wave B of the profile-views plan) — a mechanical move with zero
@@ -168,21 +170,41 @@ _COGNITION_SOUL_DUPLICATE_FIELDS = frozenset(
 # (``state`` / ``evidence_count`` / ``last_evidence_at`` / ``parent_topic``)
 # stay model-visible on purpose; this one is a storage cursor.
 _COGNITION_INTERNAL_RECORD_FIELDS = frozenset({"last_decay_at"})
+# Lifecycle ledger collections that stay out of every prompt payload while
+# remaining in persisted profile storage. ``archived_interests`` grows without
+# bound — every consolidation over-watermark pass and every 12h lifecycle scan
+# appends to it and nothing prunes it — so serializing it makes prompt cost a
+# function of account age, not of current understanding. On one deployment
+# 4,752 entries (~1.6 MB) were re-sent on every awareness/confusion call
+# (issue #342: 145 calls / ~103.4M input tokens in 16 hours).
+#
+# Omitting it loses no behavioural signal: the preference analyzer merges
+# against ``archived_interests`` read from *storage* (``_merge_preference_output``)
+# and applies alias dedupe + evidence-driven reactivation there. The model's
+# input contract never referenced the archive, so the archive is pure payload
+# weight for both views.
+_PROMPT_EXCLUDED_PREFERENCE_FIELDS = frozenset({"archived_interests"})
 
 
 def preference_prompt_payload(preference: Mapping[str, object]) -> dict[str, object]:
     """Return the LLM-facing projection of a persisted preference payload.
 
-    Drops record-level bookkeeping (currently the ``last_decay_at`` decay
-    cursor) from ``interests``. Every other field passes through unchanged, so
-    a payload without the cursor renders byte-identically. Callers that
-    serialize a preference payload outside
-    :func:`build_cognition_profile_view_v1` — notably the legacy JSON dumps in
-    ``llm.prompts`` — must run it through this helper first.
+    Drops storage-only data that no prompt contract reads: the
+    ``last_decay_at`` decay cursor on ``interests`` and the append-only
+    ``archived_interests`` lifecycle ledger. Every other field passes through
+    unchanged and in its original order, so a payload without those fields
+    renders byte-identically. Callers that serialize a preference payload
+    outside :func:`build_cognition_profile_view_v1` — notably the legacy JSON
+    dumps in ``llm.prompts`` — must run it through this helper first.
     """
-    interests = preference.get("interests")
+    projected = {
+        key: value
+        for key, value in preference.items()
+        if key not in _PROMPT_EXCLUDED_PREFERENCE_FIELDS
+    }
+    interests = projected.get("interests")
     if not isinstance(interests, list | tuple):
-        return dict(preference)
+        return projected
     cleaned: list[object] = []
     changed = False
     for item in interests:
@@ -197,8 +219,7 @@ def preference_prompt_payload(preference: Mapping[str, object]) -> dict[str, obj
             changed = True
         cleaned.append(item)
     if not changed:
-        return dict(preference)
-    projected = dict(preference)
+        return projected
     projected["interests"] = cleaned
     return projected
 
@@ -265,7 +286,12 @@ def _cognition_profile_sequence(value: object) -> list[object]:
 
 
 def _cognition_preference_mapping(value: Mapping[str, object]) -> dict[str, object]:
-    projected = _cognition_profile_mapping(value)
+    # ``archived_interests`` is a bounded-by-nothing lifecycle ledger. Prompt
+    # builders already strip it via ``preference_prompt_payload``; strip it here
+    # too so this public view stays safe for callers that hand it a raw
+    # persisted payload. Persisted storage is untouched, and the analyzer still
+    # merges/reactivates from the stored list.
+    projected = _cognition_profile_mapping(value, omit=_PROMPT_EXCLUDED_PREFERENCE_FIELDS)
     # Only positive/active-interest collections apply lifecycle filtering.
     # Negative evidence is intentionally copied whole and never capped.
     for key in ("interest_domains", "interests", "likes", "speculative_interests"):
@@ -315,6 +341,13 @@ def build_cognition_profile_view_v1(
     ``None`` for a volatile list means "derive it from the persisted soul
     snapshot".  Passing an explicit empty list suppresses that snapshot when a
     caller already supplies the authoritative current batch separately.
+
+    The preference block carries current understanding only: positive-interest
+    collections are lifecycle-filtered (``state="archived"`` entries dropped)
+    and the ``archived_interests`` ledger is omitted entirely. That ledger is
+    append-only history (issue #342), so including it would make every cognition
+    prompt scale with account age; storage keeps it for the analyzer's
+    archive-dedupe / reactivation merge.
     """
 
     raw_soul = soul_profile or {}

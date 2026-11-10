@@ -179,7 +179,7 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 | ~~VALUES/CORE 增量更新器~~（P1 已退役） | ⛔ | `_update_values` / `_update_core` 仍作为 delta-prompt 库函数保留（直接工具/潜在重建输入复用），但**已从 pipeline dispatch 摘除**：`update_layer` 对 VALUES/CORE 封死 no-op + WARNING。深层变更改由「假设确认 → 门控下 soul 重建」唯一模式驱动，见下文「深层影响唯一模式」 |
 | v0.3.74 Soul 结构化 JSON 容错统一 | ✅ | ProfileBuilder、PreferenceAnalyzer、DialogueInsightAnalyzer、AwarenessAnalyzer、InsightAnalyzer、LayerUpdaters 和 InterestSpeculator 都收敛到 `llm.json_utils`，每个任务用 predicate 约束自己需要的 schema；MiMo / 非 OpenAI wrapper 不再只修 awareness 一处 |
 | v0.3.147 画像上下文缓存前缀保护 | ✅ | PreferenceAnalyzer、ProfileBuilder、AwarenessAnalyzer、InsightAnalyzer、InterestSpeculator 和 AvoidanceSpeculator 的结构化 prompt 已经把 history / preference / soul_profile / profile_summary 放在 user message；调用 `LLMService` 时在支持路径上关闭额外 core memory 注入，避免把同一份动态画像再次拼进 system prompt |
-| 画像 → LLM 序列化门面 (`soul/profile_views.py`) | ✅ | 三个内容管线序列化器 `build_profile_summary` / `compact_content_prompt_profile_summary` / `build_query_generation_profile_summary` 及 archived-topic 序列化开关的规范实现都在本模块；`discovery/strategies/_utils.py` 只保留向后兼容 re-export。所有 view 是**有效画像的纯确定性函数**（同输入两次调用字节一致），三个内容管线 view 均排除 `personality_portrait`。字节对拍见 `tests/test_profile_views.py`（3 画像 × 3 view = 9 组），结构守护断言三序列化器仅定义于本模块 |
+| 画像 → LLM 序列化门面 (`soul/profile_views.py`) | ✅ | 三个内容管线序列化器 `build_profile_summary` / `compact_content_prompt_profile_summary` / `build_query_generation_profile_summary` 及 archived-topic 序列化开关的规范实现都在本模块；`discovery/strategies/_utils.py` 只保留向后兼容 re-export。所有 view 是**有效画像的纯确定性函数**（同输入两次调用字节一致），三个内容管线 view 均排除 `personality_portrait`。字节对拍见 `tests/test_profile_views.py`（3 画像 × 3 view = 9 组），结构守护断言三序列化器仅定义于本模块。认知投影 `build_cognition_profile_view_v1` 另外完全排除无界增长的 `archived_interests` 台账（issue #342），台账仅存库、分析器仍从库内做归档去重与复燃；剔除在 `preference_prompt_payload()` 门面执行，故 legacy 与 compact-v1 一致，无台账输入仍逐字节不变 |
 
 ## 画像 → LLM 序列化门面 (`soul/profile_views.py`)
 
@@ -193,7 +193,7 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 同时排除 Onion domain 与 flat tag 的 `archived` 项。API、CLI 与 replay 都应直接设置这一
 canonical owner；`discovery.strategies._utils` 的同名符号仅用于旧调用方兼容。
 
-三个 public view：
+四个结构化 view：
 
 - `build_profile_summary` — 规范结构化画像（排除 `personality_portrait`），所有源平台
   内容 prompt 的统一输入。
@@ -202,6 +202,14 @@ canonical owner；`discovery.strategies._utils` 的同名符号仅用于旧调�
   不裁剪）。
 - `build_query_generation_profile_summary` — discovery 关键词 / 领域生成用的查询瘦身
   口味 view（MMR 多样化、embedding 可选）。
+- `build_cognition_profile_view_v1` — 认知链路（偏好分析 / 觉察 / 觉察+困惑 / 洞察四个
+  `compact-v1` builder）的确定性投影：soul 与 preference 成为 cache-stable 稳定块，
+  近期觉察 / 当前洞察进 volatile 块。正向兴趣集合按 `state="archived"` 过滤，并**完全
+  排除只增不减的 `archived_interests` 台账**（issue #342：单实例 4,752 条 / ~1.6 MB 被
+  每次 cognition 调用重复序列化）。台账仍保留在持久化存储中，偏好分析器继续从库内做
+  归档别名去重与证据驱动复燃。剔除发生在 `preference_prompt_payload()` 这个 prompt
+  payload 门面，因此 `legacy` 与 `compact-v1` 都不再序列化台账；**无台账输入的 prompt
+  仍逐字节不变**，回放与缓存前缀契约不受影响。
 
 另有两个字符串 view：`chat_core_memory`（聊天核心记忆拆 stable/volatile 两块，Task 6）
 与 `speculation`（猜测器 prompt 的画像段，Task 7）。`speculation` 委托画像自身的
