@@ -1608,6 +1608,111 @@ def test_prompt_builders_strip_the_interest_decay_cursor() -> None:
     assert "last_decay_at" not in render_preference_summary(persisted)
 
 
+def test_prompt_builders_strip_the_archived_interest_ledger() -> None:
+    """``archived_interests`` is append-only history, not prompt input (issue #342).
+
+    The ledger grows with account age (4,752 rows / ~1.6 MB on the reporting
+    deployment) and no prompt contract reads it: the preference analyzer merges
+    and reactivates from storage, not from the rendered payload. Both views must
+    render as if the ledger were absent, and a payload without it must stay
+    byte-identical.
+    """
+    from openbiliclaw.llm.prompts import (
+        build_awareness_prompt,
+        build_awareness_with_confusions_prompt,
+        build_insight_prompt,
+        build_preference_analysis_prompt,
+        build_soul_profile_prompt,
+        render_preference_summary,
+    )
+
+    interest = {"name": "滑雪", "category": "体育", "weight": 0.8}
+    archived = [
+        {
+            "name": f"归档兴趣-{index}",
+            "category": "生活",
+            "weight": 0.01,
+            "archived_at": "2026-01-01T00:00:00",
+        }
+        for index in range(64)
+    ]
+    with_ledger = {"interests": [interest], "archived_interests": archived}
+    without_ledger = {"interests": [interest]}
+    events = [{"event_type": "view", "title": "标题"}]
+
+    for view in ("legacy", "compact-v1"):
+        rendered = [
+            build_preference_analysis_prompt(
+                events=events,
+                existing_preference=with_ledger,
+                input_view=view,
+            ),
+            build_awareness_prompt(
+                events=events,
+                preference_summary=with_ledger,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_awareness_with_confusions_prompt(
+                events=events,
+                preference_summary=with_ledger,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_insight_prompt(
+                awareness_notes=[],
+                preference_summary=with_ledger,
+                soul_profile={},
+                input_view=view,
+            ),
+        ]
+        baselines = [
+            build_preference_analysis_prompt(
+                events=events,
+                existing_preference=without_ledger,
+                input_view=view,
+            ),
+            build_awareness_prompt(
+                events=events,
+                preference_summary=without_ledger,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_awareness_with_confusions_prompt(
+                events=events,
+                preference_summary=without_ledger,
+                soul_profile={},
+                input_view=view,
+            ),
+            build_insight_prompt(
+                awareness_notes=[],
+                preference_summary=without_ledger,
+                soul_profile={},
+                input_view=view,
+            ),
+        ]
+
+        assert rendered == baselines
+        assert "archived_interests" not in json.dumps(rendered, ensure_ascii=False)
+
+    soul_messages = build_soul_profile_prompt(
+        history_summary={},
+        preference_summary=with_ledger,
+        tone_profile=None,
+    )
+    assert soul_messages == build_soul_profile_prompt(
+        history_summary={},
+        preference_summary=without_ledger,
+        tone_profile=None,
+    )
+    assert "archived_interests" not in json.dumps(soul_messages, ensure_ascii=False)
+
+    assert render_preference_summary(with_ledger) == render_preference_summary(without_ledger)
+    assert "archived_interests" not in render_preference_summary(with_ledger)
+    # Storage-side payload handed in by callers is never mutated.
+    assert with_ledger["archived_interests"] == archived
+
+
 # ----------------------------------------------------------------------
 # v0.3.x batch_content_evaluation negative_examples block.
 

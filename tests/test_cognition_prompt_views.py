@@ -287,6 +287,117 @@ def test_cognition_profile_view_v1_does_not_cap_active_or_negative_evidence() ->
     ]
 
 
+_ARCHIVED_LEDGER_SENTINEL = "archived-ledger"
+
+
+def _preference_with_archived_ledger(preference: dict[str, Any], size: int) -> dict[str, Any]:
+    """Return a preference payload whose archived ledger holds ``size`` rows."""
+    payload = copy.deepcopy(preference)
+    payload["archived_interests"] = [
+        {
+            "name": f"{_ARCHIVED_LEDGER_SENTINEL}-{index}",
+            "category": "tech",
+            "weight": 0.01,
+            "evidence_count": 2,
+            "archived_at": "2026-01-01T00:00:00",
+        }
+        for index in range(size)
+    ]
+    return payload
+
+
+def test_cognition_profile_view_v1_drops_the_archived_interest_ledger() -> None:
+    fixture = _fixture()
+    preference = _preference_with_archived_ledger(fixture["preference"], 4)
+    before = copy.deepcopy(preference)
+
+    view = build_cognition_profile_view_v1(preference_summary=preference)
+
+    assert "archived_interests" not in view.stable_preference
+    assert "archived_interests" not in _all_mapping_keys(view.volatile_cognition())
+    # Active interests still render; only the lifecycle ledger is withheld.
+    interests = view.stable_preference["interests"]
+    assert isinstance(interests, list)
+    assert [item["name"] for item in interests][:2] == ["分布式系统", "异步任务"]
+    # Persisted storage is untouched — the analyzer still merges and reactivates
+    # archived topics from the stored list.
+    assert preference == before
+
+
+def test_cognition_prompts_never_serialize_the_archived_interest_ledger() -> None:
+    fixture = _fixture()
+    soul = fixture["soul_profile"]
+    events = fixture["events"]
+    preference = _preference_with_archived_ledger(fixture["preference"], 2048)
+    before = copy.deepcopy(fixture)
+
+    cases: dict[str, Callable[[str], list[dict[str, str]]]] = {
+        "preference": lambda view: build_preference_analysis_prompt(
+            events=events,
+            existing_preference=preference,
+            awareness_notes=soul["recent_awareness"],
+            active_insights=soul["active_insights"],
+            input_view=view,
+        ),
+        "awareness": lambda view: build_awareness_prompt(
+            events=events,
+            preference_summary=preference,
+            soul_profile=soul,
+            input_view=view,
+        ),
+        "awareness_confusions": lambda view: build_awareness_with_confusions_prompt(
+            events=events,
+            preference_summary=preference,
+            soul_profile=soul,
+            input_view=view,
+        ),
+        "insight": lambda view: build_insight_prompt(
+            awareness_notes=soul["recent_awareness"],
+            preference_summary=preference,
+            soul_profile=soul,
+            existing_hypotheses=soul["active_insights"],
+            input_view=view,
+        ),
+    }
+
+    for name, build in cases.items():
+        compact = build("compact-v1")
+        legacy = build("legacy")
+        assert compact[0] == legacy[0], name
+        # Both views drop the append-only ledger; only the view-specific
+        # shaping differs between them.
+        assert _ARCHIVED_LEDGER_SENTINEL not in compact[1]["content"], name
+        assert _ARCHIVED_LEDGER_SENTINEL not in legacy[1]["content"], name
+
+    assert fixture == before
+
+
+def test_compact_cognition_prompt_bytes_are_independent_of_archive_size() -> None:
+    fixture = _fixture()
+    soul = fixture["soul_profile"]
+    events = fixture["events"]
+    no_archive = _preference_with_archived_ledger(fixture["preference"], 0)
+    huge_archive = _preference_with_archived_ledger(fixture["preference"], 5000)
+
+    small = build_awareness_with_confusions_prompt(
+        events=events,
+        preference_summary=no_archive,
+        soul_profile=soul,
+        input_view="compact-v1",
+    )
+    huge = build_awareness_with_confusions_prompt(
+        events=events,
+        preference_summary=huge_archive,
+        soul_profile=soul,
+        input_view="compact-v1",
+    )
+
+    # Issue #342: prompt cost must not scale with account age, so a 5,000-row
+    # ledger has to render byte-identically to no ledger at all.
+    assert huge == small
+    assert _ARCHIVED_LEDGER_SENTINEL not in huge[1]["content"]
+
+
 def test_insight_compact_view_derives_existing_hypotheses_only_when_unspecified() -> None:
     fixture = _fixture()
     soul = fixture["soul_profile"]

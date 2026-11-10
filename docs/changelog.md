@@ -4,6 +4,8 @@
 
 ## v0.3.235：统一免费 Provider 与动态来源（2026-11-08）
 
+- 认知 prompt 不再重复序列化归档兴趣（issue #342，待下次发版）：`preference_prompt_payload()` 门面统一剔除只增不减的 `archived_interests` 台账，五个偏好 prompt builder 与 `build_cognition_profile_view_v1` 的 legacy / compact-v1 两条视图都不再输出它；持久化存储不变，偏好分析器仍从库内做归档别名去重与证据驱动复燃，无台账输入的 prompt 逐字节不变。5,000 条台账与空台账的 compact 提示词字节一致，账号变老不再推高每次 awareness/confusion 调用的输入 token。
+
 - 免费初始化修复合入收尾：Core 合并前回归 707 passed，Rust 81 passed，静态检查通过；临时后端停止，保留验收证据及 4B 工具协议 / 浏览器实测缺口。此次不发安装包或 SDK，后续需同步构建。[合入验证](testing/2026-11-09-setup-progressive-options.md#2026-11-09-合入验证与清理)。
 
 - 初始化真实请求验收：两个免费模型各完成 40 条 GitHub Star 的偏好、画像与首轮推荐，流式对话、三路并发及反馈去重通过；4B 画像工具首次协议失败、两次复测成功，保留未解决项。浏览器点击因权限不可用按用户要求待续。[验收边界](testing/2026-11-09-setup-progressive-options.md#真实后端与真实模型请求补充)。
