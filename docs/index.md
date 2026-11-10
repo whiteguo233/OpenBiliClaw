@@ -31,7 +31,7 @@ Provider 统一验证：[2026-11-06 实例、Embedding 与 Rust 接入](testing/
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [Gitee v0.3.235 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.235) — 源码已同步至最新主线。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.235)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
+- [Gitee 源码镜像](https://gitee.com/whiteguo233/openbiliclaw/tree/main) — 国内源码入口。最新安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest)；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前保留 v0.3.213 历史文件，最新版国内安装包镜像待更新
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤

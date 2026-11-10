@@ -122,7 +122,7 @@ test("desktop web wires the password gate (credentials, CSRF, login overlay)", (
   // login overlay + boot gate + 401 handling
   assert.match(desktopJs, /function showLoginOverlay/);
   assert.match(desktopJs, /function ensureAuthenticated/);
-  assert.match(desktopJs, /handleAuthRequired\(\)/);
+  assert.match(desktopJs, /handleAuthRequired\(response\.status, details\)/);
   assert.match(desktopJs, /auth\/login/);
   // cross-origin bearer mode: token stored + attached to fetch/WS/image
   assert.match(desktopJs, /function isCrossOriginBase/);
