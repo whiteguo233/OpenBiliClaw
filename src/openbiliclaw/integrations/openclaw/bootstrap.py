@@ -33,7 +33,11 @@ from openbiliclaw.discovery.strategies.strategies import (
 )
 from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.llm import build_llm_registry
-from openbiliclaw.llm.concurrency import LLMConcurrencyGate, background_llm_concurrency
+from openbiliclaw.llm.concurrency import (
+    LLMConcurrencyGate,
+    apply_background_budget_config,
+    background_llm_concurrency,
+)
 from openbiliclaw.llm.service import LLMService, module_overrides_from_config
 from openbiliclaw.llm.usage_recorder import UsageRecorder
 from openbiliclaw.memory.manager import MemoryManager
@@ -127,6 +131,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     memory_manager.initialize()
 
     llm_gate = LLMConcurrencyGate(llm_concurrency)
+    apply_background_budget_config(llm_gate, config)
     count_pool = getattr(database, "count_pool_candidates", None)
     if callable(count_pool):
         try:

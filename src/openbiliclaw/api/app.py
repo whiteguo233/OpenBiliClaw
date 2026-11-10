@@ -2381,7 +2381,10 @@ def create_app(
         # Injection path: caller provides swappable components.
         # Auto-create stable components (database, memory_manager) if missing.
         from openbiliclaw.config import llm_concurrency_from_config
-        from openbiliclaw.llm.concurrency import LLMConcurrencyGate
+        from openbiliclaw.llm.concurrency import (
+            LLMConcurrencyGate,
+            apply_background_budget_config,
+        )
         from openbiliclaw.runtime.events import RuntimeEventHub as _RuntimeEventHub
 
         _db = database
@@ -2457,6 +2460,7 @@ def create_app(
             )
         if injected_gate is None:
             injected_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
+            apply_background_budget_config(injected_gate, config)
 
         with suppress(Exception):
             soul_engine._llm_concurrency_gate = injected_gate
@@ -2577,9 +2581,13 @@ def create_app(
             )
     if ctx.llm_concurrency_gate is None:
         from openbiliclaw.config import llm_concurrency_from_config
-        from openbiliclaw.llm.concurrency import LLMConcurrencyGate
+        from openbiliclaw.llm.concurrency import (
+            LLMConcurrencyGate,
+            apply_background_budget_config,
+        )
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
+        apply_background_budget_config(ctx.llm_concurrency_gate, config)
 
     ctx.configure_director(config)
     from openbiliclaw.api.director import register_director_routes

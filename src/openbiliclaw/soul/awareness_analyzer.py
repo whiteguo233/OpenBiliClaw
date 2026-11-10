@@ -10,7 +10,7 @@ from datetime import date
 from typing import Protocol
 from uuid import uuid4
 
-from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.base import LLMBudgetExhaustedError, LLMProviderError, LLMResponse
 from openbiliclaw.llm.json_utils import (
     DEFAULT_STRUCTURED_MAX_TOKENS,
     extract_llm_json_list,
@@ -143,6 +143,10 @@ class AwarenessAnalyzer:
                 caller="soul.awareness",
                 **without_core_memory_kwargs(complete_structured),
             )
+        except LLMBudgetExhaustedError:
+            # Local admission control: let the cognition cycle stop between
+            # chunks instead of turning it into a retryable analysis failure.
+            raise
         except (LLMProviderError, LLMServiceError) as exc:
             raise AwarenessGenerationError(str(exc)) from exc
         payload = self._parse_response(response.content)
@@ -202,6 +206,10 @@ class AwarenessAnalyzer:
                 caller="soul.awareness_confusions",
                 **without_core_memory_kwargs(complete_structured),
             )
+        except LLMBudgetExhaustedError:
+            # Local admission control: let the cognition cycle stop between
+            # chunks instead of turning it into a retryable analysis failure.
+            raise
         except (LLMProviderError, LLMServiceError) as exc:
             raise AwarenessGenerationError(str(exc)) from exc
         notes_payload, confusions_payload = self._parse_with_confusions(response.content)

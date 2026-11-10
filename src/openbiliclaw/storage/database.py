@@ -1554,6 +1554,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_confusions_clarifying_unique
     ON confusions(status) WHERE status = 'clarifying';
 CREATE INDEX IF NOT EXISTS idx_confusions_status
     ON confusions(status, updated_at);
+
+-- Shared per-window admission counter for the background LLM budget
+-- (scheduler.llm_budget_max_calls). One row; see llm/budget.py.
+CREATE TABLE IF NOT EXISTS background_llm_budget (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    window_started_at REAL NOT NULL,
+    calls INTEGER NOT NULL DEFAULT 0
+);
 """
 
 

@@ -14,7 +14,13 @@ from openbiliclaw.diagnostics_alerts import record_diagnostics_alert
 from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
-from .base import LLMProviderError, LLMRateLimitError, LLMStreamChunk, LLMToolCallUnsupportedError
+from .base import (
+    LLMBudgetExhaustedError,
+    LLMProviderError,
+    LLMRateLimitError,
+    LLMStreamChunk,
+    LLMToolCallUnsupportedError,
+)
 from .concurrency import (
     DEFAULT_TOTAL_LLM_CONCURRENCY,
     LLMConcurrencyGate,
@@ -719,6 +725,10 @@ class LLMService:
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
                 response = await _do_llm_call()
+        except LLMBudgetExhaustedError:
+            # Admission control, not a provider failure: keep the type so
+            # callers can stop their multi-call unit instead of retrying.
+            raise
         except LLMProviderError as exc:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
@@ -835,6 +845,10 @@ class LLMService:
                     if chunk.response is not None:
                         terminal = chunk.response
                     yield chunk
+        except LLMBudgetExhaustedError:
+            # Admission control, not a provider failure: keep the type so
+            # callers can stop their multi-call unit instead of retrying.
+            raise
         except LLMProviderError as exc:
             raise LLMProviderExecutionError(str(exc)) from exc
         if terminal is None or not terminal.content.strip():
@@ -1203,6 +1217,10 @@ class LLMService:
         try:
             async with self._provider_slot(caller=caller):
                 response = await _do_llm_call()
+        except LLMBudgetExhaustedError:
+            # Admission control, not a provider failure: keep the type so
+            # callers can stop their multi-call unit instead of retrying.
+            raise
         except LLMProviderError as exc:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
@@ -1440,6 +1458,10 @@ class LLMService:
                 return await _do_llm_call()
         except LLMToolCallUnsupportedError:
             raise
+        except LLMBudgetExhaustedError:
+            # Admission control, not a provider failure: keep the type so
+            # callers can stop their multi-call unit instead of retrying.
+            raise
         except LLMProviderError as exc:
             raise LLMProviderExecutionError(str(exc)) from exc
 
@@ -1651,6 +1673,10 @@ class LLMService:
                 async for chunk in _route_stream():
                     yield chunk
         except LLMToolCallUnsupportedError:
+            raise
+        except LLMBudgetExhaustedError:
+            # Admission control, not a provider failure: keep the type so
+            # callers can stop their multi-call unit instead of retrying.
             raise
         except LLMProviderError as exc:
             raise LLMProviderExecutionError(str(exc)) from exc
