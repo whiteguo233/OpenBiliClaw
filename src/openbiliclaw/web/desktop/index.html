@@ -363,15 +363,17 @@
             </div>
             <div class="chat-log" id="chatLog" role="region" aria-label="口味对话记录" tabindex="0"></div>
             <div class="chat-composer">
-              <section class="chat-source-guide" aria-labelledby="chatSourceGuideTitle">
-                <h3 id="chatSourceGuideTitle">在这里添加网站 / RSS 来源</h3>
-                <p class="chat-source-guide-intro">发来链接，说清想看什么。阿B会补问必要信息，试跑确认后，定期采集、筛选并推荐。</p>
-                <div class="chat-source-guide-examples">
-                  <p class="chat-source-guide-example"><strong>网站示例</strong><span>“添加 [网址]，只看轻小说。”</span></p>
-                  <p class="chat-source-guide-example"><strong>RSS 示例</strong><span>“订阅 [RSS 地址]，每天采集一次。”</span></p>
+              <details class="chat-source-guide">
+                <summary>添加网站 / RSS 来源 · 说明与示例</summary>
+                <div class="chat-source-guide-body">
+                  <p class="chat-source-guide-intro">发来链接，说清想看什么。阿B会补问必要信息，试跑确认后，定期采集、筛选并推荐。</p>
+                  <div class="chat-source-guide-examples">
+                    <p class="chat-source-guide-example"><strong>网站示例</strong><span>“添加 [网址]，只看轻小说。”</span></p>
+                    <p class="chat-source-guide-example"><strong>RSS 示例</strong><span>“订阅 [RSS 地址]，每天采集一次。”</span></p>
+                  </div>
+                  <p class="chat-source-guide-note">在「设置 → 自定义来源」管理频率、占比和启停。需要登录、验证或处理采集异常时，消息铃铛会提醒你。</p>
                 </div>
-                <p class="chat-source-guide-note">在「设置 → 自定义来源」管理频率、占比和启停。需要登录、验证或处理采集异常时，消息铃铛会提醒你。</p>
-              </section>
+              </details>
               <form class="chat-input" id="chatForm"><input id="chatInput" aria-label="和阿B聊聊你的口味" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
             </div>
           </div>

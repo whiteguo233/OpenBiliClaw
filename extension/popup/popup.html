@@ -3387,13 +3387,19 @@
     }
 
     .chat-shell {
-      padding: 14px;
+      padding: 10px;
       min-height: 0;
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
+
+    /* The chat tab is a work surface: fold the marketing tagline/Star row and
+       compact the recommendation activity footer so history gets the height. */
+    body.chat-tab-active .hero { padding-block: 10px; }
+    body.chat-tab-active .hero-sub { display: none; }
+    body.chat-tab-active .footer { padding: 8px 10px; }
 
     .chat-intro {
       padding: 14px;
@@ -3421,10 +3427,10 @@
       max-height: min(32vh, 240px);
       display: flex;
       flex-direction: column;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       overflow: hidden;
       border: 1px solid rgba(239, 221, 233, 0.96);
-      border-radius: 16px;
+      border-radius: 14px;
       background: linear-gradient(180deg, rgba(255, 248, 251, 0.98), rgba(249, 251, 255, 0.98));
     }
 
@@ -3473,7 +3479,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 9px 11px;
+      padding: 7px 10px;
       border: 0;
       border-radius: inherit;
       background: transparent;
@@ -3815,51 +3821,81 @@
     .chat-form {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       margin-top: auto;
       flex-shrink: 0;
-      padding-top: 8px;
+      padding-top: 6px;
     }
 
     .chat-source-guide { color: var(--text-secondary); font-size: 13px; }
-    .chat-source-guide summary { min-height: 44px; padding: 12px; border-radius: 12px; color: var(--text-main); font-weight: 650; cursor: pointer; }
+    .chat-source-guide summary { min-height: 32px; padding: 6px 10px; border-radius: 12px; color: var(--text-main); font-size: 12px; font-weight: 650; cursor: pointer; }
     .chat-source-guide summary:hover, .chat-source-guide[open] summary { background: var(--brand-soft); }
     .chat-source-guide summary::marker { color: var(--brand); }
     .chat-source-guide summary:focus-visible, .chat-source-guide-body:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-    .chat-source-guide-body { max-height: min(240px, 30dvh); padding: 0 12px; overflow-y: auto; overflow-wrap: anywhere; border-radius: 12px; line-height: 1.65; }
-    .chat-source-guide-body p { margin: 12px 0; }
-    .chat-source-guide-example { padding: 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
-    .chat-source-guide-example strong { display: block; margin-bottom: 4px; color: var(--text-main); }
+    .chat-source-guide-body { max-height: min(200px, 28dvh); padding: 0 10px; overflow-y: auto; overflow-wrap: anywhere; border-radius: 12px; line-height: 1.65; }
+    .chat-source-guide-body p { margin: 10px 0; }
+    .chat-source-guide-example { padding: 9px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+    .chat-source-guide-example strong { display: block; margin-bottom: 3px; color: var(--text-main); }
+
+    .chat-compose-row {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      min-width: 0;
+    }
 
     .chat-input-shell {
+      flex: 1 1 auto;
+      min-width: 0;
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 10px 12px;
-      border-radius: 18px;
+      gap: 0;
+      padding: 6px 10px;
+      border-radius: 16px;
       border: 1px solid rgba(231, 238, 248, 0.96);
       background: rgba(255, 255, 255, 0.96);
     }
 
+    /* The visible composer label is gone to give the history more room; keep
+       the accessible name for assistive tech and the wrapping label contract. */
     .chat-input-label {
-      font-size: 11px;
-      line-height: 1.4;
-      font-weight: 800;
-      color: var(--text-secondary);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     .chat-input {
-      min-height: 68px;
-      max-height: 88px;
+      min-height: 48px;
+      max-height: 84px;
       border: 0;
-      padding: 8px 10px;
+      padding: 7px 4px;
       border-radius: 14px;
       background: transparent;
       line-height: 1.6;
       resize: none;
       overflow-y: auto;
+    }
+
+    /* Keep the long multi-line hint fully visible inside the shorter input
+       without shrinking the text the user actually types. */
+    .chat-input::placeholder {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-secondary);
+    }
+
+    .chat-send-button {
+      flex: 0 0 auto;
+      min-width: 72px;
+      padding: 0 12px;
+      border-radius: 14px;
+      white-space: nowrap;
     }
 
     .chat-status {
@@ -3923,6 +3959,10 @@
       font-weight: 700;
       color: var(--text-muted);
     }
+
+    /* On the chat tab the activity footer stays reachable but its second line
+       folds away, returning that height to the conversation. */
+    body.chat-tab-active .footer-headline { display: none; }
 
     .footer-hint::before {
       content: "";
@@ -6119,7 +6159,7 @@
       flex: 0 0 auto;
       display: flex;
       gap: 4px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
     .chat-subtab {
@@ -6157,13 +6197,13 @@
       gap: 6px;
       align-items: center;
       flex-wrap: wrap;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
 
     .chat-skill-select {
       flex: 1;
       min-width: 0;
-      min-height: 44px;
+      min-height: 34px;
       border: 1px solid var(--line-strong);
       border-radius: 999px;
       background: var(--brand-soft);
@@ -6173,13 +6213,13 @@
     }
 
     .chat-persona-toggle {
-      min-height: 44px;
+      min-height: 34px;
       max-width: 100%;
       border: 1px solid var(--line-strong);
       border-radius: 999px;
       background: var(--brand-soft);
       color: var(--text-main);
-      padding: 6px 12px;
+      padding: 5px 11px;
       font: inherit;
       font-size: 12px;
       cursor: pointer;
@@ -6866,11 +6906,13 @@
                   <p>采集问题会在来源卡提示，需要处理时也会提醒到消息铃铛；历史见「设置 → 日志 → 异常报警」。</p>
                 </div>
               </details>
-              <label class="chat-input-shell">
-                <span class="chat-input-label">写点你的想法和口味</span>
-                <textarea id="chatInput" class="chat-input" rows="2" placeholder="说说你最近怎么想——你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
-              </label>
-              <button id="chatSendButton" class="action-button action-primary" type="submit">发出去</button>
+              <div class="chat-compose-row">
+                <label class="chat-input-shell">
+                  <span class="chat-input-label">写点你的想法和口味</span>
+                  <textarea id="chatInput" class="chat-input" rows="2" placeholder="说说你最近怎么想——你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
+                </label>
+                <button id="chatSendButton" class="action-button action-primary chat-send-button" type="submit">发出去</button>
+              </div>
               <p id="chatStatus" class="chat-status" aria-live="polite"></p>
             </form>
           </div>

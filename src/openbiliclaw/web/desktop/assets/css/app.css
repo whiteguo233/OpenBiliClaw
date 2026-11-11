@@ -989,15 +989,21 @@
     .chat-page.has-agent-side .chat-conversation { min-height: 0; min-width: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
     .chat-page:not(.has-agent-side) .chat-main { min-height: 0; display: contents; }
     .chat-page:not(.has-agent-side) .chat-conversation { display: contents; }
-    .chat-page .content-page-head { margin-bottom: var(--space-5); }
+    /* Chat is a workspace: keep its header to one compact line so the
+       conversation gets the vertical space, not the page chrome. */
+    .chat-page .content-page-head { align-items: center; margin-bottom: var(--space-3); }
+    .chat-page .content-page-head > div { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
+    .chat-page .content-page-head .eyebrow { display: none; }
+    .chat-page .content-page-head h2 { margin-top: 0; font-size: var(--text-xl); }
+    .chat-page .content-page-head .video-meta { margin-top: 0; font-size: var(--text-xs); }
     /* Quick switch at the top of the 「聊聊口味」 tab: controls whether the
        pending-confirmation red dot appears next to the nav entry. Default off. */
-    .chat-pending-badge-toggle { min-height: 34px; padding: 0 var(--space-2) 0 5px; gap: 7px; font-size: 12px; font-weight: 700; }
+    .chat-pending-badge-toggle { min-height: 32px; padding: 0 var(--space-2) 0 5px; gap: 7px; font-size: 12px; font-weight: 700; }
     .chat-pending-badge-toggle .reshuffle-switch { width: 30px; height: 18px; }
     .chat-pending-badge-toggle .reshuffle-switch::after { top: 3px; left: 3px; width: 12px; height: 12px; }
     .chat-pending-badge-toggle input:checked + .reshuffle-switch::after { transform: translateX(12px); }
-    .dialogue-pending { min-height: 0; max-height: min(32vh, 300px); display: flex; flex-direction: column; margin-bottom: var(--space-2); border: 1px solid color-mix(in oklab, var(--accent), var(--border-soft) 78%); border-radius: var(--radius-lg); background: linear-gradient(180deg, color-mix(in oklab, var(--surface), var(--accent-subtle) 15%), var(--surface)); overflow: hidden; }
-    #desktopPendingToggle { width: 100%; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; border: 0; border-radius: inherit; background: transparent; color: var(--fg); font: inherit; font-size: 12px; font-weight: 800; text-align: left; cursor: pointer; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
+    .dialogue-pending { min-height: 0; max-height: min(32vh, 300px); display: flex; flex-direction: column; margin-bottom: 6px; border: 1px solid color-mix(in oklab, var(--accent), var(--border-soft) 78%); border-radius: var(--radius-md); background: linear-gradient(180deg, color-mix(in oklab, var(--surface), var(--accent-subtle) 15%), var(--surface)); overflow: hidden; }
+    #desktopPendingToggle { width: 100%; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 0; border-radius: inherit; background: transparent; color: var(--fg); font: inherit; font-size: 12px; font-weight: 800; text-align: left; cursor: pointer; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
     #desktopPendingToggle:hover { background: color-mix(in oklab, var(--accent-subtle), transparent 48%); }
     #desktopPendingToggle:focus-visible, .dialogue-pending-item button:focus-visible, .dialogue-card-action:focus-visible, .dialogue-evidence summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
     .dialogue-pending-toggle-title { display: inline-flex; align-items: center; gap: 5px; color: var(--fg); }
@@ -1016,7 +1022,7 @@
     .dialogue-pending-item button { min-height: 30px; padding: 0 10px; border: 1px solid color-mix(in oklab, var(--accent), var(--border-soft) 66%); border-radius: var(--radius-pill); background: var(--accent-subtle); color: color-mix(in oklab, var(--accent), var(--fg) 30%); font: inherit; font-size: var(--text-xs); font-weight: 800; white-space: nowrap; cursor: pointer; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
     .dialogue-pending-item button:hover { border-color: var(--accent); background: var(--accent); color: var(--accent-on); }
     .dialogue-pending-empty { margin: 0; padding: 8px; color: var(--muted); font-size: var(--text-xs); text-align: center; }
-    .chat-page .chat-log { min-height: 0; margin: 0 0 var(--space-4); padding: 2px 3px 4px 0; align-content: start; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--accent), transparent 48%) transparent; }
+    .chat-page .chat-log { min-height: 0; margin: 0 0 var(--space-2); padding: 2px 3px 4px 0; align-content: start; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--accent), transparent 48%) transparent; }
     .chat-page .chat-log:focus-visible { outline: none; border-radius: var(--radius-md); box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent), transparent 42%); }
     .chat-page .chat-log::-webkit-scrollbar, #desktopPendingConfirmations::-webkit-scrollbar { width: 8px; }
     .chat-page .chat-log::-webkit-scrollbar-track, #desktopPendingConfirmations::-webkit-scrollbar-track { background: transparent; }
@@ -1072,24 +1078,28 @@
     .chat-page .chat-input input:focus-visible { border-color: transparent; box-shadow: none; }
     .chat-page .chat-input .pill-btn.primary { display: flex; align-items: center; padding-block: 13px; }
     .chat-composer { min-width: 0; align-self: end; }
-    .chat-source-guide { display: grid; gap: var(--space-3); margin-bottom: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); color: var(--fg-2); font-size: var(--text-sm); line-height: 1.6; overflow-wrap: anywhere; }
-    .chat-source-guide h3 { margin: 0; color: var(--fg); font-size: var(--text-base); line-height: 1.4; }
-    .chat-source-guide p { margin: 0; }
-    .chat-source-guide-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
-    .chat-source-guide-example { display: grid; gap: var(--space-1); padding: var(--space-3); border-radius: var(--radius-md); background: var(--accent-subtle); }
+    /* Secondary source instructions fold into one slim disclosure. The card
+       used to stay open above the composer and ate the chat log's height. */
+    .chat-source-guide { margin-bottom: var(--space-2); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--fg-2); font-size: var(--text-sm); line-height: 1.6; overflow: hidden; }
+    .chat-source-guide summary { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--fg-2); font-size: var(--text-xs); font-weight: 700; cursor: pointer; list-style: none; }
+    .chat-source-guide summary::-webkit-details-marker { display: none; }
+    .chat-source-guide summary::before { content: "+"; width: 16px; height: 16px; flex: 0 0 16px; display: inline-grid; place-items: center; border-radius: 50%; background: var(--accent-subtle); color: var(--accent); font-family: var(--font-mono); font-size: 13px; line-height: 1; }
+    .chat-source-guide[open] summary::before { content: "−"; }
+    .chat-source-guide summary:hover { background: color-mix(in oklab, var(--accent-subtle), transparent 40%); }
+    .chat-source-guide summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    .chat-source-guide-body { display: grid; gap: var(--space-2); max-height: min(220px, 30vh); padding: 0 12px 12px 36px; overflow-y: auto; overflow-wrap: anywhere; }
+    .chat-source-guide-body p { margin: 0; }
+    .chat-source-guide-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+    .chat-source-guide-example { display: grid; gap: 2px; padding: var(--space-2); border-radius: var(--radius-sm); background: var(--accent-subtle); }
     .chat-source-guide-example strong { color: var(--fg); }
-    .chat-source-guide-note { color: var(--muted); }
+    .chat-source-guide-note { color: var(--muted); font-size: var(--text-xs); }
     @media (max-width: 1200px), (max-height: 750px) {
-      .chat-source-guide { gap: var(--space-2); padding: var(--space-3); }
-      .chat-source-guide-examples { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
-      .chat-source-guide-example { display: block; padding: var(--space-1) var(--space-2); }
+      .chat-source-guide-examples { grid-template-columns: minmax(0, 1fr); }
+      .chat-source-guide-example { display: block; }
       .chat-source-guide-example strong { margin-right: var(--space-2); }
-      .chat-source-guide-note { display: none; }
     }
     @media (max-height: 750px) {
-      .chat-page .content-page-head { align-items: center; margin-bottom: var(--space-3); }
-      .chat-page .content-page-head .eyebrow, .chat-page .content-page-head .video-meta { display: none; }
-      .chat-page .content-page-head h2 { margin-top: 0; font-size: var(--text-xl); }
+      .chat-page .content-page-head .video-meta { display: none; }
     }
     .settings-page .settings-grid { margin-top: 0; }
     #profileDetails { gap: var(--space-4); }

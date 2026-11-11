@@ -99,3 +99,32 @@ def test_desktop_dialogue_refresh_preserves_reader_scroll_and_open_evidence() ->
     assert "const previousScrollTop = element.scrollTop;" in js
     assert "if (openEvidenceTurnIds.has(turnId)) details.open = true;" in js
     assert "renderChat({ forceBottom });" in js
+
+
+def test_desktop_source_guide_folds_into_a_slim_disclosure() -> None:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    css = APP_CSS.read_text(encoding="utf-8")
+
+    assert '<details class="chat-source-guide">' in html
+    assert '<details class="chat-source-guide" open' not in html
+    assert "<summary>添加网站 / RSS 来源 · 说明与示例</summary>" in html
+    assert '<section class="chat-source-guide"' not in html
+    assert "在这里添加网站 / RSS 来源" not in html
+    assert ".chat-source-guide summary {" in css
+    assert "min-height: 34px;" in css
+    assert "max-height: min(220px, 30vh);" in css
+    assert ".chat-source-guide[open] summary::before" in css
+
+
+def test_desktop_chat_chrome_leaves_room_for_history() -> None:
+    css = APP_CSS.read_text(encoding="utf-8")
+
+    assert (
+        ".chat-page .content-page-head { align-items: center; margin-bottom: var(--space-3); }"
+        in css
+    )
+    assert ".chat-page .content-page-head .eyebrow { display: none; }" in css
+    assert ".chat-page .content-page-head > div { min-width: 0; display: flex;" in css
+    assert "margin-bottom: 6px;" in css  # pending inbox
+    assert "padding: 6px 10px;" in css  # pending toggle
+    assert ".chat-page .chat-log { min-height: 0; margin: 0 0 var(--space-2);" in css

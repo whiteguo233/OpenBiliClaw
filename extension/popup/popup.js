@@ -999,6 +999,7 @@ function setActiveTab(requestedTab, { libraryTab = "" } = {}) {
   }
   popupLibraryVisible = tabName === "library";
   state.activeTab = tabName;
+  document.body.classList.toggle("chat-tab-active", tabName === "chat");
 
   const tabs = [
     ["recommend", elements.tabRecommend, elements.viewRecommend],
