@@ -17,6 +17,14 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_autostart_startup_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test its own process-start snapshot, including entry tests."""
+    from openbiliclaw.runtime.autostart import guards
+
+    monkeypatch.setattr(guards, "_startup_env_keys", None)
+
+
+@pytest.fixture(autouse=True)
 def _default_test_client_is_local(monkeypatch: pytest.MonkeyPatch) -> None:
     """Model the local app origin; security tests pass an explicit peer/origin.
 

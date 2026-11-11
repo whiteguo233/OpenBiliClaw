@@ -43,6 +43,20 @@ def _is_runtime_injected(key: str) -> bool:
     return _startup_env_keys is not None and key not in _startup_env_keys
 
 
+def build_restart_env() -> dict[str, str]:
+    """Copy the environment without wiring the replacement process rebuilds.
+
+    Keep caller-supplied inputs, including explicit runtime overrides. Without
+    a startup snapshot, preserve everything rather than guess their provenance.
+    The live environment stays intact if restarting the process fails.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not (key.startswith("OPENBILICLAW_") and _is_runtime_injected(key))
+    }
+
+
 def _env_is_set(key: str) -> bool:
     return bool(os.environ.get(key, "").strip())
 
