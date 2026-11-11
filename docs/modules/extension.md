@@ -1,12 +1,18 @@
 # 浏览器插件模块
 
-## 初始化平台选项（2026-11-09，待发布）
+## 初始化平台选项（v0.3.236，v0.3.237 已继承）
 
 | 已实现功能 | 行为 |
 | --- | --- |
 | 额外账号信息按需展开 | 插件初始化只在勾选 Bangumi / GitHub 时展示该平台的用户名、令牌与说明；取消勾选收起，再次勾选保留输入。 |
 
 公开接口：`POST /api/init` 请求不变，未勾选来源不提交 `source_options`，不清除已保存账号。
+
+向量连接测试等待 190 秒，覆盖后端 180 秒预算内的限流恢复。独立插件发版使用 `extension-v*`，只在版本号与后端相同时更新聚合下载页。[插件发行](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.236)
+
+本版以主干 `8b760446` 为基线，插件类型检查、1,900 项 Node 测试和 28 项发布检查通过。公开 Chrome / Firefox ZIP 的 194 / 80 个文件分别与本地构建一致。2026-11-09 提审时，Chrome Web Store 已受理 `0.3.236` 并标为 `PENDING_REVIEW`，Firefox AMO 已受理 listed `0.3.236` 并标为 `unreviewed`。[Chrome 回执](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42521629175) · [Firefox 回执](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/42521629101)
+
+发布工作流收尾（2026-11-11，待下次发版）：创建或更新插件组件发行页时显式传 `--latest=false`，Latest 继续由 `openbiliclaw-v*` 聚合发行管理。独立插件版本与 `pyproject.toml` 的后端版本不同时，跳过聚合同步；相同时继续执行原聚合脚本。[合并与清理记录](../testing/2026-11-11-release-branch-cleanup.md)。
 
 Safari发行环境（2026-11-06）：`release-extension.yml` 使用macOS15 runner。macOS14曾在调度阶段返回不支持的配置，未执行编译；可使用 `workflow_dispatch.release_tag` 指向已有版本标签，从修复后的工作流补齐资产，不移动已有标签或改动插件功能。最终构建/公证结果以对应发行工作流为准。
 

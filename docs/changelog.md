@@ -4,6 +4,8 @@
 
 ## v0.3.237：首启免密、安装引导与初始化可靠性（2026-11-10）
 
+- 发布分支收尾（2026-11-11，待下次发版）：合回独立插件 0.3.236 的发布保护与历史提审记录。插件发行不再抢占 GitHub Latest；仅与后端版本一致时更新聚合发行页。保留主线 0.3.237 版本、下载入口和既有发行标签。[合并与清理记录](testing/2026-11-11-release-branch-cleanup.md)。
+
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344，待下次发版）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
 
 - 桌面、后端和浏览器插件统一为 0.3.237。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。
@@ -35,6 +37,11 @@
 - 免费初始化修复：免费 LLM 继承全局 20 分钟默认请求预算，Rust 普通 / 流式接受有界传输超时并让 HTTP 重试共用预算；初始化按请求预算扩展等待。Embedding 保留独立 3 分钟限制。[验证记录](testing/2026-11-08-model-timeout-alignment.md)。
 
 - 免费初始化修复：首次历史导入按实际 prompt 批次更新进度与时间预算；免费偏好分析限制输出、关闭隐式思考，包裹后的上下文错误可拆批，单次超时只作一层缩批恢复。[真实请求验收](testing/2026-11-08-free-model-init-timeouts.md)。
+
+## v0.3.236：浏览器扩展初始化（2026-11-09）
+
+- 首次设置中，勾选 Bangumi 或 GitHub 后才显示该平台的账号、令牌和填写说明。取消勾选后仍保留本次输入。
+- 插件的向量连接测试会等待后端完成有界的限流恢复。GitHub 已发布 Chrome、Firefox 和 Safari 手动安装包。2026-11-09 提审时，Chrome Web Store 为 `PENDING_REVIEW`，Firefox AMO listed 版为 `unreviewed`。[GitHub 插件发行](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.236)
 
 ## v0.3.235：统一免费 Provider 与动态来源（2026-11-08）
 
