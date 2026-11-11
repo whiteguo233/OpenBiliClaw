@@ -42,6 +42,8 @@ Ego Browser 首次设置尚未完成，因此使用 Playwright CLI 检查页面�
 
 ## 两模型真实请求限制
 
+本节保留首次本机阻断。2026-11-12 已在独立 Linux/macOS 环境完成两个模型的真实四阶段初始化与页面/CLI/重启验收，四组均通过，详见[后续真实验收](2026-11-12-profile-live-e2e.md)。
+
 分别用 `scripts/sponsored_init_acceptance.py --events 12`、独立全新目录、正式验签 SDK 和只含被测模型的固定实例链尝试 Qwen3-8B / Qwen3.5-4B。两轮都在 SDK IPC 握手阶段失败，尚未产生上游请求；8B 的独立启动诊断明确为 `LEDGER_TAMPERED: keychain store status -25293`。不能把确定性回归描述为两个真实模型均已完成初始化。
 
 请求元数据： [8B 阻断记录](assets/profile-completeness-20261111/8b-runtime-blocked.json)、[4B 阻断记录](assets/profile-completeness-20261111/4b-runtime-blocked.json)。没有读取用户 API Key、Cookie 或真实历史，没有修改钥匙串访问控制、绕过 SDK 安全策略或降低验签要求。测试进程、隔离 SDK/数据目录和临时浏览器已清理。脚本已增加六个画像区块的非空断言、推测标记和未知身份/MBTI 校验，恢复正常 SDK 环境后可以直接重跑。
