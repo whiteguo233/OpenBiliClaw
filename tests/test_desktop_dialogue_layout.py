@@ -28,8 +28,12 @@ def test_desktop_dialogue_cards_have_hierarchy_and_responsive_actions() -> None:
     css = APP_CSS.read_text(encoding="utf-8")
 
     assert ".dialogue-card {" in css
+    assert "width: min(100%, 680px);" in css
+    assert "padding: 14px 16px 12px;" in css
     assert ".dialogue-card-title {" in css
+    assert ".dialogue-card-title { margin: 0; color: var(--fg); font-size: 16px;" in css
     assert ".dialogue-card-actions {" in css
+    assert ".dialogue-card-action { min-width: 0; min-height: 32px;" in css
     assert ".dialogue-card-action.is-confirm {" in css
     assert ".dialogue-card-action.is-reject:hover {" in css
     assert ".dialogue-card-action.is-defer {" in css

@@ -1027,22 +1027,22 @@
     .chat-page .chat-log::-webkit-scrollbar, #desktopPendingConfirmations::-webkit-scrollbar { width: 8px; }
     .chat-page .chat-log::-webkit-scrollbar-track, #desktopPendingConfirmations::-webkit-scrollbar-track { background: transparent; }
     .chat-page .chat-log::-webkit-scrollbar-thumb, #desktopPendingConfirmations::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--accent), transparent 48%); background-clip: content-box; }
-    .dialogue-card { position: relative; width: min(100%, 760px); display: grid; gap: 0; justify-self: start; padding: 22px 24px 20px; border: 1px solid color-mix(in oklab, var(--accent), var(--border-soft) 68%); border-radius: 22px; background: linear-gradient(145deg, color-mix(in oklab, var(--surface), var(--accent-subtle) 16%), var(--surface)); box-shadow: var(--elev-ring), 0 14px 34px var(--message-shadow); overflow: hidden; }
+    .dialogue-card { position: relative; width: min(100%, 680px); display: grid; gap: 0; justify-self: start; padding: 14px 16px 12px; border: 1px solid color-mix(in oklab, var(--accent), var(--border-soft) 68%); border-radius: 16px; background: linear-gradient(145deg, color-mix(in oklab, var(--surface), var(--accent-subtle) 16%), var(--surface)); box-shadow: var(--elev-ring), 0 8px 20px var(--message-shadow); overflow: hidden; }
     .dialogue-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--accent); }
     .dialogue-card[data-card-state="confirmed"], .dialogue-card[data-card-state="revised"] { border-color: color-mix(in oklab, var(--success), var(--border-soft) 54%); }
     .dialogue-card[data-card-state="confirmed"]::before, .dialogue-card[data-card-state="revised"]::before { background: var(--success); }
     .dialogue-card[data-card-state="rejected"] { border-color: color-mix(in oklab, var(--danger), var(--border-soft) 58%); }
     .dialogue-card[data-card-state="rejected"]::before { background: var(--danger); }
     .dialogue-card[data-card-state="deferred"]::before { background: var(--meta); }
-    .dialogue-card-kicker { margin: 0 0 7px; color: var(--accent); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-    .dialogue-card-title { margin: 0; color: var(--fg); font-size: clamp(20px, 2.1vw, 27px); font-weight: 780; letter-spacing: -0.025em; line-height: 1.28; text-wrap: balance; }
-    .dialogue-card-state { width: fit-content; margin: 14px 0 0; padding: 5px 9px; border-radius: var(--radius-pill); background: var(--accent-subtle); color: color-mix(in oklab, var(--accent), var(--fg) 30%); font-size: var(--text-xs); font-weight: 750; }
-    .dialogue-evidence { margin-top: 13px; color: var(--muted); font-size: var(--text-sm); }
-    .dialogue-evidence summary { width: fit-content; padding: 4px 0; color: var(--fg-2); font-weight: 700; cursor: pointer; }
+    .dialogue-card-kicker { margin: 0 0 4px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+    .dialogue-card-title { margin: 0; color: var(--fg); font-size: 16px; font-weight: 760; letter-spacing: -0.01em; line-height: 1.42; text-wrap: balance; }
+    .dialogue-card-state { width: fit-content; margin: 8px 0 0; padding: 3px 7px; border-radius: var(--radius-pill); background: var(--accent-subtle); color: color-mix(in oklab, var(--accent), var(--fg) 30%); font-size: 11px; font-weight: 750; }
+    .dialogue-evidence { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .dialogue-evidence summary { width: fit-content; padding: 2px 0; color: var(--fg-2); font-weight: 700; cursor: pointer; }
     .dialogue-evidence summary::marker { color: var(--accent); }
-    .dialogue-evidence ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 12px 12px 12px 30px; border-radius: var(--radius-md); background: color-mix(in oklab, var(--bg), transparent 18%); line-height: 1.55; }
-    .dialogue-card-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); margin-top: 18px; padding-top: var(--space-4); border-top: 1px solid var(--border-soft); }
-    .dialogue-card-action { min-width: 0; min-height: 40px; padding: 0 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: var(--surface); color: var(--fg-2); font: inherit; font-size: var(--text-sm); font-weight: 750; cursor: pointer; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard); }
+    .dialogue-evidence ul { display: grid; gap: 4px; margin: 4px 0 0; padding: 8px 10px 8px 24px; border-radius: var(--radius-md); background: color-mix(in oklab, var(--bg), transparent 18%); line-height: 1.5; }
+    .dialogue-card-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+    .dialogue-card-action { min-width: 0; min-height: 32px; padding: 0 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: var(--surface); color: var(--fg-2); font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), opacity var(--motion-fast) var(--ease-standard); }
     .dialogue-card-action:hover { border-color: var(--accent); background: var(--accent-subtle); color: var(--fg); }
     .dialogue-card-action.is-confirm { border-color: var(--accent); background: var(--accent); color: var(--accent-on); }
     .dialogue-card-action.is-confirm:hover { border-color: var(--accent-hover); background: var(--accent-hover); color: var(--accent-on); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent), transparent 78%); }

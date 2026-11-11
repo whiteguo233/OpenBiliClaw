@@ -252,7 +252,7 @@ def test_many_dialogue_cards_keep_natural_height_and_scroll(
         }))"""
     )
     assert len(card_metrics) == 9
-    assert all(metric["height"] > 240 for metric in card_metrics)
+    assert all(metric["height"] > 220 for metric in card_metrics)
     assert all(metric["height"] + 1 >= metric["scrollHeight"] for metric in card_metrics)
 
     before = _scroll_report(chromium_page, "#chatLog")

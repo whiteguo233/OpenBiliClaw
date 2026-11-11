@@ -167,3 +167,19 @@ test("chat tab scrolls restored history to the newest message", () => {
   assert.match(setActiveTabBlock, /tabName === "chat"[\s\S]*scrollChatMessagesToBottom\(\)/);
   assert.match(hydrateBlock, /replaceChildren\(\)[\s\S]*scrollChatMessagesToBottom\(\)/);
 });
+
+test("guess cards stay compact in the popup", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const cardBlock = cssBlockWith(popupHtml, ".dialogue-card", /border-radius:/);
+  const titleBlocks = [...popupHtml.matchAll(/\.dialogue-card-title\s*\{[\s\S]*?\}/g)].map(
+    (match) => match[0],
+  );
+  const titleBlock = titleBlocks.at(-1) ?? "";
+  const actionsBlock = cssBlockWith(popupHtml, ".dialogue-card-actions", /margin-top:/);
+
+  assert.match(cardBlock, /padding:\s*10px;/);
+  assert.match(cardBlock, /border-radius:\s*14px;/);
+  assert.match(titleBlock, /font-size:\s*12px;/);
+  assert.match(titleBlock, /line-height:\s*1\.45;/);
+  assert.match(actionsBlock, /margin-top:\s*8px;/);
+});

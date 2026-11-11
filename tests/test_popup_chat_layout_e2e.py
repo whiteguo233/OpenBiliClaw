@@ -100,3 +100,42 @@ def test_popup_chat_folds_chrome_and_keeps_the_composer_inline(chromium_page: Pa
     assert rects["heroSub"] == "none"
     assert rects["brandTitle"] == "none"
     assert rects["footer"] == "none"
+
+
+def test_popup_guess_card_is_compact(chromium_page: Page) -> None:
+    chromium_page.evaluate(
+        """() => {
+          for (const id of ['viewRecommend', 'viewLibrary', 'viewProfile']) {
+            document.getElementById(id).hidden = true;
+          }
+          document.getElementById('viewChat').hidden = false;
+          document.body.classList.add('chat-tab-active');
+          document.getElementById('chatMessages').innerHTML = `
+            <article class="dialogue-card" data-card-state="pending">
+              <p class="dialogue-card-kicker">阿B 的猜测</p>
+              <h3 class="dialogue-card-title">
+                用户可能更侧重工具链验证本身，
+                对推荐池的治理缺乏即时行动意图。
+              </h3>
+              <details class="dialogue-evidence" open>
+                <summary>依据（2）</summary>
+                <ul>
+                  <li>最近多次浏览同一主题的长内容。</li>
+                  <li>对只追热点、没有验证过程的内容很快退出。</li>
+                </ul>
+              </details>
+              <div class="dialogue-card-actions">
+                <button class="dialogue-card-action is-confirm" type="button">准</button>
+                <button class="dialogue-card-action is-reject" type="button">不准</button>
+                <button class="dialogue-card-action is-discuss" type="button">聊聊</button>
+                <button class="dialogue-card-action is-defer" type="button">稍后</button>
+              </div>
+            </article>`;
+        }"""
+    )
+    card = chromium_page.locator(".dialogue-card").bounding_box()
+    assert card is not None and card["height"] <= 230
+    title_size = chromium_page.locator(".dialogue-card-title").evaluate(
+        "element => getComputedStyle(element).fontSize"
+    )
+    assert title_size == "12px"
