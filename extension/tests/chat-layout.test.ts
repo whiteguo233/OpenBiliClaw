@@ -111,6 +111,10 @@ test("chat tab folds marketing chrome without hiding the activity footer", () =>
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
   assert.match(popupHtml, /body\.chat-tab-active \.hero-sub \{ display: none; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.hero \{ padding: 6px 10px; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.brand-copy h1 \{ display: none; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.brand-mark \{ width: 26px; height: 26px;/);
+  assert.match(popupHtml, /body\.chat-tab-active \.tab-button \{ min-height: 38px; padding: 6px 4px; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.footer \{ padding: 8px 10px; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.footer-headline \{ display: none; \}/);
   assert.match(popupJs, /classList\.toggle\("chat-tab-active", tabName === "chat"\)/);

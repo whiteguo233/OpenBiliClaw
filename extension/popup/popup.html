@@ -3395,10 +3395,24 @@
       overflow: hidden;
     }
 
-    /* The chat tab is a work surface: fold the marketing tagline/Star row and
-       compact the recommendation activity footer so history gets the height. */
-    body.chat-tab-active .hero { padding-block: 10px; }
+    /* The chat tab is a work surface: fold the marketing tagline/Star row,
+       keep the brand header to one slim line, and compact the recommendation
+       activity footer so history gets the height. */
+    body.chat-tab-active .hero { padding: 6px 10px; }
     body.chat-tab-active .hero-sub { display: none; }
+    body.chat-tab-active .brand { gap: 6px; }
+    body.chat-tab-active .brand-copy h1 { display: none; }
+    body.chat-tab-active .brand-sub { display: none; }
+    body.chat-tab-active .brand-title-row { flex-wrap: nowrap; gap: 6px; min-width: 0; }
+    body.chat-tab-active .hero h1 { font-size: 15px; }
+    body.chat-tab-active .brand-mark { width: 26px; height: 26px; border-radius: 9px; }
+    body.chat-tab-active .status-badge { padding: 4px 7px; }
+    body.chat-tab-active .status-label { font-size: 10px; }
+    body.chat-tab-active .hero-actions { gap: 3px; }
+    body.chat-tab-active .hero-actions button { width: 26px; height: 26px; }
+    body.chat-tab-active .hero-actions button.mobile-button { width: auto; padding: 0 6px; }
+    body.chat-tab-active .tabs-shell { padding: 4px; }
+    body.chat-tab-active .tab-button { min-height: 38px; padding: 6px 4px; }
     body.chat-tab-active .footer { padding: 8px 10px; }
 
     .chat-intro {
