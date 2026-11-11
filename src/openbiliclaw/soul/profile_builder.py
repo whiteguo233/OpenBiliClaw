@@ -20,7 +20,7 @@ from openbiliclaw.llm.prompts import build_soul_profile_prompt
 from openbiliclaw.llm.service import LLMServiceError
 from openbiliclaw.llm.task_options import call_accepts_keyword, without_core_memory_kwargs
 
-from .profile import SoulProfile
+from .profile import SoulProfile, awareness_note_from_dict, insight_hypothesis_from_dict
 from .tone import build_tone_profile
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,62 @@ _INFORMATION_PREFERENCES = {
 }
 
 
+# These are narrow, reversible content-choice hypotheses, not psychological
+# diagnoses. Only a model-selected kind with a validated source can seed them.
+# Keep the uncertainty in the persisted text: all four clients and downstream
+# prompt views must retain it, rather than upgrading an import to a known fact.
+_INFORMATION_PROFILE_SEEDS: dict[str, tuple[str, str, str, str]] = {
+    "principles": (
+        "在内容选择上可能偏爱追根问底",
+        "可能希望解释能回答为什么",
+        "在内容里可能看重有依据的解释",
+        "可能想把零散信息连成理解",
+    ),
+    "examples": (
+        "在内容选择上可能偏爱具体可感的说明",
+        "可能需要用具体例子帮助理解",
+        "在内容里可能看重具体而清楚的表达",
+        "可能想借案例理解抽象问题",
+    ),
+    "steps": (
+        "在内容选择上可能偏爱清晰有序的展开",
+        "可能希望说明提供可跟随的步骤",
+        "在内容里可能看重方法的可操作性",
+        "可能想了解一件事如何一步步完成",
+    ),
+    "comparison": (
+        "在内容选择上可能偏爱多方比较",
+        "可能希望看清不同方案的取舍",
+        "在内容里可能看重多角度的依据",
+        "可能想通过对照形成自己的判断",
+    ),
+    "visual": (
+        "在内容选择上可能留意视觉表达",
+        "可能希望信息也有舒服的呈现方式",
+        "在内容里可能看重画面与表达的质感",
+        "可能想从视觉细节中获得感受",
+    ),
+    "story": (
+        "在内容选择上可能容易被叙事吸引",
+        "可能需要人物与情境帮助进入内容",
+        "在内容里可能看重叙事的连贯与感染力",
+        "可能想通过故事接近不同的体验",
+    ),
+    "concise": (
+        "在内容选择上可能偏爱直接切入重点",
+        "可能希望快速找到关键信息",
+        "在内容里可能看重表达清楚而精练",
+        "可能想用较少的信息负担抓住要点",
+    ),
+    "exploration": (
+        "在内容选择上可能愿意接触新视角",
+        "可能希望持续接触不熟悉的想法",
+        "在内容里可能看重视角的多样性",
+        "可能想扩展已有的理解边界",
+    ),
+}
+
+
 class SupportsCoreMemoryTask(Protocol):
     async def complete_structured_task(
         self,
@@ -72,6 +128,10 @@ class SupportsCoreMemoryTask(Protocol):
 
 class SoulProfileBuildError(Exception):
     """Raised when soul-profile generation fails or returns invalid data."""
+
+
+class _MissingInformationPreferencesError(SoulProfileBuildError):
+    """Free-model output supplied no usable evidence for the initial profile."""
 
 
 # Init history sampling (2026-07-26). The profile builder used to feed the LLM
@@ -276,8 +336,14 @@ class ProfileBuilder:
                 awareness_notes=awareness_notes,
                 active_insights=active_insights,
             )
-        except SoulProfileBuildError:
-            if not preference and len(history) < 100:
+        except SoulProfileBuildError as exc:
+            from openbiliclaw.llm.sponsored_adapter import uses_sponsored_route
+
+            if (
+                not preference
+                and len(history) < 100
+                and not isinstance(exc, _MissingInformationPreferencesError)
+            ):
                 raise
             logger.warning(
                 "soul profile build failed; retrying with compact history summary",
@@ -287,6 +353,10 @@ class ProfileBuilder:
                 history_summary=self._compact_history_summary(
                     history_summary,
                     original_count=len(history),
+                    preserve_sources=(
+                        isinstance(exc, _MissingInformationPreferencesError)
+                        or uses_sponsored_route(self.registry, "soul.profile_build")
+                    ),
                 ),
                 preference=preference,
                 awareness_notes=awareness_notes,
@@ -350,8 +420,7 @@ class ProfileBuilder:
             raise SoulProfileBuildError(str(exc)) from exc
         payload = self._parse_response(response.content)
         if not personal_evidence:
-            # A model's confidence is not evidence of E/I. Consumption and
-            # imported account inventories never establish social behaviour.
+            # Consumption does not establish social behaviour or identity.
             mbti = payload.get("mbti")
             if isinstance(mbti, dict) and isinstance(mbti.get("dimensions"), dict):
                 mbti["confidence"] = min(
@@ -361,44 +430,13 @@ class ProfileBuilder:
                 if isinstance(ei, dict):
                     ei["strength"] = 0.5
                 self._normalize_mbti_payload(payload)
-            if response.provider == "sponsored":
-                # The two small free models repeatedly asserted life events
-                # from passive titles. Keep their information-style portrait,
-                # but do not store unsupported identity or psychological facts.
-                payload["life_stage"] = "暂无明确自述"
-                payload["current_phase"] = "暂无明确自述"
-                for name in ("core_traits", "deep_needs", "values", "motivational_drivers"):
-                    payload[name] = []
-                titles = history_summary.get("titles")
-                source_titles = {str(t) for t in titles} if isinstance(titles, list) else set()
-                preferences = payload.get("information_preferences")
-                supported: list[str] = []
-                if isinstance(preferences, list):
-                    for entry in preferences:
-                        if not isinstance(entry, dict):
-                            continue
-                        kind, evidence = entry.get("kind"), entry.get("evidence")
-                        source_index = entry.get("source_index")
-                        has_source = (
-                            isinstance(titles, list)
-                            and type(source_index) is int
-                            and 0 <= source_index < len(titles)
-                        ) or (isinstance(evidence, str) and evidence in source_titles)
-                        if (
-                            isinstance(kind, str)
-                            and kind in _INFORMATION_PREFERENCES
-                            and has_source
-                            and _INFORMATION_PREFERENCES[kind] not in supported
-                        ):
-                            supported.append(_INFORMATION_PREFERENCES[kind])
-                payload["cognitive_style"] = supported[:3]
-                payload["personality_portrait"] = (
-                    "从你关注的内容看，你可能更喜欢" + "、".join(supported[:3]) + "。"
-                    "这是根据内容选择形成的初步印象，你的实际生活经历和个性还需要听你自己说。"
-                    if supported
-                    else "目前我主要了解你的内容选择，现有线索还不足以判断你的性格和生活经历。"
-                    "我会继续整理你的信息偏好，也欢迎你用自己的话补充或纠正这个初步印象。"
-                )
+        if source_grounding or response.provider in {"sponsored", "siliconflow_free"}:
+            self._apply_information_profile(
+                payload,
+                history_summary,
+                personal_evidence=personal_evidence,
+                require_evidence=source_grounding,
+            )
         profile = SoulProfile(
             personality_portrait=str(payload.get("personality_portrait", "")),
             core_traits=self._as_str_list(payload.get("core_traits")),
@@ -408,16 +446,118 @@ class ProfileBuilder:
             values=self._as_str_list(payload.get("values")),
             life_stage=str(payload.get("life_stage", "")),
             deep_needs=self._as_str_list(payload.get("deep_needs")),
+            # The summary API reads the soul snapshot. Passing cognition only
+            # into the prompt left these sections empty until the next cycle.
+            # Match the existing cognition-sync display windows (8 / 6).
+            recent_awareness=[
+                awareness_note_from_dict(note)
+                for note in awareness_notes
+                if str(note.get("observation", "")).strip()
+            ][-8:],
+            active_insights=[
+                insight_hypothesis_from_dict(insight)
+                for insight in active_insights
+                if str(insight.get("hypothesis", "")).strip()
+                and insight.get("user_verdict") != "rejected"
+            ][-6:],
         )
         # Attach raw MBTI data so OnionProfile.from_legacy() can pick it up
         profile._raw_mbti = payload.get("mbti")  # type: ignore[attr-defined]
         return profile
 
     @staticmethod
+    def _apply_information_profile(
+        payload: dict[str, object],
+        history_summary: dict[str, object],
+        *,
+        personal_evidence: bool,
+        require_evidence: bool,
+    ) -> None:
+        """Project source-validated information choices into tentative layers."""
+        titles = history_summary.get("titles")
+        source_titles = {str(t) for t in titles} if isinstance(titles, list) else set()
+        preferences = payload.get("information_preferences")
+        kinds: list[str] = []
+        if isinstance(preferences, list):
+            for entry in preferences:
+                if not isinstance(entry, dict):
+                    continue
+                kind, evidence = entry.get("kind"), entry.get("evidence")
+                source_index = entry.get("source_index")
+                has_source = (
+                    isinstance(titles, list)
+                    and type(source_index) is int
+                    and 0 <= source_index < len(titles)
+                ) or (isinstance(evidence, str) and evidence in source_titles)
+                if isinstance(kind, str) and kind in _INFORMATION_PREFERENCES and has_source:
+                    if kind not in kinds:
+                        kinds.append(kind)
+                else:
+                    logger.warning(
+                        "soul profile: ignored information preference without valid source/kind"
+                    )
+        # Three distinct supported choices bound the initial hypothesis set;
+        # this mirrors the free-model prompt contract, not a confidence cutoff.
+        kinds = kinds[:3]
+        if not personal_evidence:
+            payload["life_stage"] = "暂无明确自述"
+            payload["mbti"] = {"type": "", "confidence": 0.0, "dimensions": {}}
+        if not kinds:
+            if require_evidence and titles:
+                raise _MissingInformationPreferencesError(
+                    "LLM returned no source-grounded information preferences; "
+                    "cannot save a complete initial profile."
+                )
+            if not personal_evidence:
+                for name in (
+                    "core_traits",
+                    "deep_needs",
+                    "values",
+                    "motivational_drivers",
+                    "cognitive_style",
+                ):
+                    payload[name] = []
+                payload["current_phase"] = "暂无明确自述"
+                payload["personality_portrait"] = (
+                    "目前我主要了解你的内容选择，现有线索还不足以判断你的性格和生活经历。"
+                    "我会继续整理你的信息偏好，也欢迎你用自己的话补充或纠正这个初步印象。"
+                )
+            return
+        supported = [_INFORMATION_PREFERENCES[kind] for kind in kinds]
+        for index, name in enumerate(
+            ("core_traits", "deep_needs", "values", "motivational_drivers")
+        ):
+            if not personal_evidence or not payload.get(name):
+                payload[name] = [
+                    _INFORMATION_PROFILE_SEEDS[kind][index] + "（内容侧初步推测，待确认）"
+                    for kind in kinds
+                ]
+        if not personal_evidence or not payload.get("cognitive_style"):
+            payload["cognitive_style"] = supported
+        if not personal_evidence or payload.get("current_phase") in (
+            None,
+            "",
+            "暂无明确自述",
+            "还在根据最近的行为信号整理当前阶段。",
+        ):
+            payload["current_phase"] = (
+                "从已有内容选择看，你可能更关注"
+                + "、".join(supported)
+                + "；这是内容侧的初步观察，待确认，不代表现实生活阶段或兴趣变化。"
+            )
+        if not personal_evidence:
+            payload["personality_portrait"] = (
+                "从你关注的内容看，你可能更喜欢" + "、".join(supported) + "。"
+                "下面的特质、需求与价值偏好是内容侧的初步推测，仍待你确认；"
+                "你的实际生活经历和个性还需要听你自己说。"
+            )
+
+    @staticmethod
     def _compact_history_summary(
         history_summary: dict[str, object],
         *,
         original_count: int,
+        preserve_sources: bool = False,
     ) -> dict[str, object]:
         """Build a low-risk retry summary that avoids raw titles/contexts."""
         raw_count = history_summary.get("count")
@@ -439,6 +579,11 @@ class ProfileBuilder:
             value = history_summary.get(key)
             if isinstance(value, str) and value.strip():
                 compact[f"{key}_present"] = True
+        # Keep a small source set for the free model's source_index contract.
+        # Omitting every title made the retry incapable of grounding any field.
+        titles = history_summary.get("titles")
+        if preserve_sources and isinstance(titles, list):
+            compact["titles"] = titles[:12]
         compact["authored_expressions"] = history_summary.get("authored_expressions", [])
         return compact
 
@@ -630,7 +775,11 @@ class ProfileBuilder:
         # below derives from this sample, so titles / contexts / recent / older
         # all describe the same rows rather than three different prefixes.
         sampled_items = _sample_representative(regular_items, _HISTORY_SAMPLE_LIMIT)
-        titles = [str(item.get("title", "")).strip() for item in sampled_items if item.get("title")]
+        titles = [
+            str(item.get("title", "")).strip()
+            for item in sampled_items
+            if item.get("title") and item.get("event_type") != "dialogue"
+        ]
         # Extract authors from multiple possible field names
         authors: list[str] = []
         for item in regular_items:  # frequency ranking stays on the full set

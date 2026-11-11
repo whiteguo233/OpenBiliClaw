@@ -15328,6 +15328,11 @@ def profile() -> None:
             + (f"  [dim]{dims_text}[/dim]" if dims_text else "")
         )
 
+    else:
+        console.print(
+            "  [bold]MBTI[/bold]：仅凭观看和收藏无法可靠判断 MBTI，可在聊一聊中补充自述或测试结果。"
+        )
+
     # -- 价值层 Values -------------------------------------------------------
     values_layer = profile_data.values_layer
     _print_section_title("价值层 Values")

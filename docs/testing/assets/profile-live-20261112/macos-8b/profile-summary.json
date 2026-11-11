@@ -1,0 +1,417 @@
+{
+  "initialized": true,
+  "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、按步骤展开的内容、对不同方案的比较。下面的特质、需求与价值偏好是内容侧的初步推测，仍待你确认；你的实际生活经历和个性还需要听你自己说。",
+  "core_traits": [
+    "在内容选择上可能偏爱追根问底（内容侧初步推测，待确认）",
+    "在内容选择上可能偏爱清晰有序的展开（内容侧初步推测，待确认）",
+    "在内容选择上可能偏爱多方比较（内容侧初步推测，待确认）"
+  ],
+  "deep_needs": [
+    "可能希望解释能回答为什么（内容侧初步推测，待确认）",
+    "可能希望说明提供可跟随的步骤（内容侧初步推测，待确认）",
+    "可能希望看清不同方案的取舍（内容侧初步推测，待确认）"
+  ],
+  "mbti": {
+    "type": "",
+    "dimensions": {},
+    "confidence": 0.0
+  },
+  "values": [
+    "在内容里可能看重有依据的解释（内容侧初步推测，待确认）",
+    "在内容里可能看重方法的可操作性（内容侧初步推测，待确认）",
+    "在内容里可能看重多角度的依据（内容侧初步推测，待确认）"
+  ],
+  "motivational_drivers": [
+    "可能想把零散信息连成理解（内容侧初步推测，待确认）",
+    "可能想了解一件事如何一步步完成（内容侧初步推测，待确认）",
+    "可能想通过对照形成自己的判断（内容侧初步推测，待确认）"
+  ],
+  "likes": [
+    {
+      "domain": "科技",
+      "weight": 0.9,
+      "specifics": [
+        {
+          "name": "AI工具开发",
+          "weight": 0.9
+        },
+        {
+          "name": "AI代理",
+          "weight": 0.9
+        },
+        {
+          "name": "AI技术",
+          "weight": 0.9
+        },
+        {
+          "name": "工具链",
+          "weight": 0.85
+        },
+        {
+          "name": "视频处理技术",
+          "weight": 0.8
+        },
+        {
+          "name": "开源项目",
+          "weight": 0.8
+        },
+        {
+          "name": "深度学习",
+          "weight": 0.8
+        },
+        {
+          "name": "开发工具",
+          "weight": 0.8
+        },
+        {
+          "name": "代码工程",
+          "weight": 0.75
+        },
+        {
+          "name": "AI视频编辑",
+          "weight": 0.7
+        },
+        {
+          "name": "AI视频生成",
+          "weight": 0.7
+        },
+        {
+          "name": "视频处理工具",
+          "weight": 0.7
+        },
+        {
+          "name": "软件架构",
+          "weight": 0.7
+        },
+        {
+          "name": "编程语言",
+          "weight": 0.7
+        },
+        {
+          "name": "Python编程",
+          "weight": 0.6
+        }
+      ]
+    },
+    {
+      "domain": "知识",
+      "weight": 0.7,
+      "specifics": [
+        {
+          "name": "数据可视化",
+          "weight": 0.7
+        },
+        {
+          "name": "机器学习",
+          "weight": 0.6
+        }
+      ]
+    },
+    {
+      "domain": "其他",
+      "weight": 0.6,
+      "specifics": [
+        {
+          "name": "开源项目",
+          "weight": 0.6
+        }
+      ]
+    }
+  ],
+  "dislikes": [],
+  "favorite_up_users": [
+    "AgriciDaniel",
+    "Anil-matcha",
+    "BigDawnGhost",
+    "CZM1998",
+    "Davipar",
+    "Evil0ctal",
+    "THU-MAIC",
+    "TheoLeeCJ",
+    "Tiger3807861189",
+    "alchaincyf",
+    "apache",
+    "awesome-dsh-plugin",
+    "bespokelabsai",
+    "bggRGjQaUbCoE",
+    "boykopovar",
+    "cathrynlavery",
+    "cloudflare",
+    "cordiverse",
+    "featherless-ai",
+    "firecrawl",
+    "freestylefly",
+    "gepa-ai",
+    "jay3-yy",
+    "ktwu01",
+    "liguobao",
+    "liuzhao1225",
+    "milind-soni",
+    "morluto",
+    "mrmps",
+    "pollen-robotics",
+    "storytold",
+    "tt-a1i",
+    "xmanrui",
+    "yjh051108",
+    "zhengkid"
+  ],
+  "total_likes": 3,
+  "total_dislikes": 0,
+  "total_favorite_up_users": 35,
+  "life_stage": "暂无明确自述",
+  "current_phase": "从已有内容选择看，你可能更关注讲清原理的解释、按步骤展开的内容、对不同方案的比较；这是内容侧的初步观察，待确认，不代表现实生活阶段或兴趣变化。",
+  "cognitive_style": [
+    "讲清原理的解释",
+    "按步骤展开的内容",
+    "对不同方案的比较"
+  ],
+  "style": {
+    "preferred_duration": "medium",
+    "preferred_pace": "moderate",
+    "quality_sensitivity": 0.7,
+    "humor_preference": 0.3,
+    "depth_preference": 0.9
+  },
+  "context": {
+    "weekday_patterns": "工作日集中关注 AI 技术和开源项目",
+    "weekend_patterns": "周末继续关注 AI 开发相关工具链",
+    "time_of_day_patterns": "全天候活跃，但更倾向于晚间",
+    "session_type": "持续深入型"
+  },
+  "exploration_openness": 0.6,
+  "speculative_interests": [
+    {
+      "domain": "动画制作幕后",
+      "reason": "你最近看的番剧里，可能对制作幕后更感兴趣，试试看这些动画制作纪录片吧。",
+      "confidence": 0.5,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "动画制作幕后揭秘",
+          "confirmation_count": 0
+        },
+        {
+          "name": "经典动画角色设计解析",
+          "confirmation_count": 0
+        },
+        {
+          "name": "动画工作室日常vlog",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "游戏攻略合集",
+      "reason": "你玩的游戏如果涉及策略元素，可能对这类游戏的深度解析也会感兴趣。",
+      "confidence": 0.55,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "游戏攻略合集",
+          "confirmation_count": 0
+        },
+        {
+          "name": "玩家社区讨论",
+          "confirmation_count": 0
+        },
+        {
+          "name": "游戏设计思路分享",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "厨艺提升技巧",
+      "reason": "如果你喜欢做菜，这些烹饪小技巧可能帮你提升厨艺。",
+      "confidence": 0.5,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "快手菜谱分享",
+          "confirmation_count": 0
+        },
+        {
+          "name": "厨房神器测评",
+          "confirmation_count": 0
+        },
+        {
+          "name": "食材替代方案",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "编程实战教程",
+      "reason": "如果你对科技趋势感兴趣，这些编程实战内容可能帮助你理解技术底层逻辑。",
+      "confidence": 0.5,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "Python实战项目",
+          "confirmation_count": 0
+        },
+        {
+          "name": "开发工具对比测评",
+          "confirmation_count": 0
+        },
+        {
+          "name": "代码优化技巧",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "电竞赛事剪辑",
+      "reason": "如果你喜欢游戏实况，这些电竞赛事的精彩片段可能同样吸引你。",
+      "confidence": 0.45,
+      "probe_mode": "lateral",
+      "challenge": true,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "高光时刻合集",
+          "confirmation_count": 0
+        },
+        {
+          "name": "选手训练日常",
+          "confirmation_count": 0
+        },
+        {
+          "name": "战术分析解说",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "电影创作故事",
+      "reason": "喜欢电影的话，可能也会对这些电影背后的创作故事感兴趣。",
+      "confidence": 0.4,
+      "probe_mode": "bridge",
+      "challenge": true,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "导演访谈录",
+          "confirmation_count": 0
+        },
+        {
+          "name": "电影配乐解析",
+          "confirmation_count": 0
+        },
+        {
+          "name": "经典场景重现",
+          "confirmation_count": 0
+        }
+      ]
+    }
+  ],
+  "speculative_avoidances": [],
+  "recent_cognition_updates": [],
+  "has_more_cognition_updates": false,
+  "next_cognition_cursor": "",
+  "active_insights": [
+    {
+      "hypothesis": "用户可能倾向于构建或优化AI驱动的视频处理系统",
+      "evidence": [
+        "包含视频编辑、AI视频翻译、AI配音等技术主题的项目被收藏"
+      ],
+      "confidence": 0.8,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能对 AI 与开发工具的结合有特殊兴趣",
+      "evidence": [
+        "多个 AI 相关项目与工具链被收藏"
+      ],
+      "confidence": 0.8,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户对AI视频生成领域有深入探索倾向",
+      "evidence": [
+        "收藏多个与视频处理和AI视频生成相关的项目"
+      ],
+      "confidence": 0.85,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能专注于 AI 工具链的构建与开发",
+      "evidence": [
+        "多个涉及 AI、工具链、代码实现的项目被收藏"
+      ],
+      "confidence": 0.85,
+      "validated": false,
+      "created_at": "2026-11-11"
+    }
+  ],
+  "recent_awareness": [
+    {
+      "date": "init",
+      "observation": "多次收藏涉及AI技能与工具开发的项目",
+      "trend": "持续关注AI技术应用",
+      "emotion_guess": "技术探索热情"
+    },
+    {
+      "date": "init",
+      "observation": "持续关注多个 AI 项目与开源工具",
+      "trend": "技术深度与广度并重",
+      "emotion_guess": "专业兴趣导向"
+    },
+    {
+      "date": "init",
+      "observation": "多次收藏涉及视频生成、处理的开源项目",
+      "trend": "持续关注视频处理工具链",
+      "emotion_guess": "对技术细节与实现有浓厚兴趣"
+    },
+    {
+      "date": "init",
+      "observation": "持续收藏与 AI 工具链相关的项目",
+      "trend": "集中于 AI 技术实现细节",
+      "emotion_guess": "对技术深度感兴趣"
+    },
+    {
+      "date": "init",
+      "observation": "关注多个开源项目",
+      "trend": "偏向技术社区资源",
+      "emotion_guess": "重视技术分享与协作"
+    },
+    {
+      "date": "init",
+      "observation": "收藏多个 JavaScript/TypeScript 项目",
+      "trend": "语言偏好倾向",
+      "emotion_guess": "倾向现代编程语言"
+    }
+  ],
+  "overrides": {
+    "version": 1,
+    "updated_at": "",
+    "text_pins": {},
+    "scalar_pins": {},
+    "list_edits": {},
+    "interest_edits": {}
+  }
+}

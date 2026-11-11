@@ -1,0 +1,55 @@
+{
+  "run_id": 43056781359,
+  "status": "completed",
+  "conclusion": "success",
+  "head_sha": "6bd740d598c42d14b99912937f3258c583a2cfdf",
+  "html_url": "https://github.com/whiteguo233/OpenBiliClaw/actions/runs/43056781359",
+  "jobs": [
+    {
+      "id": 130648236666,
+      "name": "live (ubuntu-22.04, Qwen/Qwen3-8B)",
+      "conclusion": "success"
+    },
+    {
+      "id": 130648237028,
+      "name": "live (macos-15-intel, Qwen/Qwen3.5-4B)",
+      "conclusion": "success"
+    },
+    {
+      "id": 130648237116,
+      "name": "live (ubuntu-22.04, Qwen/Qwen3.5-4B)",
+      "conclusion": "success"
+    },
+    {
+      "id": 130648237305,
+      "name": "live (macos-15-intel, Qwen/Qwen3-8B)",
+      "conclusion": "success"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 13873040890,
+      "name": "profile-live-macos-15-intel-2",
+      "size_in_bytes": 1145224,
+      "digest": "sha256:665e5cbd705d67f4beabccbd223022eb1f2b6c689232954d590e328b61602ff2"
+    },
+    {
+      "id": 13872875453,
+      "name": "profile-live-ubuntu-22.04-1",
+      "size_in_bytes": 414110,
+      "digest": "sha256:add46ce7e0dac6c55f1ad4cabc1aa7dfb347dc3e4cedbad4aa22470d4c719758"
+    },
+    {
+      "id": 13872725898,
+      "name": "profile-live-macos-15-intel-3",
+      "size_in_bytes": 1009191,
+      "digest": "sha256:32ef9bd7e0f149de68018cf5756f286ae9d57ac613891504176a86223714c416"
+    },
+    {
+      "id": 13872311145,
+      "name": "profile-live-ubuntu-22.04-0",
+      "size_in_bytes": 276174,
+      "digest": "sha256:9cbd06d8fabb79714a79561e16c0e9dc6df476ff7b207a31c76884319012b3db"
+    }
+  ]
+}

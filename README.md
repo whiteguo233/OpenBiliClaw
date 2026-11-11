@@ -679,6 +679,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
+Initial free profile: source-checked choices → tentative layers → profile commit barrier
+Init awareness / insights → profile snapshot → summary API / CLI / Markdown
 Free tool bridge → tagged actions / identified results; ordinary JSON stays data
 Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
 Wrapped runtime cause → bounded durable retry only before output or tool execution

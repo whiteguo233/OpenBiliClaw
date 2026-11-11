@@ -1,0 +1,274 @@
+{
+  "initialized": true,
+  "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、按步骤展开的内容、重视画面与表达细节的内容。下面的特质、需求与价值偏好是内容侧的初步推测，仍待你确认；你的实际生活经历和个性还需要听你自己说。",
+  "core_traits": [
+    "在内容选择上可能偏爱追根问底（内容侧初步推测，待确认）",
+    "在内容选择上可能偏爱清晰有序的展开（内容侧初步推测，待确认）",
+    "在内容选择上可能留意视觉表达（内容侧初步推测，待确认）"
+  ],
+  "deep_needs": [
+    "可能希望解释能回答为什么（内容侧初步推测，待确认）",
+    "可能希望说明提供可跟随的步骤（内容侧初步推测，待确认）",
+    "可能希望信息也有舒服的呈现方式（内容侧初步推测，待确认）"
+  ],
+  "mbti": {
+    "type": "",
+    "dimensions": {},
+    "confidence": 0.0
+  },
+  "values": [
+    "在内容里可能看重有依据的解释（内容侧初步推测，待确认）",
+    "在内容里可能看重方法的可操作性（内容侧初步推测，待确认）",
+    "在内容里可能看重画面与表达的质感（内容侧初步推测，待确认）"
+  ],
+  "motivational_drivers": [
+    "可能想把零散信息连成理解（内容侧初步推测，待确认）",
+    "可能想了解一件事如何一步步完成（内容侧初步推测，待确认）",
+    "可能想从视觉细节中获得感受（内容侧初步推测，待确认）"
+  ],
+  "likes": [
+    {
+      "domain": "科技",
+      "weight": 0.9,
+      "specifics": [
+        {
+          "name": "AI代理",
+          "weight": 0.9
+        },
+        {
+          "name": "AI视频工具",
+          "weight": 0.9
+        },
+        {
+          "name": "AI技术",
+          "weight": 0.9
+        },
+        {
+          "name": "视频生成",
+          "weight": 0.85
+        },
+        {
+          "name": "工具链",
+          "weight": 0.85
+        },
+        {
+          "name": "视频编辑",
+          "weight": 0.8
+        },
+        {
+          "name": "开源项目",
+          "weight": 0.8
+        },
+        {
+          "name": "深度学习",
+          "weight": 0.8
+        },
+        {
+          "name": "编程",
+          "weight": 0.8
+        },
+        {
+          "name": "视频处理",
+          "weight": 0.75
+        },
+        {
+          "name": "自然语言处理",
+          "weight": 0.75
+        },
+        {
+          "name": "数据可视化",
+          "weight": 0.7
+        },
+        {
+          "name": "AI视频翻译",
+          "weight": 0.7
+        },
+        {
+          "name": "编程工具",
+          "weight": 0.7
+        },
+        {
+          "name": "代码工具",
+          "weight": 0.7
+        },
+        {
+          "name": "软件架构",
+          "weight": 0.65
+        },
+        {
+          "name": "AI配音",
+          "weight": 0.6
+        },
+        {
+          "name": "Python",
+          "weight": 0.6
+        },
+        {
+          "name": "开放源代码",
+          "weight": 0.6
+        },
+        {
+          "name": "视频生成工具",
+          "weight": 0.55
+        },
+        {
+          "name": "生成式AI",
+          "weight": 0.5
+        }
+      ]
+    }
+  ],
+  "dislikes": [],
+  "favorite_up_users": [
+    "AgriciDaniel",
+    "Anil-matcha",
+    "BigDawnGhost",
+    "CZM1998",
+    "Davipar",
+    "Evil0ctal",
+    "THU-MAIC",
+    "TheoLeeCJ",
+    "Tiger3807861189",
+    "alchaincyf",
+    "apache",
+    "awesome-dsh-plugin",
+    "bespokelabsai",
+    "bggRGjQaUbCoE",
+    "boykopovar",
+    "cathrynlavery",
+    "cloudflare",
+    "cordiverse",
+    "featherless-ai",
+    "firecrawl",
+    "freestylefly",
+    "gepa-ai",
+    "jay3-yy",
+    "ktwu01",
+    "liguobao",
+    "liuzhao1225",
+    "milind-soni",
+    "morluto",
+    "mrmps",
+    "pollen-robotics",
+    "storytold",
+    "tt-a1i",
+    "xmanrui",
+    "yjh051108",
+    "zhengkid"
+  ],
+  "total_likes": 1,
+  "total_dislikes": 0,
+  "total_favorite_up_users": 35,
+  "life_stage": "暂无明确自述",
+  "current_phase": "从已有内容选择看，你可能更关注讲清原理的解释、按步骤展开的内容、重视画面与表达细节的内容；这是内容侧的初步观察，待确认，不代表现实生活阶段或兴趣变化。",
+  "cognitive_style": [
+    "讲清原理的解释",
+    "按步骤展开的内容",
+    "重视画面与表达细节的内容"
+  ],
+  "style": {
+    "preferred_duration": "long",
+    "preferred_pace": "moderate",
+    "quality_sensitivity": 0.7,
+    "humor_preference": 0.3,
+    "depth_preference": 0.9
+  },
+  "context": {
+    "weekday_patterns": "持续关注 AI 技术类开源项目",
+    "weekend_patterns": "未发现具体规律",
+    "time_of_day_patterns": "无明显时间偏好",
+    "session_type": "深度钻研型"
+  },
+  "exploration_openness": 0.6,
+  "speculative_interests": [],
+  "speculative_avoidances": [],
+  "recent_cognition_updates": [],
+  "has_more_cognition_updates": false,
+  "next_cognition_cursor": "",
+  "active_insights": [
+    {
+      "hypothesis": "用户可能关注AI技术在实际场景中的应用落地",
+      "evidence": [
+        "多个AI工具链项目被收藏",
+        "包含视频翻译、配音等具体功能"
+      ],
+      "confidence": 0.75,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能偏好具有实际应用价值的 AI 开源项目",
+      "evidence": [
+        "收藏多个 AI 技术和工具链项目"
+      ],
+      "confidence": 0.85,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能对视频生成和AI技术有长期研究兴趣",
+      "evidence": [
+        "收藏了多个与视频生成和AI相关的开源项目",
+        "偏好使用Python实现的工具链项目"
+      ],
+      "confidence": 0.8,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户对AI代理和工具链技术有系统性学习需求",
+      "evidence": [
+        "多次收藏涉及AI代理、工具链、深度学习、软件架构的项目"
+      ],
+      "confidence": 0.85,
+      "validated": false,
+      "created_at": "2026-11-11"
+    }
+  ],
+  "recent_awareness": [
+    {
+      "date": "init",
+      "observation": "多次收藏与AI代理、视频编辑相关的开源项目",
+      "trend": "对AI技术工具链有持续关注",
+      "emotion_guess": "寻求技术深度和实用性"
+    },
+    {
+      "date": "init",
+      "observation": "持续收藏多个与 AI 技术相关的开源项目",
+      "trend": "对 AI 技术有浓厚兴趣",
+      "emotion_guess": "专注与探索"
+    },
+    {
+      "date": "init",
+      "observation": "连续收藏多个与视频生成和AI相关的开源项目",
+      "trend": "聚焦视频技术和生成式AI领域",
+      "emotion_guess": "对技术实现感兴趣"
+    },
+    {
+      "date": "init",
+      "observation": "用户持续收藏与AI代理、工具链、开源项目相关的技术内容",
+      "trend": "对技术实现与开发工具有浓厚兴趣",
+      "emotion_guess": "专注与探索"
+    },
+    {
+      "date": "init",
+      "observation": "偏好使用Python实现的工具链项目",
+      "trend": "技术栈偏好Python",
+      "emotion_guess": "对Python有较强亲和力"
+    },
+    {
+      "date": "init",
+      "observation": "偏好具有明确技术方向和应用场景的项目",
+      "trend": "倾向实用性和可操作性",
+      "emotion_guess": "理性与严谨"
+    }
+  ],
+  "overrides": {
+    "version": 1,
+    "updated_at": "",
+    "text_pins": {},
+    "scalar_pins": {},
+    "list_edits": {},
+    "interest_edits": {}
+  }
+}

@@ -434,7 +434,7 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - 六平台 production adapter、runtime broker 与 extension executor 已 6/6 接线；三个图形界面只解释后端 `sync_status/sync_task_id/resolved_target/error_code`：`unsupported_content_type` local-only，`unsupported_adapter_missing` 可滚动升级重试，`pending + 非空 sync_task_id` / `syncing` 禁止重复提交。真实登录态平台写入仍必须逐平台显式授权，fixture 不能替代授权 E2E
 
 ### User Soul Engine (`soul/`)
-- 行为数据分析和画像构建
+- 行为数据分析和画像构建；免费初始化以来源校验的信息偏好形成待确认的内容侧画像，并把已有觉察/洞察写入画像快照后再提交，避免摘要接口读取到空快照。MBTI/现实身份保留未知语义。
 - 五层灵魂模型（事件→偏好→觉察→洞察→灵魂）
 - Phase 2 cognition prompt 边界由 `CognitionEventViewV1` + `CognitionProfileViewV1` 提供 provider-independent 的确定性投影，并按 stable soul / preference → volatile cognition → current batch 排序。生产配置逐 task 选择视图：只有真实 SenseTime gate 通过的 `soul.awareness_confusions` 默认 compact-v1；Preference、Insight 与 plain `soul.awareness` 均保持 legacy，不能由一个聚合开关整体切换。
 - Phase 3 继续保持 legacy/compact 选择不变，只收紧 analyzer 送入 builder 的请求集合：Preference 自动预算路径从每个剩余 offset 按独立 chunk 的真实 prompt shape 二分找最大前缀，偏斜的大事件仍交给既有单条 compact recovery。Insight 的 Phase 3 固定 `latest-20 ∪ latest-20 judged/validated` 视图现保留为异常回退/历史 control；生产视图最多 40 条，按 latest-8、judged-8、当前 awareness/profile 相关性 16、重要性/多样性 8 四路选择并加权补位。同状态近重复只竞争 prompt 槽，不同确认状态分别保留，随后仍与完整 durable hypothesis ledger 合并并保存。因此 token 优化边界位于 `CognitionCycle/PreferenceAnalyzer → prompts.py` 之间，不改变 MemoryManager 的持久层、system/output contract、max-token ceiling 或 provider 路由。
@@ -847,6 +847,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
+Initial free profile: source-checked choices → tentative layers → profile commit barrier
+Init awareness / insights → profile snapshot → summary API / CLI / Markdown
 Free tool bridge → tagged actions / identified results; ordinary JSON stays data
 Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
 Wrapped runtime cause → bounded durable retry only before output or tool execution

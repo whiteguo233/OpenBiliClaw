@@ -171,6 +171,24 @@ async def run(
                 report["preference_seconds"] = round(time.monotonic() - started, 2)
                 profile = await context.soul_engine.build_initial_profile(rows)
             assert context.soul_engine.is_profile_ready() and profile.preferences.interests
+            report["profile_sections"] = {
+                name: len(getattr(profile, name))
+                for name in (
+                    "core_traits",
+                    "deep_needs",
+                    "values",
+                    "motivational_drivers",
+                    "cognitive_style",
+                    "current_phase",
+                )
+            }
+            assert all(report["profile_sections"].values()), report["profile_sections"]
+            assert all(
+                "待确认" in item
+                for name in ("core_traits", "deep_needs", "values", "motivational_drivers")
+                for item in getattr(profile, name)
+            )
+            assert profile.life_stage == "暂无明确自述" and not profile.core.mbti.type
             assert report["progress"][-1]["done"] == batches
             if inject_first_timeout:
                 injected = [c for c in report["calls"] if "injected_timeout_seconds" in c]

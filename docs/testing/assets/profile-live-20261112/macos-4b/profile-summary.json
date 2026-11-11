@@ -1,0 +1,386 @@
+{
+  "initialized": true,
+  "personality_portrait": "从你关注的内容看，你可能更喜欢重视画面与表达细节的内容、讲清原理的解释、按步骤展开的内容。下面的特质、需求与价值偏好是内容侧的初步推测，仍待你确认；你的实际生活经历和个性还需要听你自己说。",
+  "core_traits": [
+    "在内容选择上可能留意视觉表达（内容侧初步推测，待确认）",
+    "在内容选择上可能偏爱追根问底（内容侧初步推测，待确认）",
+    "在内容选择上可能偏爱清晰有序的展开（内容侧初步推测，待确认）"
+  ],
+  "deep_needs": [
+    "可能希望信息也有舒服的呈现方式（内容侧初步推测，待确认）",
+    "可能希望解释能回答为什么（内容侧初步推测，待确认）",
+    "可能希望说明提供可跟随的步骤（内容侧初步推测，待确认）"
+  ],
+  "mbti": {
+    "type": "",
+    "dimensions": {},
+    "confidence": 0.0
+  },
+  "values": [
+    "在内容里可能看重画面与表达的质感（内容侧初步推测，待确认）",
+    "在内容里可能看重有依据的解释（内容侧初步推测，待确认）",
+    "在内容里可能看重方法的可操作性（内容侧初步推测，待确认）"
+  ],
+  "motivational_drivers": [
+    "可能想从视觉细节中获得感受（内容侧初步推测，待确认）",
+    "可能想把零散信息连成理解（内容侧初步推测，待确认）",
+    "可能想了解一件事如何一步步完成（内容侧初步推测，待确认）"
+  ],
+  "likes": [
+    {
+      "domain": "其他",
+      "weight": 0.95,
+      "specifics": [
+        {
+          "name": "AI Agent 开发",
+          "weight": 0.95
+        },
+        {
+          "name": "人工智能",
+          "weight": 0.95
+        },
+        {
+          "name": "Python项目",
+          "weight": 0.95
+        },
+        {
+          "name": "开源工具",
+          "weight": 0.9
+        },
+        {
+          "name": "JavaScript项目",
+          "weight": 0.9
+        },
+        {
+          "name": "Open Source生态",
+          "weight": 0.9
+        },
+        {
+          "name": "视频生成",
+          "weight": 0.85
+        },
+        {
+          "name": "编程",
+          "weight": 0.85
+        },
+        {
+          "name": "PDF处理工具",
+          "weight": 0.85
+        },
+        {
+          "name": "网络安全与渗透测试",
+          "weight": 0.8
+        },
+        {
+          "name": "TypeScript开发",
+          "weight": 0.8
+        },
+        {
+          "name": "自动化脚本",
+          "weight": 0.75
+        },
+        {
+          "name": "GitHub 开源生态",
+          "weight": 0.75
+        },
+        {
+          "name": "数据可视化",
+          "weight": 0.7
+        },
+        {
+          "name": "视频处理",
+          "weight": 0.7
+        },
+        {
+          "name": "3D 地理信息",
+          "weight": 0.65
+        },
+        {
+          "name": "AI 工具链",
+          "weight": 0.6
+        },
+        {
+          "name": "代码库管理",
+          "weight": 0.6
+        },
+        {
+          "name": "MCP 协议",
+          "weight": 0.55
+        },
+        {
+          "name": "AIGC",
+          "weight": 0.45
+        },
+        {
+          "name": "自然语言处理",
+          "weight": 0.4
+        },
+        {
+          "name": "图像处理",
+          "weight": 0.35
+        }
+      ]
+    },
+    {
+      "domain": "科技",
+      "weight": 0.95,
+      "specifics": [
+        {
+          "name": "开源工具",
+          "weight": 0.95
+        },
+        {
+          "name": "AI Agent与智能体",
+          "weight": 0.95
+        },
+        {
+          "name": "DeepSeek相关工具",
+          "weight": 0.9
+        },
+        {
+          "name": "人工智能",
+          "weight": 0.9
+        },
+        {
+          "name": "自动化工作流",
+          "weight": 0.85
+        },
+        {
+          "name": "编程工具",
+          "weight": 0.85
+        },
+        {
+          "name": "AI Agent",
+          "weight": 0.85
+        },
+        {
+          "name": "本地化应用",
+          "weight": 0.8
+        },
+        {
+          "name": "数据处理",
+          "weight": 0.8
+        },
+        {
+          "name": "软件工程",
+          "weight": 0.8
+        },
+        {
+          "name": "本地优先应用",
+          "weight": 0.75
+        },
+        {
+          "name": "Web 爬虫",
+          "weight": 0.7
+        },
+        {
+          "name": "大模型应用",
+          "weight": 0.7
+        },
+        {
+          "name": "自动化编程",
+          "weight": 0.65
+        },
+        {
+          "name": "软件开发",
+          "weight": 0.3
+        },
+        {
+          "name": "前端开发",
+          "weight": 0.25
+        },
+        {
+          "name": "后端开发",
+          "weight": 0.25
+        },
+        {
+          "name": "数据库",
+          "weight": 0.2
+        },
+        {
+          "name": "云计算",
+          "weight": 0.05
+        },
+        {
+          "name": "网络安全",
+          "weight": 0.05
+        }
+      ]
+    },
+    {
+      "domain": "知识",
+      "weight": 0.9,
+      "specifics": [
+        {
+          "name": "机器学习",
+          "weight": 0.9
+        },
+        {
+          "name": "软件架构与系统设计",
+          "weight": 0.85
+        },
+        {
+          "name": "系统设计与可视化",
+          "weight": 0.75
+        },
+        {
+          "name": "Prompt Engineering",
+          "weight": 0.7
+        },
+        {
+          "name": "深度学习",
+          "weight": 0.1
+        }
+      ]
+    },
+    {
+      "domain": "游戏",
+      "weight": 0.9,
+      "specifics": [
+        {
+          "name": "编程工具",
+          "weight": 0.9
+        }
+      ]
+    }
+  ],
+  "dislikes": [],
+  "favorite_up_users": [
+    "0xsline",
+    "AgriciDaniel",
+    "Anil-matcha",
+    "BigDawnGhost",
+    "CZM1998",
+    "Davipar",
+    "Evil0ctal",
+    "THU-MAIC",
+    "TheoLeeCJ",
+    "Tiger3807861189",
+    "alchaincyf",
+    "apache",
+    "awesome-dsh-plugin",
+    "bespokelabsai",
+    "bggRGjQaUbCoE",
+    "bilawalsidhu",
+    "boykopovar",
+    "cathrynlavery",
+    "cloudflare",
+    "cordiverse",
+    "featherless-ai",
+    "firecrawl",
+    "freestylefly",
+    "gepa-ai",
+    "hesitation-snow",
+    "hr98w",
+    "jay3-yy",
+    "kaifcodec",
+    "ktwu01",
+    "liguobao",
+    "liuzhao1225",
+    "milind-soni",
+    "morluto",
+    "mrmps",
+    "pollen-robotics",
+    "storytold",
+    "tt-a1i",
+    "xmanrui",
+    "yjh051108",
+    "zhengkid"
+  ],
+  "total_likes": 4,
+  "total_dislikes": 0,
+  "total_favorite_up_users": 40,
+  "life_stage": "暂无明确自述",
+  "current_phase": "从已有内容选择看，你可能更关注重视画面与表达细节的内容、讲清原理的解释、按步骤展开的内容；这是内容侧的初步观察，待确认，不代表现实生活阶段或兴趣变化。",
+  "cognitive_style": [
+    "重视画面与表达细节的内容",
+    "讲清原理的解释",
+    "按步骤展开的内容"
+  ],
+  "style": {
+    "preferred_duration": "long",
+    "preferred_pace": "moderate",
+    "quality_sensitivity": 0.9,
+    "humor_preference": 0.2,
+    "depth_preference": 0.95
+  },
+  "context": {
+    "weekday_patterns": "工作日关注 AI 工具链与编程框架",
+    "weekend_patterns": "周末深入探索开源项目源码与架构",
+    "time_of_day_patterns": "无明确时段规律，行为集中在接入后",
+    "session_type": "深度钻研型"
+  },
+  "exploration_openness": 0.85,
+  "speculative_interests": [],
+  "speculative_avoidances": [],
+  "recent_cognition_updates": [],
+  "has_more_cognition_updates": false,
+  "next_cognition_cursor": "",
+  "active_insights": [
+    {
+      "hypothesis": "用户可能正在构建或深度研究基于 AI Agent 的自动化工作流",
+      "evidence": [
+        "收藏了多个涉及 DeepSeek 与 Agent 技能的项目（J-Space-Cognition-Suite, dsh_cot_gw_dyn）",
+        "关注了 Cordis 等连接不同 AI 模型的中间件工具",
+        "对 GitHub 开源项目的高关注度"
+      ],
+      "confidence": 0.78,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能正在构建或优化本地的 AI 视频处理 pipeline",
+      "evidence": [
+        "多个视频生成、图像转换相关仓库同时被收藏",
+        "包含 FastAPI、MCP 等工程化关键词"
+      ],
+      "confidence": 0.72,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能正在构建或评估一套基于 DeepStack/LLM 的智能体工作流",
+      "evidence": [
+        "大量收藏与 DeepSeek/Harness 直接相关的插件与工具",
+        "同时关注系统架构类项目（如 archify）以解决工程化落地问题"
+      ],
+      "confidence": 0.88,
+      "validated": false,
+      "created_at": "2026-11-11"
+    }
+  ],
+  "recent_awareness": [
+    {
+      "date": "init",
+      "observation": "收藏的仓库高度集中在 AI Agent 和自动化领域",
+      "trend": "从通用编程工具向垂直领域的智能体应用迁移",
+      "emotion_guess": "对能提升工作效率的新技术组合充满期待"
+    },
+    {
+      "date": "init",
+      "observation": "用户收藏夹高度集中在 GitHub 开源项目，涵盖多个 AI Agent 框架",
+      "trend": "从通用编程工具向垂直领域的 AI 自动化解决方案聚焦",
+      "emotion_guess": "对前沿技术落地实现的强烈兴趣"
+    },
+    {
+      "date": "init",
+      "observation": "收藏内容高度集中在 GitHub 开源项目，且多涉及 AI 视频生成工具链",
+      "trend": "从单一功能点向完整工作流集成探索",
+      "emotion_guess": "对自主可控的技术方案有强烈偏好"
+    },
+    {
+      "date": "init",
+      "observation": "用户收藏行为高度集中在 GitHub 平台的开源仓库",
+      "trend": "从单一项目收藏转向对某一特定领域（AI Agent/DeepStack）的体系化收集",
+      "emotion_guess": "强烈的技术掌控欲与对前沿工具链的即时验证需求"
+    }
+  ],
+  "overrides": {
+    "version": 1,
+    "updated_at": "",
+    "text_pins": {},
+    "scalar_pins": {},
+    "list_edits": {},
+    "interest_edits": {}
+  }
+}

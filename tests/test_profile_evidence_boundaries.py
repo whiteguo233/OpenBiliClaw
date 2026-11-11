@@ -173,15 +173,20 @@ async def test_passive_free_profile_does_not_persist_unsupported_identity_or_tra
         active_insights=[],
     )
     assert profile.life_stage == "暂无明确自述"
-    assert profile.current_phase == "暂无明确自述"
-    assert not profile.core_traits and not profile.deep_needs
-    assert not profile.values and not profile.motivational_drivers
+    assert "按步骤展开" in profile.current_phase
+    assert "待确认" in profile.current_phase
+    for field in ("core_traits", "deep_needs", "values", "motivational_drivers"):
+        assert getattr(profile, field)
+        assert all("待确认" in item for item in getattr(profile, field))
+    assert "你正在阳台种菜" not in profile.current_phase
+    assert "沉得住气" not in profile.core_traits
+    assert "知识体系构建需求" not in profile.motivational_drivers
     assert "实验对象" not in profile.personality_portrait
     assert "掌控欲" not in profile.personality_portrait
     assert "按步骤展开" in profile.personality_portrait
     assert profile.cognitive_style == ["按步骤展开的内容"]
-    assert profile._raw_mbti["dimensions"]["EI"]["strength"] == 0.5
-    assert profile._raw_mbti["confidence"] <= 0.55
+    assert not profile._raw_mbti["type"]
+    assert profile._raw_mbti["confidence"] == 0
 
 
 async def test_grounded_short_portrait_does_not_need_invented_padding() -> None:

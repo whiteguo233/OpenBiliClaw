@@ -1,5 +1,15 @@
 # Guided Init Module
 
+## 免费模型初步画像校验（2026-11-11，待发布）
+
+| 已实现功能 | 行为 |
+| --- | --- |
+| 阶段 3 完整性 | `run_guided_init()` 与 CLI 共用的 `build_initial_profile()` 在落盘前校验免费模型的信息偏好来源；有效输出生成带「待确认」的内容侧画像层，避免初始化成功后核心/价值字段全空。 |
+| 已有认知不丢失 | 阶段 3 将阶段 2 已产生的有效觉察/洞察一同写入画像快照，摘要接口初始化后即可展示，不必等下次认知周期。未生成时不补造记录。 |
+| 无依据时失败 | 有内容标题但所有信息偏好均无效时，紧凑重试一次并保留小批来源，持续失败使用既有 `profile_failed` 路径；不覆盖旧画像，也不提前启动阶段 4。 |
+
+公开命令、HTTP 接口、配置和四阶段顺序不变。完整性不意味着强填 MBTI、现实身份、负面兴趣或尚未产生的主动试探；这些字段的证据边界见 [Soul](soul.md#免费模型初始画像完整性2026-11-11待发布)。
+
 ## 初始化表单收起平台选项（2026-11-09，待发布）
 
 | 已实现功能 | 行为 |
@@ -186,3 +196,11 @@ Instagram 是显式 opt-in、`init-only` 的浏览器来源。只有用户选择
 - `tests/test_web_guided_init_e2e.py` — Chromium 中覆盖 `initialized=true && running=true` 不提前完成、双真窗口结束后桌面 runtime 非门控补水、三端同语义进度、setup / desktop 取消后可重试。
 - `tests/test_web_guided_init_e2e.py` — Playwright 驱动真实 `/setup/` 与 `/web` 页面，stub 外部 HTTP 响应来覆盖浏览器交互：成功进度、前置失败、启动冲突、终态重试、runtime-stream 静默 watchdog、普通完成直接进入应用、部分完成可见提示，以及 PC Web 与插件一致的未初始化入口判断（已有推荐 / 候选池信号时不再弹引导）；v0.3.168+ 直接断言超时原因、Base URL / 模型设置恢复动作、重试 / 设置入口、`role=alert`，以及 discovery 超时的部分完成 / 后台补池提示。CI 的 `web-guided-init-e2e` job 安装 `[browser]` extra + Chromium 后单独运行。
 - 2026-07-15 已用隔离数据目录、真 B 站登录和真 LLM 完成 GUI init：采集 1100 条信号、6 个偏好批次、完整画像落盘、发现 20 条候选并生成首轮 canonical 推荐，最终四阶段全 `ok`；同轮还验证了阶段 4 双真窗口、进程中断后的 `interrupted` 回收 / 可重试，以及完成后页面状态读取不阻塞。扩展真实完成 Cookie 同步；popup 视觉态由扩展测试覆盖（浏览器自动化安全策略不允许直接打开 `chrome-extension://` 页面）。
+
+## 两免费模型真实端到端验收（2026-11-12）
+
+`scripts/profile_initialization_live.py --root <全新目录> --model <批准模型>` 用生产后端、正式验签 SDK、真实公开 GitHub 收藏和实际浏览器初始化按钮运行四阶段；验证画像区块、模型用量、重启持久化及桌面/手机/CLI。没有替换响应或注入事件。`--platform bangumi --username <公开账号>` 可显式选择另一公开来源。仅归档白名单证据，不上传配置、SDK、数据库或服务器原始日志。
+
+`.github/workflows/profile-initialization-live.yml` 通过手动 `workflow_dispatch` 在独立 Linux / macOS 运行器对两个模型分别执行；合入后移除临时修复分支的 push 触发。macOS 使用该运行器独立的加密临时钥匙串。最终四组均通过，核心四区块各 3 项，觉察/洞察均非空，浏览器、CLI 与重启持久化检查通过；每组采集 40 条真实公开 Star 并保留来源上限警告。[完整证据](../testing/2026-11-12-profile-live-e2e.md)。
+
+验收脚本保留配置的 40 条公开样本上限带来的来源 `partial` 警告；仅当已入库 40 条、唯一警告为该来源的采集 partial 且阶段 2/3/4 全部为 `ok` 时接受这一预期状态，其他 partial、短采集、模型/发现失败仍失败。失败时也归档实际用量计数。Linux 首轮浏览器依赖安装遇到 Azure APT 镜像 DNS 故障，后续使用运行器预装的真实 Chrome，避免重复下载浏览器依赖。

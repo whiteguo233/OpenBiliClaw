@@ -1,0 +1,16 @@
+{
+  "model": "Qwen/Qwen3-8B",
+  "event_count": 12,
+  "calls": [],
+  "progress": [],
+  "planned_batches": 1,
+  "deadlines": {
+    "idle": 4290.0,
+    "absolute": 4290.0
+  },
+  "ok": false,
+  "error_type": "PreferenceAnalysisError",
+  "total_seconds": 0.08,
+  "verification_status": "BLOCKED_BEFORE_UPSTREAM",
+  "startup_diagnostic": "runtime handshake failed; macOS Keychain store status -25293 was confirmed on the 8B runtime startup probe"
+}

@@ -1,0 +1,602 @@
+{
+  "initialized": true,
+  "personality_portrait": "从你关注的内容看，你可能更喜欢讲清原理的解释、重视画面与表达细节的内容、介绍新概念与不同视角的内容。下面的特质、需求与价值偏好是内容侧的初步推测，仍待你确认；你的实际生活经历和个性还需要听你自己说。",
+  "core_traits": [
+    "在内容选择上可能偏爱追根问底（内容侧初步推测，待确认）",
+    "在内容选择上可能留意视觉表达（内容侧初步推测，待确认）",
+    "在内容选择上可能愿意接触新视角（内容侧初步推测，待确认）"
+  ],
+  "deep_needs": [
+    "可能希望解释能回答为什么（内容侧初步推测，待确认）",
+    "可能希望信息也有舒服的呈现方式（内容侧初步推测，待确认）",
+    "可能希望持续接触不熟悉的想法（内容侧初步推测，待确认）"
+  ],
+  "mbti": {
+    "type": "",
+    "dimensions": {},
+    "confidence": 0.0
+  },
+  "values": [
+    "在内容里可能看重有依据的解释（内容侧初步推测，待确认）",
+    "在内容里可能看重画面与表达的质感（内容侧初步推测，待确认）",
+    "在内容里可能看重视角的多样性（内容侧初步推测，待确认）"
+  ],
+  "motivational_drivers": [
+    "可能想把零散信息连成理解（内容侧初步推测，待确认）",
+    "可能想从视觉细节中获得感受（内容侧初步推测，待确认）",
+    "可能想扩展已有的理解边界（内容侧初步推测，待确认）"
+  ],
+  "likes": [
+    {
+      "domain": "科技",
+      "weight": 0.95,
+      "specifics": [
+        {
+          "name": "ai-agent",
+          "weight": 0.95
+        },
+        {
+          "name": "人工智能工具",
+          "weight": 0.95
+        },
+        {
+          "name": "AI Agent 开发",
+          "weight": 0.95
+        },
+        {
+          "name": "ai-toolchain",
+          "weight": 0.9
+        },
+        {
+          "name": "open-source",
+          "weight": 0.9
+        },
+        {
+          "name": "开发者工具",
+          "weight": 0.88
+        },
+        {
+          "name": "自动化工作流",
+          "weight": 0.85
+        },
+        {
+          "name": "ai-benchmark",
+          "weight": 0.75
+        },
+        {
+          "name": "深度搜索技术",
+          "weight": 0.75
+        },
+        {
+          "name": "ai-video-editor",
+          "weight": 0.7
+        },
+        {
+          "name": "Node.js 生态",
+          "weight": 0.7
+        },
+        {
+          "name": "大模型应用",
+          "weight": 0.7
+        },
+        {
+          "name": "ai-dubbing",
+          "weight": 0.65
+        },
+        {
+          "name": "OCR 与文档处理",
+          "weight": 0.65
+        },
+        {
+          "name": "imagegeneration",
+          "weight": 0.55
+        },
+        {
+          "name": "本地优先应用",
+          "weight": 0.55
+        },
+        {
+          "name": "geospatial-intelligence",
+          "weight": 0.5
+        },
+        {
+          "name": "satellite-tracking",
+          "weight": 0.45
+        },
+        {
+          "name": "local-first",
+          "weight": 0.4
+        },
+        {
+          "name": "ai-agents",
+          "weight": 0.35
+        },
+        {
+          "name": "text-based-video-editing",
+          "weight": 0.35
+        },
+        {
+          "name": "ai-seo",
+          "weight": 0.3
+        },
+        {
+          "name": "ai",
+          "weight": 0.2
+        }
+      ]
+    },
+    {
+      "domain": "其他",
+      "weight": 0.95,
+      "specifics": [
+        {
+          "name": "自动化脚本",
+          "weight": 0.95
+        },
+        {
+          "name": "gepa-ai/gepa",
+          "weight": 0.9
+        },
+        {
+          "name": "CZM1998/dsh_cot_gw_dyn",
+          "weight": 0.9
+        },
+        {
+          "name": "jay3-yy/BiliPai",
+          "weight": 0.9
+        },
+        {
+          "name": "bggRGjQaUbCoE/PiliPlus",
+          "weight": 0.9
+        },
+        {
+          "name": "编程工具",
+          "weight": 0.9
+        },
+        {
+          "name": "Python 编程",
+          "weight": 0.85
+        },
+        {
+          "name": "工作流",
+          "weight": 0.8
+        },
+        {
+          "name": "JavaScript 编程",
+          "weight": 0.8
+        },
+        {
+          "name": "开源项目",
+          "weight": 0.8
+        },
+        {
+          "name": "工作流自动化",
+          "weight": 0.78
+        },
+        {
+          "name": "数据采集",
+          "weight": 0.75
+        },
+        {
+          "name": "图像生成",
+          "weight": 0.65
+        },
+        {
+          "name": "3d-graphics",
+          "weight": 0.6
+        },
+        {
+          "name": "开发者工具",
+          "weight": 0.6
+        },
+        {
+          "name": "Web 开发",
+          "weight": 0.55
+        },
+        {
+          "name": "软件重构",
+          "weight": 0.5
+        },
+        {
+          "name": "图表可视化",
+          "weight": 0.5
+        }
+      ]
+    },
+    {
+      "domain": "知识",
+      "weight": 0.92,
+      "specifics": [
+        {
+          "name": "大模型应用",
+          "weight": 0.92
+        },
+        {
+          "name": "视频生成",
+          "weight": 0.9
+        },
+        {
+          "name": "AI 创作",
+          "weight": 0.85
+        },
+        {
+          "name": "系统架构设计",
+          "weight": 0.8
+        },
+        {
+          "name": "本地部署",
+          "weight": 0.7
+        },
+        {
+          "name": "Prompt Engineering",
+          "weight": 0.7
+        },
+        {
+          "name": "模型集成",
+          "weight": 0.65
+        },
+        {
+          "name": "data-visualization",
+          "weight": 0.6
+        },
+        {
+          "name": "网络安全工具",
+          "weight": 0.6
+        }
+      ]
+    },
+    {
+      "domain": "资讯",
+      "weight": 0.45,
+      "specifics": [
+        {
+          "name": "osint",
+          "weight": 0.45
+        }
+      ]
+    },
+    {
+      "domain": "财经",
+      "weight": 0.25,
+      "specifics": [
+        {
+          "name": "marketing-automation",
+          "weight": 0.25
+        }
+      ]
+    }
+  ],
+  "dislikes": [],
+  "favorite_up_users": [
+    "0xsline",
+    "AgriciDaniel",
+    "Anil-matcha",
+    "BigDawnGhost",
+    "CZM1998",
+    "Davipar",
+    "Evil0ctal",
+    "THU-MAIC",
+    "TheoLeeCJ",
+    "Tiger3807861189",
+    "alchaincyf",
+    "apache",
+    "awesome-dsh-plugin",
+    "bespokelabsai",
+    "bggRGjQaUbCoE",
+    "bilawalsidhu",
+    "boykopovar",
+    "cathrynlavery",
+    "cloudflare",
+    "cordiverse",
+    "featherless-ai",
+    "firecrawl",
+    "freestylefly",
+    "gepa-ai",
+    "hesitation-snow",
+    "hr98w",
+    "jay3-yy",
+    "kaifcodec",
+    "ktwu01",
+    "liguobao",
+    "liuzhao1225",
+    "milind-soni",
+    "morluto",
+    "mrmps",
+    "pollen-robotics",
+    "storytold",
+    "tt-a1i",
+    "xmanrui",
+    "yjh051108",
+    "zhengkid"
+  ],
+  "total_likes": 5,
+  "total_dislikes": 0,
+  "total_favorite_up_users": 40,
+  "life_stage": "暂无明确自述",
+  "current_phase": "从已有内容选择看，你可能更关注讲清原理的解释、重视画面与表达细节的内容、介绍新概念与不同视角的内容；这是内容侧的初步观察，待确认，不代表现实生活阶段或兴趣变化。",
+  "cognitive_style": [
+    "讲清原理的解释",
+    "重视画面与表达细节的内容",
+    "介绍新概念与不同视角的内容"
+  ],
+  "style": {
+    "preferred_duration": "long",
+    "preferred_pace": "moderate",
+    "quality_sensitivity": 0.9,
+    "humor_preference": 0.2,
+    "depth_preference": 0.9
+  },
+  "context": {
+    "weekday_patterns": "在工作日关注与 AI  Agent 相关的工具链和代码库",
+    "weekend_patterns": "无特定周末模式数据",
+    "time_of_day_patterns": "无明确时间段偏好",
+    "session_type": "工具与源码研究型"
+  },
+  "exploration_openness": 0.5,
+  "speculative_interests": [
+    {
+      "domain": "城市漫步与街头摄影",
+      "reason": "既然喜欢探索型内容，那不如试试把镜头对准身边的路。不是去远方，就是发现城市里那些还没被拍透的角落和光影。",
+      "confidence": 0.52,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "城市角落扫街",
+          "confirmation_count": 0
+        },
+        {
+          "name": "路边摊烟火气记录",
+          "confirmation_count": 0
+        },
+        {
+          "name": "老城区街道漫步",
+          "confirmation_count": 0
+        },
+        {
+          "name": "光影艺术日常",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "慢节奏生活改造",
+      "reason": "喜欢动手折腾的人，通常也享受那种‘把家里变好’的成就感。试试那些不需要大工程，但能瞬间提升居住质感的小改造。",
+      "confidence": 0.55,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "租房软装低成本改造",
+          "confirmation_count": 0
+        },
+        {
+          "name": "旧物改造成家具",
+          "confirmation_count": 0
+        },
+        {
+          "name": "阳台绿植布置",
+          "confirmation_count": 0
+        },
+        {
+          "name": "房间氛围灯带布置",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "复古机械修复",
+      "reason": "喜欢拆解和修复的人，通常对机械结构有天然兴趣。看看那些把旧物修好的过程，既有技术含量又有复古情怀。",
+      "confidence": 0.51,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "老式齿轮修复",
+          "confirmation_count": 0
+        },
+        {
+          "name": "机械表拆解维修",
+          "confirmation_count": 0
+        },
+        {
+          "name": "收音机改装",
+          "confirmation_count": 0
+        },
+        {
+          "name": "复古玩具修复",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "极限运动安全与技巧",
+      "reason": "如果之前看过一些冒险类内容，那看看那些注重安全和技巧的极限运动，既能满足刺激感，又能学到真东西，比看纯炫技更硬核。",
+      "confidence": 0.53,
+      "probe_mode": "near",
+      "challenge": false,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "滑板技巧教学",
+          "confirmation_count": 0
+        },
+        {
+          "name": "攀岩安全绳系法",
+          "confirmation_count": 0
+        },
+        {
+          "name": "极限运动装备测评",
+          "confirmation_count": 0
+        },
+        {
+          "name": "户外探险安全指南",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "街头艺人表演实录",
+      "reason": "既然喜欢看人，不如去看看那些在街头靠技艺吃饭的人。看他们的表演和背后的故事，比看纯娱乐节目更有厚度。",
+      "confidence": 0.49,
+      "probe_mode": "lateral",
+      "challenge": true,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "街头魔术实录",
+          "confirmation_count": 0
+        },
+        {
+          "name": "街头乐器演奏",
+          "confirmation_count": 0
+        },
+        {
+          "name": "街头画家创作",
+          "confirmation_count": 0
+        },
+        {
+          "name": "街头表演者访谈",
+          "confirmation_count": 0
+        }
+      ]
+    },
+    {
+      "domain": "赛博朋克风格设计",
+      "reason": "喜欢未来感或者科技感的人，试试看看那些把科技元素融入日常设计的东西，既有视觉冲击力又有故事感。",
+      "confidence": 0.44,
+      "probe_mode": "bridge",
+      "challenge": true,
+      "confirmation_count": 0,
+      "confirmation_threshold": 3,
+      "status": "active",
+      "specifics": [
+        {
+          "name": "赛博朋克服装搭配",
+          "confirmation_count": 0
+        },
+        {
+          "name": "未来科技感家居设计",
+          "confirmation_count": 0
+        },
+        {
+          "name": "机械义肢艺术",
+          "confirmation_count": 0
+        },
+        {
+          "name": "赛博朋克概念设计图",
+          "confirmation_count": 0
+        }
+      ]
+    }
+  ],
+  "speculative_avoidances": [],
+  "recent_cognition_updates": [],
+  "has_more_cognition_updates": false,
+  "next_cognition_cursor": "",
+  "active_insights": [
+    {
+      "hypothesis": "用户可能正在尝试搭建或优化自己的本地或云端 AI Agent 系统",
+      "evidence": [
+        "收藏了多个与 DSH、cordis 等相关的 Agent 工具包",
+        "项目主题集中在代码实现和工程化"
+      ],
+      "confidence": 0.82,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能正在构建一套个人本地的 AI 视频创作流水线",
+      "evidence": [
+        "大量收藏涉及视频生成、本地部署、模型集成的工具",
+        "工具类型涵盖从数据采集到最终渲染的全链路",
+        "这些工具多为开源私有化部署方案"
+      ],
+      "confidence": 0.78,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户收藏的这几个仓库很可能都是其正在构建或研究的项目核心组件，而非单纯的学习素材",
+      "evidence": [
+        "gepa-ai涉及LLM Agent评估框架（深度技术栈）",
+        "dsh_cot_gw_dyn涉及动态规划算法实现（核心逻辑）",
+        "BiliPai和PiliPlus均为跨平台UI框架（工程落地）"
+      ],
+      "confidence": 0.72,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户可能正在构建或维护一套基于大模型的自动化工作流",
+      "evidence": [
+        "大量收集涉及 deepseek-harness、agent-runtime 及 workflow-automation 标签的仓库"
+      ],
+      "confidence": 0.75,
+      "validated": false,
+      "created_at": "2026-11-11"
+    },
+    {
+      "hypothesis": "用户对开源生态中的高质量、高星项目有极高筛选标准",
+      "evidence": [
+        "选择对象均为 GitHub 上高星且更新活跃的知名项目"
+      ],
+      "confidence": 0.8,
+      "validated": false,
+      "created_at": "2026-11-11"
+    }
+  ],
+  "recent_awareness": [
+    {
+      "date": "init",
+      "observation": "用户集中收藏了多个 AI Agent 和开源工具项目",
+      "trend": "从泛 AI 概念向具体落地工具链转移",
+      "emotion_guess": "对构建可控技术栈有明确规划"
+    },
+    {
+      "date": "init",
+      "observation": "用户多次收藏涉及 DeepSeek 和 Agent 开发的具体开源项目",
+      "trend": "从泛泛了解转向收集可复用的代码框架",
+      "emotion_guess": "寻求构建高效 AI 工作流的具体方案"
+    },
+    {
+      "date": "init",
+      "observation": "高度集中在视频生成和 AI 自动化工具领域",
+      "trend": "从单一工具发现转向跨工具工作流整合",
+      "emotion_guess": "追求技术落地与效率提升"
+    },
+    {
+      "date": "init",
+      "observation": "用户连续收藏了多个GitHub仓库，涵盖AI Agent、动态规划、Flutter开发和跨平台工具",
+      "trend": "从单一领域向多技术栈的底层实现广度延伸",
+      "emotion_guess": "对构建工具链有明确的技术掌控需求"
+    },
+    {
+      "date": "init",
+      "observation": "收藏行为高度聚焦于 AI Agent 与大模型应用工具库",
+      "trend": "从通用工具向垂直领域的深度解决方案演进",
+      "emotion_guess": "强烈的构建欲与对新技术落地的务实态度"
+    }
+  ],
+  "overrides": {
+    "version": 1,
+    "updated_at": "",
+    "text_pins": {},
+    "scalar_pins": {},
+    "list_edits": {},
+    "interest_edits": {}
+  }
+}

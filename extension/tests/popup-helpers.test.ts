@@ -1053,7 +1053,7 @@ test("getPopupState distinguishes offline uninitialized refreshing empty and rea
     }),
     {
       kind: "empty",
-      message: "这会儿还没新东西，先运行 init、discover 或 recommend",
+      message: "暂时没有新候选，后台会继续补货。",
       items: [],
     },
   );
@@ -1066,7 +1066,7 @@ test("getPopupState distinguishes offline uninitialized refreshing empty and rea
     }),
     {
       kind: "empty",
-      message: "这会儿还没新东西，先运行 init、discover 或 recommend",
+      message: "暂时没有新候选，后台会继续补货。",
       items: [],
     },
   );
@@ -1232,7 +1232,7 @@ test("getPopupState does not show init prompt while refresh or pool signals are 
     }),
     {
       kind: "empty",
-      message: "这会儿还没新东西，先运行 init、discover 或 recommend",
+      message: "暂时没有新候选，后台会继续补货。",
       items: [],
     },
   );

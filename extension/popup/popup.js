@@ -4944,7 +4944,7 @@ function renderMBTI(container, mbti) {
   if (!mbti || !mbti.type) {
     const fb = document.createElement("p");
     fb.className = "mbti-fallback";
-    fb.textContent = "MBTI 还没推断出来，再多看一阵。";
+    fb.textContent = "仅凭观看和收藏无法可靠判断 MBTI，可在聊一聊中补充自述或测试结果。";
     container.append(fb);
     return;
   }

@@ -308,6 +308,8 @@ Setup / popup / desktop / mobile / CLI → ordinary config API
 Protected adapter → verified signed-task IPC → Rust pool → SiliconFlow HTTPS / SSE
   OR configured HTTPS relay → device proof / short session → server Rust pool
 Results → existing schema, source-evidence and temporal validation → normal business flow
+Initial free profile: source-checked choices → tentative layers → profile commit barrier
+Init awareness / insights → profile snapshot → summary API / CLI / Markdown
 Free tool bridge → tagged actions / identified results; ordinary JSON stays data
 Agent replies → tool-text guard + explicit-call evidence → SSE / saved reply
 Wrapped runtime cause → bounded durable retry only before output or tool execution
@@ -704,6 +706,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 引导初始化：来源 + 前置清单 -> /api/init；微博经 heartbeat/uid，GitHub 经 username/PAT 导入公开 Star │ │
+│  │ 待确认内容画像 + 已有觉察/洞察快照 -> 完整画像提交              │ │
 │  │ 完整画像提交 -> 发现/评估/表达 -> canonical ready              │ │
 │  └──────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────┤
