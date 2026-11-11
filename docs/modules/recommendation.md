@@ -367,7 +367,7 @@ count = await engine.precompute_delight_scores(
 
 普通推荐、库存与整理使用同一精确身份占位；整理事务冻结该集合，避免自身 trim/recovery 写入移动分位线。API、CLI 与 runtime 使用当前集合直接选片，避免“先读尾分、后读候选”期间消费或入池造成的过期边界。旧适配器的显式分数查询仍保留兼容入口。
 
-参考与回归证据见 [定位及验证](../verification/2026-11-11-relative-delight-selection.md)。
+参考与回归证据见 [定位及验证](../verification/2026-11-11-relative-delight-selection.md)。[真实环境验收](../verification/2026-11-11-delight-live-e2e.md) 使用当前实例副本、真实 TCP HTTP/WebSocket 和 Chrome 验证冷启动、消费、同分限额及自动页面补位；真实来源读取成功，模型新文案生成受上游 429 阻断，自动联网补货尚未判定通过。
 
 ### Recommendation
 

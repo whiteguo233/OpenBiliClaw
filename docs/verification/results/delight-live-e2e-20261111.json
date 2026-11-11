@@ -1,0 +1,285 @@
+{
+  "date": "2026-11-11",
+  "tested_revision": "e05d5c36",
+  "overall_status": "partial_upstream_blocked",
+  "scope": {
+    "real_app_factory": true,
+    "test_doubles": false,
+    "real_tcp_http_websocket": true,
+    "real_chrome": true,
+    "production_data_online_backup": true,
+    "production_recommendations_consumed": false,
+    "automatic_daemon_lifecycle": false,
+    "new_user_onboarding_tested": false
+  },
+  "full_snapshot": {
+    "eligible_before_preparation": 5,
+    "selected_before_preparation": 5,
+    "local_snapshots_prepared": 341,
+    "eligible_after_preparation": 305,
+    "selected_after_preparation": 31,
+    "http": {
+      "/api/delight/pending-batch?limit=100": {
+        "status": 200,
+        "elapsed_ms": 293.5,
+        "count": 31,
+        "scores": [
+          0.934,
+          0.91,
+          0.91,
+          0.9,
+          0.86,
+          0.84
+        ]
+      },
+      "/api/delight/pending-batch": {
+        "status": 200,
+        "elapsed_ms": 310.9,
+        "count": 20,
+        "scores": [
+          0.934,
+          0.91,
+          0.91,
+          0.9,
+          0.86,
+          0.84
+        ]
+      },
+      "/api/recommendations/platform-availability": {
+        "status": 200,
+        "elapsed_ms": 167.2,
+        "total": 274,
+        "by_platform": {
+          "bilibili": 246,
+          "douyin": 28
+        }
+      },
+      "/api/ping": {
+        "status": 200,
+        "elapsed_ms": 2.2
+      }
+    }
+  },
+  "http_and_consumption": {
+    "transport": "real TCP HTTP/WebSocket",
+    "cases": [
+      {
+        "pool_size": 0,
+        "kind": "low_scores",
+        "eligible": 0,
+        "raw": 20,
+        "expected_selected": 0,
+        "actual_selected": 0,
+        "scores": [],
+        "latency_ms": 39.9,
+        "stable_repeat": true
+      },
+      {
+        "pool_size": 1,
+        "kind": "low_scores",
+        "eligible": 1,
+        "raw": 21,
+        "expected_selected": 1,
+        "actual_selected": 1,
+        "scores": [
+          0.58
+        ],
+        "latency_ms": 35.3,
+        "stable_repeat": true
+      },
+      {
+        "pool_size": 2,
+        "kind": "low_scores",
+        "eligible": 2,
+        "raw": 22,
+        "expected_selected": 1,
+        "actual_selected": 1,
+        "scores": [
+          0.58
+        ],
+        "latency_ms": 31.3,
+        "stable_repeat": true
+      },
+      {
+        "pool_size": 10,
+        "kind": "low_scores",
+        "eligible": 10,
+        "raw": 30,
+        "expected_selected": 1,
+        "actual_selected": 1,
+        "scores": [
+          0.58,
+          0.59,
+          0.6
+        ],
+        "latency_ms": 44.5,
+        "stable_repeat": true
+      },
+      {
+        "pool_size": 11,
+        "kind": "low_scores",
+        "eligible": 11,
+        "raw": 31,
+        "expected_selected": 2,
+        "actual_selected": 2,
+        "scores": [
+          0.58,
+          0.59,
+          0.6
+        ],
+        "latency_ms": 42.4,
+        "stable_repeat": true
+      },
+      {
+        "pool_size": 160,
+        "kind": "low_scores",
+        "eligible": 160,
+        "raw": 180,
+        "expected_selected": 16,
+        "actual_selected": 16,
+        "scores": [
+          0.58,
+          0.59,
+          0.6,
+          0.62,
+          0.64,
+          0.65,
+          0.66,
+          0.68,
+          0.7,
+          0.71,
+          0.72
+        ],
+        "latency_ms": 165.0,
+        "stable_repeat": true
+      },
+      {
+        "pool_size": 20,
+        "kind": "natural_ties",
+        "eligible": 20,
+        "raw": 40,
+        "expected_selected": 2,
+        "actual_selected": 2,
+        "scores": [
+          0.72
+        ],
+        "latency_ms": 46.6,
+        "stable_repeat": true
+      }
+    ],
+    "consumption": {
+      "ack_preserves_queue": true,
+      "pending_raw_baseline": 20,
+      "raw_after_ack": 22,
+      "view_response": 200,
+      "view_db_state": {
+        "pool_status": "shown",
+        "delight_seen": 1,
+        "delight_notified": 1
+      },
+      "view_promotes_distinct_item": true,
+      "raw_after_view": 21,
+      "dismiss_response": 200,
+      "idempotent_dismiss": true,
+      "exhausted_count": 0,
+      "raw_exhausted": 20,
+      "refill_count": 1,
+      "raw_refilled": 21,
+      "events": [
+        "delight.refreshed",
+        "delight.refreshed",
+        "delight.refreshed"
+      ],
+      "refill_scope": "controlled admission of unused real row; automatic source replenishment not exercised"
+    },
+    "concurrent_ping_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "ok": true
+  },
+  "ordinary_reservation_and_push": {
+    "eligible": 20,
+    "selected": 2,
+    "ordinary_available": 18,
+    "trigger_http_status": 200,
+    "trigger_ws_distinct_count": 2,
+    "ordinary_http_status": 200,
+    "ordinary_returned": 10,
+    "ordinary_excludes_reserved_identities": true,
+    "invalid_action_status": 422
+  },
+  "real_source": {
+    "ok": true,
+    "client": "production BilibiliAPIClient",
+    "source_identity_matched": true,
+    "nonempty_title": true,
+    "nonempty_description": true,
+    "elapsed_ms": 102.3
+  },
+  "browser": {
+    "surface": "mobile web served by real app",
+    "last_card_dismissed": true,
+    "empty_tray_observed": true,
+    "new_card_automatically_displayed": true,
+    "manual_reload_after_refill": false,
+    "refill_scope": "controlled admission of a real unused candidate; real WebSocket broadcast and HTTP reread",
+    "source_cover_images": "some historical cover images failed to load; not investigated in this change"
+  },
+  "real_llm": {
+    "default_chain": [
+      "openai_compatible",
+      "openai-compatible"
+    ],
+    "models": [
+      "deepseek-v4-flash",
+      "glm-5.2"
+    ],
+    "generation_attempts": 2,
+    "bounded_retry_after_seconds": 426,
+    "provider_rate_limited_warnings": 4,
+    "upstream_http_status": 429,
+    "upstream_error_code": "insufficient_quota",
+    "upstream_message": "inference exceeds tpm/rpm limit",
+    "first_attempt_ms": 16716.2,
+    "retry_attempt_ms": 380.9,
+    "generation_succeeded": false,
+    "new_successful_usage_rows": 0,
+    "model_route_changed": false
+  },
+  "bounded_real_candidate_pipeline": {
+    "batch_size": 2,
+    "ok": true,
+    "pipeline": {
+      "evaluated": 0,
+      "cached": 2,
+      "rejected": 0,
+      "failed": 2
+    },
+    "usage": [],
+    "elapsed_ms": 5738.6,
+    "pending_eval_before": 16,
+    "pending_eval_after": 16,
+    "evaluated_waiting_before": 4,
+    "evaluated_waiting_after": 2,
+    "cached_before": 616,
+    "cached_after": 618,
+    "interpretation": "2 previously evaluated candidates admitted; 2 evaluation failures remain retryable; no new successful model evaluation"
+  },
+  "not_verified": [
+    "successful new model evaluation or expression generation",
+    "automatic network replenishment after exhaustion",
+    "fresh user/profile onboarding",
+    "installed desktop and extension interactions",
+    "production daemon multi-process startup lifecycle"
+  ],
+  "cleanup": {
+    "temporary_server_stopped": true,
+    "private_config_database_memory_and_logs_removed": true,
+    "formal_ping_status": 200,
+    "formal_health_status": 200
+  }
+}
