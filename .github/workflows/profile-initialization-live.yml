@@ -1,0 +1,58 @@
+name: Real free-model profile initialization
+on:
+  push:
+    branches: [fix/initial-profile-completeness]
+    paths:
+      - scripts/profile_initialization_live.py
+      - .github/workflows/profile-initialization-live.yml
+      - src/openbiliclaw/soul/profile_builder.py
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15-intel]
+        model: [Qwen/Qwen3-8B, Qwen/Qwen3.5-4B]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Prepare isolated encrypted macOS keychain
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          password="$(openssl rand -base64 32)"
+          echo "::add-mask::$password"
+          keychain="$RUNNER_TEMP/obc-live.keychain-db"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security default-keychain -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain"
+      - name: Install production backend and browser
+        run: |
+          python -m pip install -e .
+          python -m playwright install --with-deps chromium
+      - name: Real GUI four-stage init, persisted profile, restart and CLI
+        env:
+          MODEL: ${{ matrix.model }}
+          PYTHONPATH: src
+        shell: bash
+        run: python scripts/profile_initialization_live.py --root "$RUNNER_TEMP/obc-profile-live" --model "$MODEL"
+      - name: Archive allowlisted evidence only
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: profile-live-${{ matrix.os }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/obc-profile-live/evidence/
+          if-no-files-found: warn
+      - name: Remove isolated macOS keychain
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: security delete-keychain "$RUNNER_TEMP/obc-live.keychain-db" || true

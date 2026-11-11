@@ -196,3 +196,9 @@ Instagram 是显式 opt-in、`init-only` 的浏览器来源。只有用户选择
 - `tests/test_web_guided_init_e2e.py` — Chromium 中覆盖 `initialized=true && running=true` 不提前完成、双真窗口结束后桌面 runtime 非门控补水、三端同语义进度、setup / desktop 取消后可重试。
 - `tests/test_web_guided_init_e2e.py` — Playwright 驱动真实 `/setup/` 与 `/web` 页面，stub 外部 HTTP 响应来覆盖浏览器交互：成功进度、前置失败、启动冲突、终态重试、runtime-stream 静默 watchdog、普通完成直接进入应用、部分完成可见提示，以及 PC Web 与插件一致的未初始化入口判断（已有推荐 / 候选池信号时不再弹引导）；v0.3.168+ 直接断言超时原因、Base URL / 模型设置恢复动作、重试 / 设置入口、`role=alert`，以及 discovery 超时的部分完成 / 后台补池提示。CI 的 `web-guided-init-e2e` job 安装 `[browser]` extra + Chromium 后单独运行。
 - 2026-07-15 已用隔离数据目录、真 B 站登录和真 LLM 完成 GUI init：采集 1100 条信号、6 个偏好批次、完整画像落盘、发现 20 条候选并生成首轮 canonical 推荐，最终四阶段全 `ok`；同轮还验证了阶段 4 双真窗口、进程中断后的 `interrupted` 回收 / 可重试，以及完成后页面状态读取不阻塞。扩展真实完成 Cookie 同步；popup 视觉态由扩展测试覆盖（浏览器自动化安全策略不允许直接打开 `chrome-extension://` 页面）。
+
+## 两免费模型真实端到端验收（2026-11-12，执行中）
+
+`scripts/profile_initialization_live.py --root <全新目录> --model <批准模型>` 用生产后端、正式验签 SDK、真实公开 GitHub 收藏和实际浏览器初始化按钮运行四阶段；验证画像区块、模型用量、重启持久化及桌面/手机/CLI。没有替换响应或注入事件。`--platform bangumi --username <公开账号>` 可显式选择另一公开来源。仅归档白名单证据，不上传配置、SDK、数据库或服务器原始日志。
+
+`.github/workflows/profile-initialization-live.yml` 在独立 Linux / macOS 运行器对两个模型分别执行；macOS 使用该运行器独立的加密临时钥匙串。当前结果尚待运行，不以任务创建代替真实通过。
