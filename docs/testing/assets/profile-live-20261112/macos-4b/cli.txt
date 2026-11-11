@@ -32,9 +32,9 @@
 。
 兴趣层 Interest
   ▸ 其他 (0.95)  AI Agent 开发、人工智能、Python项目、开源工具、JavaScript项目
-  ▸ 科技 (0.95)  开源工具、AI 
+  ▸ 科技 (0.95)  开源工具、AI
 Agent与智能体、DeepSeek相关工具、人工智能、自动化工作流
-  ▸ 知识 (0.90)  机器学习、软件架构与系统设计、系统设计与可视化、Prompt 
+  ▸ 知识 (0.90)  机器学习、软件架构与系统设计、系统设计与可视化、Prompt
 Engineering、深度学习
   ▸ 游戏 (0.90)  编程工具
   常看UP主：0xsline、AgriciDaniel、Anil-matcha、BigDawnGhost、CZM1998、Davipar（

@@ -31,9 +31,9 @@
 容、介绍新概念与不同视角的内容；这是内容侧的初步观察，待确认，不代表现实生活阶段
 或兴趣变化。
 兴趣层 Interest
-  ▸ 科技 (0.95)  ai-agent、人工智能工具、AI Agent 
+  ▸ 科技 (0.95)  ai-agent、人工智能工具、AI Agent
 开发、ai-toolchain、open-source
-  ▸ 其他 (0.95)  
+  ▸ 其他 (0.95)
 自动化脚本、gepa-ai/gepa、CZM1998/dsh_cot_gw_dyn、jay3-yy/BiliPai、bggRGjQaUbCoE
 /PiliPlus
   ▸ 知识 (0.92)  大模型应用、视频生成、AI 创作、系统架构设计、本地部署

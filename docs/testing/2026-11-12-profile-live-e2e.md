@@ -33,6 +33,8 @@ macOS 使用运行器自己的临时加密钥匙串；本机 macOS 26 的登录�
 
 ## 证据
 
+归档 CLI 文本仅清理行尾空白，正文不变；原始字节可从上方 CI 制品下载。JSON 和截图按原始制品保留。
+
 - [macOS 8B 报告](assets/profile-live-20261112/macos-8b/report.json)、[画像摘要](assets/profile-live-20261112/macos-8b/profile-summary.json)、[桌面截图](assets/profile-live-20261112/macos-8b/desktop.png)、[手机截图](assets/profile-live-20261112/macos-8b/mobile.png)、[CLI](assets/profile-live-20261112/macos-8b/cli.txt)。
 - [macOS 4B 报告](assets/profile-live-20261112/macos-4b/report.json)、[画像摘要](assets/profile-live-20261112/macos-4b/profile-summary.json)、[桌面截图](assets/profile-live-20261112/macos-4b/desktop.png)、[手机截图](assets/profile-live-20261112/macos-4b/mobile.png)、[CLI](assets/profile-live-20261112/macos-4b/cli.txt)。
 
