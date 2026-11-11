@@ -552,7 +552,7 @@ def test_mark_delight_seen_records_cross_source_identity_and_consumes_queue(
     assert notified["delight_notified"] == 1
 
 
-def test_database_dynamic_delight_threshold_keeps_floor_before_min_sample_size(
+def test_database_dynamic_delight_threshold_ranks_small_pools(
     tmp_path: Path,
 ) -> None:
     database = _make_database(tmp_path)
@@ -566,7 +566,7 @@ def test_database_dynamic_delight_threshold_keeps_floor_before_min_sample_size(
 
     threshold = database.dynamic_delight_threshold(default_threshold=0.75)
 
-    assert threshold == pytest.approx(0.75)
+    assert threshold == pytest.approx(0.9234)
 
 
 def test_database_dynamic_delight_threshold_uses_top_ten_percent_for_homogeneous_high_pool(
@@ -620,7 +620,8 @@ def test_database_dynamic_delight_threshold_uses_delight_top_ten_percent_boundar
 
     threshold = database.dynamic_delight_threshold(default_threshold=0.75)
 
-    assert threshold == pytest.approx(0.876)
+    # Below-admission rows cannot influence the eligible pool percentile.
+    assert threshold == pytest.approx(0.904)
 
 
 def test_database_dynamic_delight_threshold_uses_delight_score_not_relevance_score(
@@ -917,7 +918,7 @@ def test_database_get_pool_candidates_needing_delight_score_includes_shown_stale
     assert "BV1SHOWN" in [c["bvid"] for c in candidates]
 
 
-def test_database_get_pool_candidates_needing_delight_score_includes_shown_history_rows(
+def test_database_delight_backfill_excludes_ordinary_history_rows(
     tmp_path: Path,
 ) -> None:
     database = _make_database(tmp_path)
@@ -947,7 +948,7 @@ def test_database_get_pool_candidates_needing_delight_score_includes_shown_histo
         min_delight_score_for_reason=0.91,
     )
 
-    assert "BV1HISTORY" in [c["bvid"] for c in candidates]
+    assert "BV1HISTORY" not in [c["bvid"] for c in candidates]
 
 
 # ---------------------------------------------------------------------------
@@ -1007,20 +1008,14 @@ def test_get_pool_candidates_filters_by_min_relevance(tmp_path: Path) -> None:
     assert "BV1LOW" not in bvids
 
 
-def test_get_pool_candidates_default_min_relevance_is_055(tmp_path: Path) -> None:
-    """v0.3.35: default gate must remain 0.55 (any change is a behaviour
-    swing affecting how many candidates are checked per cycle)."""
+def test_backfill_admission_floor_overrides_legacy_shortlist(tmp_path: Path) -> None:
+    """A 0.55 shortlist cannot backfill rows below formal admission."""
     database = _make_database(tmp_path)
-    database.cache_content("BV1HALF", title="Right at edge", relevance_score=0.54)
-    database.cache_content("BV1OVER", title="Just over", relevance_score=0.56)
-    _mark_pool_copy_ready(database, "BV1HALF")
-    _mark_pool_copy_ready(database, "BV1OVER")
-
-    # No min_relevance_score passed — uses default
+    for key, score in (("BV1HALF", 0.54), ("BV1OVER", 0.56), ("BV1ADMITTED", 0.60)):
+        database.cache_content(key, title=key, relevance_score=score)
+        _mark_pool_copy_ready(database, key)
     rows = database.get_pool_candidates_needing_delight_score(limit=10)
-    bvids = {r["bvid"] for r in rows}
-    assert "BV1OVER" in bvids
-    assert "BV1HALF" not in bvids
+    assert {row["bvid"] for row in rows} == {"BV1ADMITTED"}
 
 
 def test_delight_serving_uses_exact_explore_relaxed_admission_floor(tmp_path: Path) -> None:
@@ -1038,3 +1033,14 @@ def test_delight_serving_uses_exact_explore_relaxed_admission_floor(tmp_path: Pa
     assert [
         row["bvid"] for row in database.get_delight_candidates(min_delight_score=0.75, limit=10)
     ] == ["BVEXP"]
+
+
+def test_get_pool_candidates_default_min_relevance_is_055(tmp_path: Path) -> None:
+    """The legacy shortlist remains 0.55 independently of pool admission."""
+    database = _make_database(tmp_path)
+    database.set_admission_min_score(0.50)
+    for key, score in (("BV1HALF", 0.54), ("BV1OVER", 0.56)):
+        database.cache_content(key, title=key, relevance_score=score)
+        _mark_pool_copy_ready(database, key)
+    rows = database.get_pool_candidates_needing_delight_score(limit=10)
+    assert {row["bvid"] for row in rows} == {"BV1OVER"}

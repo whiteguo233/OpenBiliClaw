@@ -4101,7 +4101,7 @@ class TestDatabase:
                 delight_reason="测试推荐文案",
                 delight_hook="测试主题",
             )
-            db.mark_delight_notified("BV1READ")
+            db.mark_delight_viewed("BV1READ")
             # Scored but below threshold and without metadata: not claimed.
             db.update_delight_score(
                 "BV1LOW",

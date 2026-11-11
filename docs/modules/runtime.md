@@ -1,5 +1,15 @@
 # Runtime Module
 
+## 相对惊喜队列与冷启动（2026-11-11，待发布）
+
+| 已实现能力 / 公开接口 | 行为 |
+| --- | --- |
+| `RuntimeContext.__post_init__()` | 向共享 Database 注入解析最新 effective dislikes 的回调，热重载后跟随新 SoulEngine；隔离库存读继承同一策略 |
+| `get_pending_delight()` / runtime counts | 经 `select_delight_candidates()` / `count_selected_delights()` 消费相同身份集合；旧存储适配器仍兼容阈值参数，主动推送的 4h 冷却保持生效 |
+| `run_init_backfill()` | 完成检查同时认可惊喜供给，只有一条合格内容被惊喜占位时不误报初始化空池 |
+| 消费与耗尽 | 查看时归还 raw headroom，旧版已读 fresh 行也不再占位；已读排除在排名人口之外；剩余候选立即晋级。消费事件唤醒已有协调器和有界补货，真正空池仍等待来源供给，不循环重放历史 |
+
+
 ## 自定义来源暂停提醒（未发布）
 
 | 能力 | 行为 |

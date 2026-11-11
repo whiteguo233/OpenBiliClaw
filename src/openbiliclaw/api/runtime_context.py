@@ -852,6 +852,16 @@ class RuntimeContext:
 
         if self.database is None:
             return
+        set_delight_provider = getattr(self.database, "set_delight_dislikes_provider", None)
+        if callable(set_delight_provider):
+
+            def delight_dislikes() -> list[str]:
+                getter = getattr(self.soul_engine, "get_effective_disliked_topics", None)
+                if not callable(getter):
+                    getter = getattr(self.runtime_controller, "_load_disliked_topic_phrases", None)
+                return list(getter()) if callable(getter) else []
+
+            set_delight_provider(delight_dislikes)
         from openbiliclaw.saved_sync.adapters.extension import (
             build_extension_native_save_adapters,
         )

@@ -18546,14 +18546,17 @@ def delight() -> None:
         if callable(dynamic_threshold)
         else default_threshold
     )
-    candidate = database.get_delight_candidate(min_delight_score=threshold)
+    from openbiliclaw.recommendation.delight import select_delight_candidates
+
+    selected = select_delight_candidates(database, fallback_threshold=threshold, limit=1)
+    candidate = selected[0] if selected else None
 
     _print_page_title("惊喜推荐", "从池中寻找你可能意外喜欢的内容")
     if candidate is None:
         _print_status_panel(
             "info",
             "暂时没有惊喜候选",
-            "池中还没有文案已就绪的高分惊喜内容，多刷一阵会有的。",
+            "当前没有可展示的惊喜内容：可能已看完、被偏好过滤，或文案仍在准备；新内容就绪后会自动补充。",
         )
         return
 

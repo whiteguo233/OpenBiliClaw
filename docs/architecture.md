@@ -3,6 +3,11 @@
 ## 系统概览
 
 ```text
+admitted copy-ready content → unread / current dislikes / temporal / history filters
+                           → exact Top 10% identities (ceil; nonempty min 1) → delight queue
+                           └ remaining identities → ordinary feed / shared inventory
+view / dismiss / dislike → committed state → delight.refreshed → UI refill + bounded supply wake
+
 trusted local UI → private API; remote UI → password setup → authenticated HTTP / WS
 source metadata (including XHS note body / tag names) → candidate storage → semantic allowlist → LLM sparse v7 / Jev evaluation
 
@@ -521,8 +526,8 @@ Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公�
 - 推荐排序与朋友式推荐表达生成；统一从候选池读取
 - `recommendation/director/` 默认关闭；启用后提供 Jev 二卡递推、Agent 多屏草稿 + Jev 局部修补、纯 Agent 预排。`policy.py` 将画像、最近三屏真实经历与 ≤40 张个性化候选转为共用的屏目标／证据／软角色上下文：Jev 一次选择 pair + role，Agent 先判断有用供给，再规划最多三屏 brief 和具体配对。`planner_refs.py` 仅在 Agent seam 使用 `c0..` 短引用，还原所选／遗漏而不改 evidence refs；`horizon_coverage.py` 统一目标覆盖与合法提前结束，保留初始 completion。首次非法 JSON／结构／引用／覆盖可在原总 deadline 内纠正一次（总调用 ≤2，已知用量累计），网络／超时不因此重试；修补保留原职责及语义短尾，不机械补满。校验并原子提交 ≤20 张的不可变屏，真实可见 ACK 和精确反馈影响后续草稿。服务失败明确回退，配置／策略换代使旧计划失效；没有固定探索配额，局部硬可行性与标题重复诊断不代表语义质量或全局最优认证。隔离验收脚本通过只读生产数据快照与真实 loopback HTTP／Luna 调用检查该链路，不启动发现／长期学习／恢复／Jev，不向源数据写入。详见[运行时合同](modules/director.md)。
 - 文案生成与 admitted backlog 解耦：canonical `copy_ready` 使用全部 serve gate 但不套 topic 展示窗口。正数水位生成量为 `max(copy_ready_target-copy_ready, min(pool_target-available, admitted_pending_available))`，再受全部 pending 与单批上限钳制；锁内先领取能净增 topic 展示窗口的行，公开目标达到后只维持 copy-ready 水位。serve/feedback/delight/maintenance 只发非阻塞 refill 通知，provider 工作由 coordinator 承担并在 expression lock 内复核缺口。`0` 是 legacy drain-all 回滚，任何模式都不放松非空文案硬门。
-- 惊喜队列 `GET /api/delight/pending-batch` 的完整阈值和候选读取在 FastAPI 线程池执行，避免手机刷新时占住主 API 事件循环、拖住独立推荐进程的转发响应；队列筛选和返回结构不变。
-- 惊喜推荐复用普通推荐的 copy-ready 与 canonical `seen_items` 状态门：`pool_expression / pool_topic_label` 未同时生成，或身份已经看过时，候选不进入惊喜打分、动态阈值样本、计数或 pending 出口。正式文案就绪后才复用 Evo 的 `relevance_score` 打分，并由条件写入原子同步 `delight_reason / delight_hook`；pending API、CLI 与 runtime stream 继续校验精确快照。evaluator 的内部 `relevance_reason` 永不作为惊喜状态或 UI 推荐理由；旧版错写快照在正式文案就绪后由后台 backfill 修复。普通推荐只在高分行已被 profile-aware 惊喜打分并同步快照后让出该行。移动 Web、桌面 Web 与插件的“×”统一调用 `dismiss`：它不是临时隐藏，而是把 canonical identity 写入 `seen_items` 后永久消费该惊喜。
+- 惊喜队列 `GET /api/delight/pending-batch` 的完整阈值和候选读取在 FastAPI 线程池执行，避免手机刷新时占住主 API 事件循环、拖住独立推荐进程的转发响应；相对精选过滤在取名额前完成，返回结构保持不变。
+- 惊喜推荐复用普通推荐的 copy-ready 与 canonical `seen_items` 状态门：`pool_expression / pool_topic_label` 未同时生成，或身份已经看过时，候选不进入惊喜打分、动态阈值样本、计数或 pending 出口。正式文案就绪后才复用 Evo 的 `relevance_score` 打分，并由条件写入原子同步 `delight_reason / delight_hook`；pending API、CLI 与 runtime stream 继续校验精确快照。evaluator 的内部 `relevance_reason` 永不作为惊喜状态或 UI 推荐理由；旧版错写快照在正式文案就绪后由后台 backfill 修复。普通推荐只让出已送达惊喜和当前精确 Top 10% 身份；剩余合格池先过滤已读、历史、避雷与时效，同分以唯一键稳定决胜。所有准入候选预备正式快照，消费后无模型调用即可晋级。移动 Web、桌面 Web 与插件的“×”统一调用 `dismiss`：它不是临时隐藏，而是把 canonical identity 写入 `seen_items` 后永久消费该惊喜。
 - 推荐列表、换批、pending delight 单条/批量及 runtime delight 事件都增量透传 `published_at` / `published_label`。桌面 Web、移动 Web、扩展 popup 与 CLI 按同一规则消费：精确时间优先并转本地相对日期，来源标签兜底，双空值不渲染；API 层不重写相对时间。
 - Bangumi 目录指标 `rating_score / rating_count / source_rank` 与 `favorite_count` 贯穿 subject normalizer → `DiscoveredContent` → `discovery_candidates` → `content_cache` → recommendation/delight API → 三端。评分人数不是评论数、评分不是点赞；无真实值时保持 0 并整段隐藏。
 - 推荐、delight 与保存列表出口共享 `item_key / content_id / source_platform / content_url / content_type` 身份契约；`content_cache.item_key` 对非空 canonical identity 使用 partial unique index，并用独立普通索引支持 lookup，`recommendations.item_key` 引用同一 identity。插件 side panel、桌面 Web 与移动 Web 的卡片先 POST `/api/saved/{list_kind}`，保存页再用 `/sync` + durable task poll 做显式平台写入；默认关闭的 `saved_sync.auto_sync_enabled` 只决定本地保存后是否创建后台任务。手动同步对当前 adapter 支持且未处于已同步 / 同步中的项始终可用；仅 `unsupported_adapter_missing` 可在 adapter 注册后重新进入单项/批量快照，`unsupported_content_type` 等真实能力限制继续显示为仅本地保存。本地 `/remove` 永不反向删除平台记录。

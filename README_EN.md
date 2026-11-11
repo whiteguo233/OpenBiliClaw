@@ -663,6 +663,11 @@ Public feed routing: `[network] direct/system/custom → local DNS or proxied Do
 SiliconFlow is a preconfigured LLM instance in the existing instance list. Choose 8B or 4B and route it through ordinary default/module chains; select cloud BGE-M3 or local Ollama independently for embeddings. This unified configuration change is awaiting an application release. [Design and verification](docs/testing/2026-11-06-unified-providers.md).
 
 ```text
+admitted copy-ready content → unread / current dislikes / temporal / history filters
+                           → exact Top 10% identities (ceil; nonempty min 1) → delight queue
+                           └ remaining identities → ordinary feed / shared inventory
+view / dismiss / dislike → committed state → delight.refreshed → UI refill + bounded supply wake
+
 Setup / popup / desktop / mobile / CLI → ordinary config API
   ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
   │   → LLMService → LLMRegistry → selected provider adapter

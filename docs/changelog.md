@@ -4,6 +4,8 @@
 
 ## v0.3.237：首启免密、安装引导与初始化可靠性（2026-11-10）
 
+- 惊喜推荐修复（2026-11-11，待下次发版）：改为剩余合格池前 10% 的精确身份选择，移除固定 0.75/0.80 与 150 样本门槛；已读、普通推荐历史、避雷和时效先过滤。同分稳定限额，普通推荐/库存共享占位；冷启动仅一条仍可初始化，消费后归还 raw headroom、本地补位并唤醒既有有界补货，旧版已读 fresh 行也不再占住补货空间。正式文案快照提前准备，不新增模型调用；三端通过队列刷新事件收敛，移动端防止迟到首屏空响应清空新卡，输入草稿和读取失败保留状态。[边界与验证](verification/2026-11-11-relative-delight-selection.md)。
+
 - 发布分支收尾（2026-11-11，待下次发版）：合回独立插件 0.3.236 的发布保护与历史提审记录。插件发行不再抢占 GitHub Latest；仅与后端版本一致时更新聚合发行页。保留主线 0.3.237 版本、下载入口和既有发行标签。[合并与清理记录](testing/2026-11-11-release-branch-cleanup.md)。
 
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344，待下次发版）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。

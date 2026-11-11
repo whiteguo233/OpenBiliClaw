@@ -2320,7 +2320,7 @@ class TestBackendAPI:
                 # The reload drove the REAL engine to write copy for the pending
                 # candidate against the REAL DB — it is now serveable.
                 assert "recommendation.write_expression" in llm.callers
-                assert db.count_pool_candidates() == 1
+                assert db.count_pool_candidates() + len(db.get_ranked_delight_candidates()) == 1
             finally:
                 await ctx.task_registry.cancel_all()
 

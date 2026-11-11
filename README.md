@@ -664,6 +664,11 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 硅基流动作为预置 LLM 实例：在现有实例列表选择8B/4B，默认链和模块链决定调用顺序；Embedding 独立选择云端 BGE-M3 或本地 Ollama。本次统一入口改动待随应用发布。[结构与验收](docs/testing/2026-11-06-unified-providers.md)。
 
 ```text
+admitted copy-ready content → unread / current dislikes / temporal / history filters
+                           → exact Top 10% identities (ceil; nonempty min 1) → delight queue
+                           └ remaining identities → ordinary feed / shared inventory
+view / dismiss / dislike → committed state → delight.refreshed → UI refill + bounded supply wake
+
 Setup / popup / desktop / mobile / CLI → ordinary config API
   ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
   │   → LLMService → LLMRegistry → selected provider adapter

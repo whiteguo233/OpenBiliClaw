@@ -5,7 +5,7 @@ content cache, and recommendation history.
 """
 
 # [INPUT]: SQLite 数据库、规范化事件与推荐/来源持久化请求
-# [OUTPUT]: Database facade、事件写入与查询/迁移能力；读取事务内复用相同候选 SQL 结果
+# [OUTPUT]: Database facade、事件写入与查询/迁移；惊喜与普通库存共享精确 Top-K 占位
 # [POS]: 所有 durable 事件字段的最终存储边界，负责兼容迁移而不推断未知来源
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -20,7 +20,6 @@ import math
 import re
 import secrets
 import sqlite3
-import statistics
 import threading
 import time
 import unicodedata
@@ -917,16 +916,12 @@ def _chunks(values: Sequence[str], size: int) -> list[list[str]]:
     return [list(values[index : index + chunk_size]) for index in range(0, len(values), chunk_size)]
 
 
-# Mirrors recommendation.delight.DEFAULT_DELIGHT_THRESHOLD. Storage stays a
-# leaf module (no openbiliclaw imports), so the value is duplicated here and
+# Legacy adapter/empty-pool default mirrors recommendation.delight and is
 # pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_floor_in_sync.
 _DELIGHT_CLAIM_MIN_SCORE = 0.75
+# Product quota, not a calibrated model-score cutoff: select ceil(N / 10),
+# including one candidate at cold start. Admission owns the quality floor.
 _DELIGHT_DYNAMIC_TOP_FRACTION = 0.10
-_DELIGHT_DYNAMIC_MIN_SAMPLE_SIZE = 150
-# Only suppresses the Top 10% boundary for homogeneous pools whose boundary
-# is at/below the floor. A homogeneous above-floor pool still uses the
-# boundary so the regular feed is not starved by the delight claim guard.
-_DELIGHT_DYNAMIC_MIN_STDDEV = 0.08
 _DELIGHT_SCORE_SYNC_EPSILON = 0.000001
 _DEFAULT_ADMISSION_MIN_SCORE = DEFAULT_ADMISSION_MIN_SCORE
 
@@ -972,26 +967,25 @@ def _delight_visibility_sql(*, include_delivered: bool) -> str:
     return "AND COALESCE(delight_notified, 0) = 0"
 
 
-# Rows claimed by the surprise (delight) channel: already delivered as a
-# delight, or scored above the current threshold with its formal pool copy
-# synchronized into the delight snapshot. Requiring the exact snapshot keeps
-# stale evaluator reasons from claiming rows and preserves the profile-aware
-# scorer decision (for example the conservative 0.80 threshold).
+# Already-delivered surprises keep their channel ownership. New reservations
+# use the exact selected identities, so tied scores cannot claim the whole
+# ordinary pool. The selection itself requires synchronized formal copy.
 def _delight_claim_guard_sql() -> str:
     return """
                   AND NOT (
                     COALESCE(delight_notified, 0) = 1
                     OR (
-                      COALESCE(delight_score, 0.0) >= ?
-                      AND TRIM(COALESCE(pool_expression, '')) != ''
-                      AND TRIM(COALESCE(pool_topic_label, '')) != ''
-                      AND TRIM(COALESCE(delight_reason, '')) =
-                          TRIM(COALESCE(pool_expression, ''))
-                      AND TRIM(COALESCE(delight_hook, '')) =
-                          TRIM(COALESCE(pool_topic_label, ''))
+                      bvid IN (SELECT value FROM json_each(?))
                     )
                   )
 """
+
+
+@dataclass(frozen=True)
+class _DelightReservation:
+    """Pin exact identities across a pool-maintenance write transaction."""
+
+    bvids: tuple[str, ...]
 
 
 _LEGACY_STYLE_KEY_MAP: dict[str, str] = {
@@ -2174,6 +2168,9 @@ class Database:
         self._publication_date_filter_warned_at: dict[str, float] = {}
         self._preserve_read_transaction = False
         self._snapshot_delight_thresholds: dict[float, float] | None = None
+        self._snapshot_delight_rows: list[dict[str, Any]] | None = None
+        self._delight_dislikes_provider: Callable[[], Sequence[str]] | None = None
+        self._delight_disliked_topics: tuple[str, ...] = ()
         self._snapshot_available_query_rows: (
             dict[tuple[sqlite3.Connection, str, tuple[Any, ...]], tuple[dict[str, Any], ...]] | None
         ) = None
@@ -2196,6 +2193,14 @@ class Database:
     def set_admission_min_score(self, value: object) -> None:
         """Set the unified recommendation-pool admission floor."""
         self._admission_min_score = _normalize_admission_min_score(value)
+
+    def set_delight_dislikes_provider(self, provider: Callable[[], Sequence[str]]) -> None:
+        """Resolve current dislikes before ranking, including after hot reload."""
+        self._delight_dislikes_provider = provider
+
+    def set_delight_disliked_topics(self, topics: Sequence[str]) -> None:
+        """Supply a profile snapshot for standalone engines without a provider."""
+        self._delight_disliked_topics = tuple(topics)
 
     def set_publication_date_preference(self, preference: object | None) -> None:
         """Set the current Bilibili publication policy used by pool reads."""
@@ -2622,6 +2627,8 @@ class Database:
         isolated = Database(self._db_path)
         isolated._conn = conn
         isolated._admission_min_score = self._admission_min_score
+        isolated._delight_dislikes_provider = self._delight_dislikes_provider
+        isolated._delight_disliked_topics = self._delight_disliked_topics
         isolated._publication_date_preference = self._publication_date_preference
         isolated._source_publication_date_preferences = self._source_publication_date_preferences
         isolated._seen_state_lock = self._seen_state_lock
@@ -2764,6 +2771,7 @@ class Database:
             raise
         finally:
             isolated._snapshot_delight_thresholds = None
+            isolated._snapshot_delight_rows = None
             isolated._snapshot_available_query_rows = None
             isolated._preserve_read_transaction = False
             isolated.close()
@@ -2803,6 +2811,7 @@ class Database:
             raise
         finally:
             isolated._snapshot_delight_thresholds = None
+            isolated._snapshot_delight_rows = None
             isolated._snapshot_available_query_rows = None
             isolated._preserve_read_transaction = False
             isolated.close()
@@ -2840,6 +2849,7 @@ class Database:
             raise
         finally:
             isolated._snapshot_delight_thresholds = None
+            isolated._snapshot_delight_rows = None
             isolated._snapshot_available_query_rows = None
             isolated._preserve_read_transaction = False
             isolated.close()
@@ -8861,7 +8871,7 @@ class Database:
         xhs_self_nickname: str,
         *,
         pool_status: str = "fresh",
-        _delight_threshold: float | None = None,
+        _delight_threshold: float | _DelightReservation | None = None,
     ) -> tuple[str, tuple[Any, ...]]:
         """Shared WHERE fragment + params defining a ``serve()``-loadable row.
 
@@ -8873,21 +8883,14 @@ class Database:
         and not already recommended. Returns the fragment (no leading
         ``WHERE``, references the ``content_cache`` table) and its bind params.
 
-        ``_delight_threshold`` pins the delight guard's score boundary; the
-        pool-maintenance transaction passes its pre-mutation snapshot so the
-        guard cannot drift as the transaction rewrites ``pool_status`` rows
-        that feed the dynamic percentile sample.
+        ``_delight_threshold`` accepts the exact pre-mutation reservation in
+        maintenance (legacy numeric boundaries remain accepted). The claimed
+        identities cannot drift as the transaction rewrites pool statuses.
         """
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = (
-            float(_delight_threshold)
-            if _delight_threshold is not None
-            else self._dynamic_delight_threshold_on(
-                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
-            )
-        )
+        delight_threshold = self._delight_claim_parameter_on(conn, _delight_threshold)
         delight_guard_sql = _delight_claim_guard_sql()
         clause = f"""
             COALESCE(pool_status, 'fresh') = ?
@@ -9082,7 +9085,7 @@ class Database:
         xhs_self_nickname: str = "",
         _viewed_content_keys: set[str] | None = None,
         _now: datetime | None = None,
-        _delight_threshold: float | None = None,
+        _delight_threshold: float | _DelightReservation | None = None,
         full_rows: bool = False,
     ) -> list[dict[str, Any]]:
         """Load rows counted by the frontend-visible pool availability gate.
@@ -9105,13 +9108,7 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = (
-            float(_delight_threshold)
-            if _delight_threshold is not None
-            else self._dynamic_delight_threshold_on(
-                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
-            )
-        )
+        delight_threshold = self._delight_claim_parameter_on(conn, _delight_threshold)
         delight_guard_sql = _delight_claim_guard_sql()
         projection = (
             "*"
@@ -9350,6 +9347,7 @@ class Database:
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(delight_seen, 0) = 0
               AND {admission_sql}
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
@@ -9677,9 +9675,7 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_threshold = self._dynamic_delight_threshold_on(
-            conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
-        )
+        delight_threshold = self._delight_claim_parameter_on(conn)
         delight_guard_sql = _delight_claim_guard_sql()
         max_rows = None if limit is None else max(0, int(limit))
         if max_rows == 0:
@@ -10578,7 +10574,7 @@ class Database:
         max_restore: int = _POOL_MAINTENANCE_BATCH_SIZE,
         _viewed_content_keys: set[str] | None = None,
         _now: datetime | None = None,
-        _delight_threshold: float | None = None,
+        _delight_threshold: float | _DelightReservation | None = None,
     ) -> list[str]:
         """Restore a bounded set of paid-for rows without rescanning per row.
 
@@ -10793,8 +10789,9 @@ class Database:
             # Snapshot the delight threshold after the temporal transitions
             # (they already rewrote pool_status for this batch) but before any
             # trim/recovery write below can shift the percentile sample.
-            delight_threshold = self._dynamic_delight_threshold_on(
-                conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+            self._dynamic_delight_threshold_on(conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE)
+            delight_threshold = _DelightReservation(
+                tuple(row["bvid"] for row in self._selected_delight_rows_on(conn))
             )
             maintenance_budget = max(0, mutation_budget - temporal_due_count)
             # All maintenance reads share one write transaction, so the view
@@ -22242,13 +22239,10 @@ class Database:
         *,
         default_threshold: float = _DELIGHT_CLAIM_MIN_SCORE,
     ) -> float:
-        """Return the profile floor raised to the delight pool Top 10% boundary.
+        """Report the lowest selected score, using the default only for an empty pool.
 
-        The dynamic component uses the current formal candidate pool, not raw
-        ``discovery_candidates``. The percentile is computed over rows that
-        already have ``delight_score``. When the scored pool is too small, or
-        the Top 10% boundary is at/below the floor (so the floor is already the
-        more selective bar), the caller-provided default is returned unchanged.
+        Production uses ``get_ranked_delight_candidates`` directly: a score
+        boundary is diagnostic and cannot encode tied quotas or unread retention.
         """
         self._ensure_fresh_read()
         return self._dynamic_delight_threshold_on(
@@ -22281,47 +22275,116 @@ class Database:
             cache[floor] = value
         return value
 
+    def _eligible_delight_rows_on(self, conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        """Read one eligible, unread, copy-synchronized population before Top-K."""
+        if (
+            self._snapshot_delight_thresholds is not None
+            and self._snapshot_delight_rows is not None
+        ):
+            return self._snapshot_delight_rows
+        admission_sql, admission_params = self._pool_admission_sql()
+        cursor = conn.execute(
+            f"""
+            SELECT * FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
+              AND COALESCE(feedback_type, '') IN ('', 'like')
+              AND COALESCE(delight_seen, 0) = 0
+              AND COALESCE(delight_score, 0.0) > 0.0
+              AND {admission_sql}
+              {_delight_ready_copy_sql()}
+              AND TRIM(COALESCE(delight_reason, '')) = TRIM(COALESCE(pool_expression, ''))
+              AND TRIM(COALESCE(delight_hook, '')) = TRIM(COALESCE(pool_topic_label, ''))
+              AND (COALESCE(feedback_type, '') = 'like' OR NOT EXISTS (
+                SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+              ))
+              {_delight_unseen_guard_sql()}
+            ORDER BY delight_score DESC, relevance_score DESC, discovered_at DESC, bvid ASC
+            """,
+            admission_params,
+        )
+        now = datetime.now(UTC)
+        rows: list[dict[str, Any]] = []
+        for stored in cursor.fetchall():
+            row = dict(stored)
+            try:
+                score = float(row["delight_score"])
+                relevance = float(row["relevance_score"])
+            except (ValueError, TypeError):
+                continue
+            if not (math.isfinite(score) and 0.0 < score <= 1.0):
+                continue
+            if not (math.isfinite(relevance) and 0.0 <= relevance <= 1.0):
+                continue
+            if not self._temporal_eligibility_for_row(row, now=now):
+                continue
+            if not self._publication_date_row_is_eligible(row, now=now):
+                continue
+            if not _is_linkable_pool_source(
+                row["source"], row["source_platform"], row["content_url"]
+            ):
+                continue
+            rows.append(row)
+        rows = self._filter_delight_dislikes(rows)
+        # A canonical cross-source identity gets one slot, even in legacy caches
+        # that still contain aliases of the same item.
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for row in rows:
+            identity = str(row.get("item_key") or row["bvid"])
+            if identity not in seen:
+                seen.add(identity)
+                unique.append(row)
+        if self._snapshot_delight_thresholds is not None:
+            self._snapshot_delight_rows = unique
+        return unique
+
+    def _filter_delight_dislikes(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply the same live output policy before scoring or selecting a quota."""
+        from openbiliclaw.recommendation.exclusion import filter_recommendation_rows
+
+        topics = (
+            self._delight_dislikes_provider()
+            if self._delight_dislikes_provider is not None
+            else self._delight_disliked_topics
+        )
+        return filter_recommendation_rows(rows, topics, restore_on_total_fuzzy_match=False)
+
+    def _selected_delight_rows_on(self, conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        """Reserve exact identities; a score boundary alone over-selects ties."""
+        rows = self._eligible_delight_rows_on(conn)
+        quota = math.ceil(len(rows) * _DELIGHT_DYNAMIC_TOP_FRACTION)
+        retained = [row for row in rows if row.get("feedback_type") == "like"]
+        retained_ids = {row["bvid"] for row in retained}
+        fresh = [row for row in rows if row["bvid"] not in retained_ids]
+        selected_ids = retained_ids | {
+            row["bvid"] for row in fresh[: max(0, quota - len(retained))]
+        }
+        return [row for row in rows if row["bvid"] in selected_ids]
+
+    def _delight_claim_parameter_on(
+        self, conn: sqlite3.Connection, boundary: float | _DelightReservation | None = None
+    ) -> str:
+        """Share the queue's exact reservation with ordinary-feed inventory."""
+        if isinstance(boundary, _DelightReservation):
+            identities = boundary.bvids
+        else:
+            # Keep the diagnostic threshold in the same transaction-local cache
+            # as readiness reads. The reservation itself is identity-based.
+            self._dynamic_delight_threshold_on(conn, default_threshold=_DELIGHT_CLAIM_MIN_SCORE)
+            rows = self._selected_delight_rows_on(conn)
+            identities = tuple(
+                str(row["bvid"])
+                for row in rows
+                if boundary is None or float(row["delight_score"]) >= boundary
+            )
+        return json.dumps(identities, ensure_ascii=False, separators=(",", ":"))
+
     def _compute_dynamic_delight_threshold_on(
         self, conn: sqlite3.Connection, *, floor: float
     ) -> float:
-        """Calculate the percentile against the caller's current read snapshot."""
-        cursor = conn.execute(
-            f"""
-            SELECT COALESCE(delight_score, 0.0) AS score,
-                   published_at, temporal_class, temporal_confidence,
-                   temporal_policy_version, temporal_validity_mode,
-                   temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
-                   temporal_next_review_at, temporal_evaluated_at,
-                   temporal_evidence_complete
-            FROM content_cache
-            WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
-              AND COALESCE(feedback_type, '') != 'dislike'
-              AND COALESCE(delight_score, 0.0) > 0.0
-              {_delight_ready_copy_sql()}
-              {_delight_unseen_guard_sql()}
-            ORDER BY score DESC
-            """
-        )
-        temporal_now = datetime.now(UTC)
-        scores = [
-            float(row["score"])
-            for row in cursor.fetchall()
-            if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
-        ]
-        if len(scores) < _DELIGHT_DYNAMIC_MIN_SAMPLE_SIZE:
-            return floor
-
-        top_count = max(1, math.ceil(len(scores) * _DELIGHT_DYNAMIC_TOP_FRACTION))
-        boundary = min(1.0, max(0.0, scores[top_count - 1]))
-        if statistics.pstdev(scores) < _DELIGHT_DYNAMIC_MIN_STDDEV and boundary <= floor:
-            # A homogeneous score band at/below the floor makes the Top 10%
-            # percentile a no-op: the floor is already more selective, so keep
-            # it. A homogeneous band above the floor must still use the
-            # percentile boundary — otherwise the regular feed's delight-claim
-            # guard would reserve every above-floor row for delight and starve
-            # the normal pool (issue #220).
-            return floor
-        return max(floor, boundary)
+        """Report the selected tail score; the legacy default is empty-pool only."""
+        selected = self._selected_delight_rows_on(conn)
+        return float(selected[-1]["delight_score"]) if selected else floor
 
     def get_delight_candidate(
         self,
@@ -22342,6 +22405,26 @@ class Database:
         )
         return rows[0] if rows else None
 
+    def get_ranked_delight_candidates(
+        self, *, limit: int = 20, include_liked: bool = False, include_delivered: bool = False
+    ) -> list[dict[str, Any]]:
+        """Return the current exact Top 10%, with policy filters before the quota.
+
+        There is no extra absolute score floor. A nonempty admitted population
+        supplies at least one item; consumed rows leave that population, so the
+        next read promotes remaining content without a background score sweep.
+        """
+        max_rows = max(0, int(limit))
+        if max_rows == 0:
+            return []
+        self._ensure_fresh_read()
+        return [
+            row
+            for row in self._selected_delight_rows_on(self.conn)
+            if (include_delivered or not row.get("delight_notified"))
+            and (include_liked or not row.get("feedback_type"))
+        ][:max_rows]
+
     def get_delight_candidates(
         self,
         *,
@@ -22350,7 +22433,9 @@ class Database:
         include_liked: bool = False,
         include_delivered: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return up to ``limit`` queue-visible delight candidates ordered by score.
+        """Legacy explicit-score query; production uses get_ranked_delight_candidates.
+
+        Return up to ``limit`` queue-visible delight candidates ordered by score.
 
         By default this returns only not-yet-delivered candidates
         (``delight_notified=0``).  When ``include_delivered=True`` it returns
@@ -22432,13 +22517,17 @@ class Database:
         visible in the in-session queue. It does not write the permanent
         ``seen_items`` ledger; a later dismiss is still the action that
         removes the content from both normal and surprise channels.
+        A fresh row also becomes shown, releasing raw-material headroom so
+        consumed surprises cannot silently block subsequent replenishment.
         """
         self._execute_write(
             """
             UPDATE content_cache
             SET delight_notified = 1,
                 delight_notified_at = CURRENT_TIMESTAMP,
-                delight_seen = 1
+                delight_seen = 1,
+                pool_status = CASE WHEN COALESCE(pool_status, 'fresh') = 'fresh'
+                    THEN 'shown' ELSE pool_status END
             WHERE bvid = ?
             """,
             (bvid,),
@@ -22564,7 +22653,7 @@ class Database:
         limit: int = 30,
         *,
         min_delight_score_for_reason: float | None = None,
-        min_relevance_score: float = 0.55,
+        min_relevance_score: float | None = 0.55,
         xhs_self_nickname: str = "",
     ) -> list[dict[str, Any]]:
         """Return copy-ready pool candidates that still need delight synchronization.
@@ -22575,7 +22664,9 @@ class Database:
         Evo relevance result to populate delight fields only on this
         shortlist. Rows with unfinished ``pool_expression`` /
         ``pool_topic_label`` stay exclusively in the copy backlog and are not
-        assigned any delight state.
+        assigned any delight state. ``min_relevance_score=None`` uses only
+        the source-aware admission floor. Fresh supply has priority over
+        shown/suppressed rows; consumed ordinary history cannot delay it.
 
         Default 0.55 is calibrated to the discovery rubric:
           0.6+ strong fit, 0.5-0.6 moderate, <0.5 weak fit.
@@ -22588,7 +22679,12 @@ class Database:
             return []
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        effective_min_relevance_score = _normalize_admission_min_score(min_relevance_score)
+        effective_min_relevance_score = (
+            0.0
+            if min_relevance_score is None
+            else _normalize_admission_min_score(min_relevance_score)
+        )
+        admission_sql, admission_params = self._pool_admission_sql()
         if min_delight_score_for_reason is None:
             cursor = self.conn.execute(
                 f"""
@@ -22596,15 +22692,23 @@ class Database:
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
                   AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(delight_seen, 0) = 0
+                  AND (COALESCE(feedback_type, '') = 'like' OR NOT EXISTS (
+                    SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+                  ))
                   AND COALESCE(delight_score, 0.0) = 0.0
                   AND COALESCE(relevance_score, 0.0) >= ?
+                  AND {admission_sql}
                   {_delight_ready_copy_sql()}
                   {guard_sql}
                   {_delight_unseen_guard_sql()}
-                ORDER BY relevance_score DESC, discovered_at DESC
+                ORDER BY CASE COALESCE(pool_status, 'fresh')
+                    WHEN 'fresh' THEN 0 WHEN 'shown' THEN 1 ELSE 2 END,
+                    relevance_score DESC, discovered_at DESC
                 """,
                 (
                     effective_min_relevance_score,
+                    *admission_params,
                     *guard_params,
                 ),
             )
@@ -22615,7 +22719,12 @@ class Database:
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
                   AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(delight_seen, 0) = 0
+                  AND (COALESCE(feedback_type, '') = 'like' OR NOT EXISTS (
+                    SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+                  ))
                   AND COALESCE(relevance_score, 0.0) >= ?
+                  AND {admission_sql}
                   {_delight_ready_copy_sql()}
                   AND (
                     COALESCE(delight_score, 0.0) = 0.0
@@ -22623,15 +22732,7 @@ class Database:
                       COALESCE(delight_score, 0.0) - COALESCE(relevance_score, 0.0)
                     ) > ?
                     OR (
-                      COALESCE(delight_score, 0.0) < ?
-                      AND (
-                        TRIM(COALESCE(delight_reason, '')) != ''
-                        OR TRIM(COALESCE(delight_hook, '')) != ''
-                      )
-                    )
-                    OR (
-                      COALESCE(delight_score, 0.0) >= ?
-                      AND TRIM(COALESCE(pool_expression, '')) != ''
+                      TRIM(COALESCE(pool_expression, '')) != ''
                       AND TRIM(COALESCE(pool_topic_label, '')) != ''
                       AND (
                         TRIM(COALESCE(delight_reason, '')) !=
@@ -22644,15 +22745,16 @@ class Database:
                   {guard_sql}
                   {_delight_unseen_guard_sql()}
                 ORDER BY
+                    CASE COALESCE(pool_status, 'fresh')
+                      WHEN 'fresh' THEN 0 WHEN 'shown' THEN 1 ELSE 2 END,
                     relevance_score DESC,
                     delight_score DESC,
                     discovered_at DESC
                 """,
                 (
                     effective_min_relevance_score,
+                    *admission_params,
                     _DELIGHT_SCORE_SYNC_EPSILON,
-                    min_delight_score_for_reason,
-                    min_delight_score_for_reason,
                     *guard_params,
                 ),
             )
@@ -22662,7 +22764,7 @@ class Database:
             for row in cursor.fetchall()
             if self._temporal_eligibility_for_row(dict(row), now=temporal_now)
         ]
-        return rows[:max_rows]
+        return self._filter_delight_dislikes(rows)[:max_rows]
 
     @staticmethod
     def _decode_event_metadata(row: dict[str, Any]) -> dict[str, Any]:

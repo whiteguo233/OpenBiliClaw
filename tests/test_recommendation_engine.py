@@ -5227,8 +5227,8 @@ async def test_precompute_delight_waits_for_pool_copy_and_repairs_legacy_eval_re
 
 
 @pytest.mark.asyncio
-async def test_precompute_delight_preserves_conservative_profile_threshold_in_feed() -> None:
-    """Raising the profile floor to 0.80 revokes an old 0.75-floor snapshot."""
+async def test_precompute_delight_preserves_copy_when_exploration_changes() -> None:
+    """Relative selection must not erase prepared copy after a profile change."""
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
@@ -5256,7 +5256,7 @@ async def test_precompute_delight_preserves_conservative_profile_threshold_in_fe
         profile.preferences.exploration_openness = 0.2
         rescored = await engine.precompute_delight_scores(profile=profile, limit=10)
 
-        assert rescored == 1
+        assert rescored == 0
         assert db.get_delight_candidate(min_delight_score=0.80) is None
         snapshot = db.conn.execute(
             """
@@ -5266,10 +5266,11 @@ async def test_precompute_delight_preserves_conservative_profile_threshold_in_fe
             """
         ).fetchone()
         assert snapshot is not None
-        assert snapshot["delight_reason"] == ""
-        assert snapshot["delight_hook"] == ""
+        assert snapshot["delight_reason"] == "这条可以放在正常推荐里慢慢看。"
+        assert snapshot["delight_hook"] == "正常推荐"
         rows = db.get_pool_candidates(limit=10, max_per_topic_group=0)
-        assert [row["bvid"] for row in rows] == ["BV1CONSERVATIVE"]
+        assert rows == []
+        assert db.get_ranked_delight_candidates()[0]["bvid"] == "BV1CONSERVATIVE"
 
 
 @pytest.mark.asyncio
@@ -5649,8 +5650,9 @@ async def test_precompute_delight_scores_uses_dynamic_pool_top_boundary() -> Non
         ).fetchone()
         assert row is not None
         assert float(row["delight_score"]) == pytest.approx(0.72)
-        assert row["delight_reason"] == ""
-        assert row["delight_hook"] == ""
+        assert row["delight_reason"] == "这条按旧阈值会被写成惊喜文案。"
+        assert row["delight_hook"] == "中等匹配"
+        assert "BV1MID" not in {item["bvid"] for item in db.get_ranked_delight_candidates()}
 
 
 @pytest.mark.asyncio
