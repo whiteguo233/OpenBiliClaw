@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from datetime import UTC, datetime
@@ -27,6 +28,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from openbiliclaw import __version__
 from openbiliclaw.proc import no_window_kwargs
+
+from .distribution import is_mac_app_store
 
 PROFILE = "siliconflow-free-v1"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -79,6 +82,12 @@ def _version(value: object) -> tuple[int, int, int]:
     return tuple(int(part) for part in value.split("."))  # type: ignore[return-value]
 
 
+def _store_bundle_directory() -> Path | None:
+    if not is_mac_app_store():
+        return None
+    return Path(sys.executable).resolve().parent.parent / "Resources/sponsored"
+
+
 def verify_bundle(
     directory: Path,
     *,
@@ -111,6 +120,15 @@ def verify_bundle(
             "sponsored-policy.sig",
             "release-public-key.bin",
         }
+        members = names | {"manifest.json", "manifest.sig"}
+        if directory == _store_bundle_directory():
+            # The native host verifies the signed app and its nested code at launch.
+            # Apple distribution re-signs the helper, so its original SHA cannot
+            # authenticate those signature bytes. Keep the policy's Ed25519 checks.
+            binary = directory.parent.parent / "MacOS" / executable
+            if directory.is_symlink() or binary.is_symlink() or not binary.is_file():
+                raise BundleError("应用内的免费模型组件缺失，请从 App Store 更新")
+            members.remove(executable)
         if (
             manifest.get("protocol") != 2
             or manifest.get("profile") != PROFILE
@@ -119,10 +137,10 @@ def verify_bundle(
             <= _version(__version__)
             <= _version(manifest.get("core_max"))
             or set(manifest.get("files", {})) != names
-            or {p.name for p in directory.iterdir()} != names | {"manifest.json", "manifest.sig"}
+            or {p.name for p in directory.iterdir()} != members
         ):
             raise BundleError("免费模型组件与当前版本或平台不兼容")
-        for name in names | {"manifest.json", "manifest.sig"}:
+        for name in members:
             path = directory / name
             if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_UNPACKED_BYTES:
                 raise BundleError("invalid bundle member")
@@ -160,12 +178,13 @@ def verify_bundle(
 
 def _command(directory: Path) -> str:
     verify_bundle(directory)
-    binary = directory / (
-        "obc-sponsored-runtime.exe" if os.name == "nt" else "obc-sponsored-runtime"
+    executable = "obc-sponsored-runtime.exe" if os.name == "nt" else "obc-sponsored-runtime"
+    binary_dir = (
+        directory.parent.parent / "MacOS" if directory == _store_bundle_directory() else directory
     )
     return shlex.join(
         [
-            str(binary),
+            str(binary_dir / executable),
             "--policy",
             str(directory / "sponsored-policy.json"),
             "--signature",
@@ -177,6 +196,9 @@ def _command(directory: Path) -> str:
 
 
 def _installed_candidates() -> list[Path]:
+    store = _store_bundle_directory()
+    if store is not None:
+        return [store]
     bundled = os.environ.get("OPENBILICLAW_SPONSORED_BUNDLE", "").strip()
     try:
         active = (_root() / "active").read_text().strip()
@@ -322,6 +344,12 @@ def install_archive(archive: Path, *, catalog: dict[str, Any] | None = None) -> 
 
 def ensure_runtime() -> str:
     """Acquire the Core-pinned release. Never download a URL supplied by a browser."""
+    current = installed_runtime_command()
+    if is_mac_app_store():
+        if current:
+            return current
+        raise BundleUnavailableError("请从 App Store 更新免费模型组件")
+
     import httpx
 
     from openbiliclaw.config import load_config
@@ -329,7 +357,6 @@ def ensure_runtime() -> str:
 
     catalog = _catalog()
     release = catalog.get("releases", {}).get(platform_id())
-    current = installed_runtime_command()
     if not release:
         if current:
             return current

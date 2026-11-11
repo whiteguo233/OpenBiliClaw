@@ -2226,6 +2226,7 @@
     "此开关不会更新浏览器插件；插件商店安装由浏览器处理，zip / 开发者模式加载需要手动下载新版并重新加载。": "This toggle won't update the browser extension. Store installs are handled by the browser; zip / developer mode installs require manually downloading the new version and reloading it.",
     "此来源不被允许跨源登录（需配置 allowed_bearer_origins）": "This source isn't allowed cross-origin sign-in (configure allowed_bearer_origins)",
     "此来源仅支持本地收藏，不会向平台创建同步任务。": "This source only supports local Favorites; no sync tasks are created on the platform.",
+    "此版本通过 Mac App Store 更新。请在 App Store 中检查更新。": "This version updates through the Mac App Store. Check for updates in the App Store.",
     "此运行环境暂不支持 Ego Lite": "Ego Lite is not supported in this runtime yet",
     "步）": " steps)",
     "每个实例独立保存 Provider 类型、模型、Base URL 与凭据；同一种 Provider 也可以创建多个渠道。插件内可维护默认 fallback 链，模块自定义链继续在 PC Web 配置。": "Each instance stores its own provider type, model, Base URL, and credentials; you can create multiple channels for the same provider. The extension manages the default fallback chain; per-module custom chains are still configured on PC Web.",

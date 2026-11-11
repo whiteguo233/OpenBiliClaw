@@ -1024,3 +1024,13 @@ Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安
 ### 2026-11-09 默认链热切换边界
 
 `RuntimeContext.try_apply_llm_instance_config(new_config)` 对完整配置比较时，将 `data_dir` 解析为相同绝对路径，并通过 `normalize_locale` 比较语言；只有同一语言别名规范化与默认实例链变化可原地应用。真实语言、Embedding、端点及模块路由变化继续完整重建，不跳过后台写入安全交接。PC 真实保存暴露的 `zh` → `zh-Hans` 误排空由此修复；模型调用保持同一稳定 registry/gate，活动任务不被取消。
+
+## Mac App Store runtime boundary
+
+The frozen Store runtime resolves the free-model executable only inside the signed app. It verifies the policy against Core's Ed25519 trust root and uses the native host's bundle signature check for the executable. Updates to the runtime arrive with the Store app.
+
+| Implemented feature | Status |
+|---|---|
+| Store distribution isolation | Candidate: frozen bundle marker, container-only profile, App Store updater boundary, native host lifetime pipe. |
+
+Public API: `runtime.distribution.is_mac_app_store()`, `store_profile_root(home, environ)`, `prepare_store_python()`, `start_store_parent_watchdog(request_shutdown)`, `store_ollama_endpoint(config)`. The lifetime watcher installs a SIGTERM/SIGINT handler before Uvicorn so its signal replay cannot bypass child cleanup; EOF requests graceful shutdown. The Store endpoint resolver prioritizes a configured local Ollama embedding endpoint, preserving the private daemon after chat routing changes; remote embedding retains the shared supervisor policy. Native readiness probes use the actual published bind address, map wildcard listeners to loopback and bracket IPv6 addresses. Store autostart returns `managed_by_store_app` and never touches LaunchAgents. `AutoUpdateService` check/apply/status return `app_store_managed`, `install_mode=mac_app_store`, auto-update false, and never poll GitHub or apply source tags. Its background update loop stays off even if an imported config enables it. Native SMAppService is only called on an explicit window checkbox action. [Distribution details](../mac-app-store.md).

@@ -3071,6 +3071,7 @@ def create_app(
                 in {
                     "/api/config/probe-service",
                     "/api/config/discover-models",
+                    "/api/config/sponsored/prepare",
                     "/api/sources/web/probe",
                 }
                 and method == "POST"
@@ -21503,7 +21504,11 @@ def create_app(
 
         detail = ""
         if not state.supported:
-            detail = "当前运行环境不支持注册开机自启动。"
+            detail = (
+                "请在 Mac App 的窗口中设置登录时启动，由 macOS 登录项管理。"
+                if state.reason == "managed_by_store_app"
+                else "当前运行环境不支持注册开机自启动。"
+            )
         elif not trusted_local:
             detail = "仅本机可信请求可以修改开机自启动。"
         elif managed_env:

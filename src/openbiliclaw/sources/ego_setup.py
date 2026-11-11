@@ -390,7 +390,10 @@ class EgoSetupManager:
 
     def status(self) -> dict[str, Any]:
         """Read installation and prior handshake facts; never launch/probe the CLI."""
-        supported = sys.platform == "darwin"
+        from openbiliclaw.runtime.distribution import is_mac_app_store
+
+        store = is_mac_app_store()
+        supported = sys.platform == "darwin" and not store
         external = _external()
         state = self._state() if not external else {}
         installed = self.executable.is_file() if not external else False
@@ -403,6 +406,8 @@ class EgoSetupManager:
         detail = (
             _DETAILS["external"]
             if external
+            else "Managed Ego Lite installation is unavailable in the Mac App Store edition"
+            if store
             else _DETAILS["unsupported"]
             if not supported
             else (str(state.get("detail", _DETAILS["idle"])))
@@ -891,7 +896,9 @@ class EgoSetupManager:
                 await asyncio.sleep(_RETRY_DELAYS[attempt])
 
     async def _operate(self, *, initialize: bool, wait_for_owner: bool = False) -> dict[str, Any]:
-        if _external() or sys.platform != "darwin":
+        from openbiliclaw.runtime.distribution import is_mac_app_store
+
+        if _external() or sys.platform != "darwin" or is_mac_app_store():
             return self.status()
         if self.root.is_symlink() or self.profile_dir.is_symlink() or self.app.is_symlink():
             raise EgoSetupError("ego_setup_invalid_directory")

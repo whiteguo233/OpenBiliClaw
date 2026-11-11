@@ -357,3 +357,7 @@ tab 栏改为按内容宽度排布并允许横向滚动。完整契约见 [多�
 | 初始化写入阻断 | 保留服务端扁平 `detail` 文本，提示初始化进行中；发送草稿继续保留。 |
 
 共享接口 `OpenBiliClawDialogueConfirmation.contextErrorCode/contextErrorMessage` 同时识别嵌套 `detail.code/message` 与写入守卫的 `error/detail`；没有改变请求或重试策略。完成页继续使用同一份 Sponsored 表单配置。
+
+## Store backend updates
+
+Implemented: the existing `renderUpdateStatus()` handles `install_mode=mac_app_store` with a Mac App Store update message and disabled source-update actions. No download link to a GitHub installer appears. Mobile Web has no update-management panel; its QR/API connection contract is unchanged.

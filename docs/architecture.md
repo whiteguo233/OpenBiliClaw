@@ -828,7 +828,6 @@ query inspiration → configured provider chain
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 
-
 ## 免费模型路由与运行组件（实例统一改动待发布）
 
 ```text
@@ -860,3 +859,19 @@ Git / Docker / desktop + updater → pinned SDK verification → atomic activati
 中继使用独立部署的 `sponsored_relay.py`，不是用户私有 API 的公开代理。服务端只接收已签任务契约；客户端沿用工具解析、模型切换、流中断和向量校验。官方中继地址尚未配置时，发行包保留本地兼容模式；地址验证后切换 `runtime/relay_release.py`，打包门禁拒绝混入旧 Key SDK。历史元信息修复从同平台同 ID 的已存证据补空字段，冲突和无证据字段保持未知。[部署与威胁边界](sponsored-relay.md)。
 
 请求预算数据流（2026-11-08，待发布）：`llm.timeout → LLM 注册表 / 免费适配器 → Rust IPC timeout_ms → HTTP 剩余预算`。初始化根据注册表预算计算阶段期限；组件边界和签名模型输入不变。
+
+## Mac App Store 分发与进程边界
+
+```text
+Xcode macOS host [App Sandbox + network client/server]
+  ├─ explicit user action → SMAppService.mainApp
+  └─ lifetime pipe → frozen Python backend [sandbox + inherit]
+       ├─ full / discovery / recommendation / image workers
+       ├─ bundled Ollama → container models
+       ├─ signed bundled Rust runtime → selected SiliconFlow provider
+       └─ bundled userspace Tailnet → container node state
+     HTTP API → existing Web / extension / mobile consumers
+App Store → complete app update; source/DMG/Docker channels stay separate
+```
+
+`runtime.distribution` identifies the immutable store marker and constrains profiles to app support inside the container. The host owns the backend lifetime; Python keeps existing worker/native-service ownership and graceful cleanup. Store builds never reconcile legacy LaunchAgents or migrate external profiles. [Build, limits, validation and submission](mac-app-store.md).

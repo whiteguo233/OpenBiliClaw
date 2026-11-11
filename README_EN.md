@@ -684,6 +684,11 @@ Git / Docker / desktop + updater → pinned SDK verification → atomic activati
 Text/JSON calls forward real streaming deltas. Free tools use a Qwen-tagged prompt bridge with identified results; ordinary JSON remains data. Fallback follows only the explicitly configured instance chain. BGE-M3 has no image embeddings.
 
 ```text
+Mac App Store candidate: Xcode sandbox host → frozen backend/workers → container data
+  ├─ signed bundled Rust runtime → selected free-model provider
+  ├─ explicit login toggle → SMAppService
+  └─ App Store updates; shared Web / extension / mobile API
+
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
@@ -979,3 +984,5 @@ Default data flow: browser extension → your configured local OpenBiliClaw back
 </details>
 
 Request budget flow (pending release, 2026-11-08): `llm.timeout → LLM registry / free adapter → Rust IPC timeout_ms → HTTP remaining budget`. Guided initialization derives its watchdog from the registry budget; component boundaries and signed model input are unchanged.
+
+`OpenBiliClaw Hub 1.0.0 (5)` targets Apple Silicon. Apple validated the binary, and the resubmitted build is waiting for review. [Mac App Store build and review record](docs/mac-app-store.md)

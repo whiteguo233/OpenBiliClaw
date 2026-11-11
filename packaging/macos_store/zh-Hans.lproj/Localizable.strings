@@ -1,0 +1,17 @@
+"Your Mac, your backend" = "你的 Mac，你的后端";
+"Connect your browser extension and phone to this Mac. Closing this window keeps the backend in the menu bar; Quit stops its services." = "让浏览器插件和手机连接这台 Mac。关闭窗口后服务保留在菜单栏，退出 App 会停止后台服务。";
+"Open Web & connection QR" = "打开 Web 与连接二维码";
+"Start at login" = "登录时启动";
+"Optional. macOS controls login approval in System Settings → General → Login Items." = "可选。macOS 可在「系统设置 → 通用 → 登录项」中管理启动授权。";
+"Show logs" = "查看日志";
+"Show backend" = "显示后端窗口";
+"Quit OpenBiliClaw" = "退出 OpenBiliClaw";
+"Starting backend…" = "正在启动后端…";
+"Application signature verification failed." = "应用签名校验失败。";
+"Stop backend" = "停止后端";
+"Start backend" = "启动后端";
+"Backend stopped" = "后端已停止";
+"Backend exited. Open logs for details, then retry." = "后端已退出。请查看日志后重试。";
+"Stopping services…" = "正在停止后台服务…";
+"Backend running · ready to connect" = "后端运行中 · 可以连接";
+"Waiting for backend…" = "正在等待后端…";

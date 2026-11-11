@@ -904,3 +904,13 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 `POST /api/config/probe-service` 的 `kind=embedding` 在 provider 为 `siliconflow_free` 时沿用业务向量 180 秒预算，覆盖本地 RPM 窗口等待；Ollama 主动探测仍为 45 秒，其他远端主动探测及后台 health 的 15 秒边界不变。PC / 插件探测客户端给 Embedding 190 秒，首次设置已有 190 秒。忙碌/超时仍返回 `EMBEDDING_BUSY`、`retryable=true`，没有把失败当成功。
 
 `RuntimeContext.try_apply_llm_instance_config()` 在比较完整配置时规范等价语言标签（例如 `zh` / `zh-Hans`），避免 PC 整表保存仅切换默认链却误入后台学习排空。真实语言、端点、模块路由及向量空间变化仍不走该快捷路径；在途调用保留旧 adapter，新调用使用新链。实测与限制见[完整流程验收](../testing/2026-11-08-free-full-e2e.md)。
+
+## Mac App Store distribution status
+
+`POST /api/config/sponsored/prepare` remains reachable while the LLM registry is unconfigured, subject to the normal configuration write authorization. In Store builds it checks the bundled policy and helper. The managed Ego installation endpoint returns HTTP 409 in the Store sandbox.
+
+| Implemented feature | Status |
+|---|---|
+| Store-aware update/autostart status | Candidate |
+
+Existing `/api/update-status` reports `backend.install_mode=mac_app_store`, `reason=app_store_managed`, no installer tag and auto-update false; `/api/update/apply` refuses with 409. `/api/autostart-status` explains that login startup is controlled in the native Mac App window (`managed_by_store_app`). API schemas, phone QR routes and authentication are unchanged. See [Mac App Store channel](../mac-app-store.md).

@@ -1,0 +1,17 @@
+"Your Mac, your backend" = "Your Mac, your backend";
+"Connect your browser extension and phone to this Mac. Closing this window keeps the backend in the menu bar; Quit stops its services." = "Connect your browser extension and phone to this Mac. Closing this window keeps the backend in the menu bar; Quit stops its services.";
+"Open Web & connection QR" = "Open Web & connection QR";
+"Start at login" = "Start at login";
+"Optional. macOS controls login approval in System Settings → General → Login Items." = "Optional. macOS controls login approval in System Settings → General → Login Items.";
+"Show logs" = "Show logs";
+"Show backend" = "Show backend";
+"Quit OpenBiliClaw" = "Quit OpenBiliClaw";
+"Starting backend…" = "Starting backend…";
+"Application signature verification failed." = "Application signature verification failed.";
+"Stop backend" = "Stop backend";
+"Start backend" = "Start backend";
+"Backend stopped" = "Backend stopped";
+"Backend exited. Open logs for details, then retry." = "Backend exited. Open logs for details, then retry.";
+"Stopping services…" = "Stopping services…";
+"Backend running · ready to connect" = "Backend running · ready to connect";
+"Waiting for backend…" = "Waiting for backend…";

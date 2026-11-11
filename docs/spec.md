@@ -312,6 +312,9 @@ Git / Docker / desktop + updater → pinned SDK verification → atomic activati
 ```
 
 ```text
+Mac App Store candidate: Xcode sandbox host → inherited frozen backend + workers
+  → signed bundled Rust helper when a free model is selected
+  → container profile; explicit SMAppService login; App Store updates
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘

@@ -685,6 +685,11 @@ Git / Docker / desktop + updater → pinned SDK verification → atomic activati
 文本/JSON 接口转发真实增量流；免费工具适配采用 Qwen 标记格式的提示词桥接，保留结果身份，普通 JSON 作为数据。备用服务只按用户配置的实例链使用。BGE-M3 不提供图片向量。
 
 ```text
+Mac App Store candidate: Xcode sandbox host → frozen backend/workers → container data
+  ├─ signed bundled Rust runtime → selected free-model provider
+  ├─ explicit login toggle → SMAppService
+  └─ App Store updates; shared Web / extension / mobile API
+
 LAN / system Tailscale interfaces + ready embedded helper + effective listener
   → GET /api/qr-info → shared mobile-connection.js → Web / extension QR
 public/custom HTTP(S) URL ──────────────────────┘
@@ -994,3 +999,5 @@ OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站
 </details>
 
 请求预算数据流（2026-11-08，待发布）：`llm.timeout → LLM 注册表 / 免费适配器 → Rust IPC timeout_ms → HTTP 剩余预算`。初始化根据注册表预算计算阶段期限；组件边界和签名模型输入不变。
+
+Mac App Store 桌面版 `OpenBiliClaw Hub 1.0.0 (5)` 面向 Apple Silicon，已通过 Apple 二进制检查并重新提审，当前等待审核。[商店版说明](docs/mac-app-store.md)

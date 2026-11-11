@@ -32,6 +32,7 @@ import httpx
 import openbiliclaw
 from openbiliclaw.docker_runtime import is_running_in_container
 from openbiliclaw.proc import no_window_kwargs
+from openbiliclaw.runtime.distribution import is_mac_app_store
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,8 @@ def detect_install_mode() -> str:
       agent install, or dev checkout) — the auto-update flow can apply.
     - ``unsupported``: anything else (e.g. a bare pip install).
     """
+    if is_mac_app_store():
+        return "mac_app_store"
     if getattr(sys, "frozen", False):
         return "frozen"
     if is_running_in_container():
@@ -543,6 +546,8 @@ class AutoUpdateService:
     async def check_and_update_if_due(self) -> dict[str, object]:
         """Run the update check only when the configured interval has elapsed."""
         mode = detect_install_mode()
+        if mode == "mac_app_store":
+            return {"checked": False, "updated": False, "reason": "app_store_managed"}
         if mode in ("frozen", "docker"):
             # Desktop bundles and docker containers can't self-apply (the
             # binary / image IS the code; there is no git checkout of their
@@ -620,6 +625,8 @@ class AutoUpdateService:
 
     async def check_now(self) -> dict[str, object]:
         """Manually refresh backend update status without applying updates."""
+        if is_mac_app_store():
+            return self.get_update_status()
         self._state = "checking"
         self._reason = "none"
         self._last_check_at = datetime.now(tz=UTC)
@@ -680,6 +687,10 @@ class AutoUpdateService:
         """Validate and start a backend apply flow, returning before restart."""
         global _PROCESS_APPLY_TASK
 
+        if is_mac_app_store():
+            return 409, self._apply_response(
+                state="unsupported", reason="app_store_managed", accepted=False
+            )
         async with _PROCESS_APPLY_LOCK:
             if _PROCESS_APPLY_TASK is not None and not _PROCESS_APPLY_TASK.done():
                 self._state = "applying"
@@ -769,6 +780,18 @@ class AutoUpdateService:
 
     def get_update_status(self) -> dict[str, object]:
         """Expose backend update status for the update-status API."""
+        if is_mac_app_store():
+            return {
+                "state": "unsupported",
+                "auto_update_enabled": False,
+                "install_mode": "mac_app_store",
+                "current_version": openbiliclaw.__version__,
+                "latest_version": "",
+                "latest_tag": "",
+                "last_check_at": "",
+                "last_error": "",
+                "reason": "app_store_managed",
+            }
         state = self._state or ("disabled" if not self.enabled else "unknown")
         return {
             "state": state,
@@ -784,6 +807,17 @@ class AutoUpdateService:
 
     def get_runtime_status(self) -> dict[str, object]:
         """Expose update status for the runtime-status API."""
+        if is_mac_app_store():
+            return {
+                "auto_update_enabled": False,
+                "install_mode": "mac_app_store",
+                "current_version": openbiliclaw.__version__,
+                "latest_remote_version": "",
+                "last_update_check_at": "",
+                "last_update_error": "",
+                "backend_update_state": "unsupported",
+                "backend_update_reason": "app_store_managed",
+            }
         return {
             "auto_update_enabled": self.enabled,
             "install_mode": detect_install_mode(),
@@ -827,6 +861,8 @@ class AutoUpdateService:
         get a "new installer / image available" reminder without opting in
         to anything.
         """
+        if is_mac_app_store():
+            return False
         return self.enabled or detect_install_mode() in ("frozen", "docker")
 
     async def run_forever(self) -> None:

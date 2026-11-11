@@ -1190,3 +1190,7 @@ gitignore），因此后端不可达时插件自身界面仍可本地化；后�
 ### Safari 公证票据网络恢复（2026-11-08）
 
 打包内部 `stapleNotarizationTicket(path)` 对 staple、validate 分别最多四次执行，每次限时 60 秒，仅重试明确 Apple 网络错误或命令超时，退避 5／15／30 秒。永久票据或签名错误立即失败，未成功验证不产出可发布包；已接受的公证不会因票据重试而再次提交。功能 JS、清单和商店包不变。
+
+## Mac App Store backend status
+
+Implemented: `renderBackendUpdateStatus()` disables source-update controls for `mac_app_store` and tells the user to update through Mac App Store; `app_store_managed` is localized. Existing QR targets and extension installation channels remain unchanged. Manual validation: connect to the sandboxed backend, open settings, verify the App Store hint and absence of a source apply/installer download action.

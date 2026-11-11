@@ -1096,3 +1096,7 @@ macOS 官方包下载在 CDN 支持强 ETag 与字节范围时使用四段并行
 ### 免费中继发行模式
 
 默认兼容模式继续纳入固定验签的 Rust SDK。已部署并验收的官方中继地址写入发行默认后，安装包/镜像不携带上游 Key SDK，首次使用创建独立设备身份。手工配置 `llm.sponsored.relay_url` 仅改变调用路由，不会移除旧包中的凭据；生产迁移必须发布不含 Key 的包并由供应商撤销旧 Key。[部署顺序及限制](sponsored-relay.md)。
+
+## Mac App Store 发行通道
+
+商店版通过独立原生宿主和 App Sandbox 容器运行，不使用本指南的脚本/AI 安装、pip 更新或 LaunchAgent。现有 AI 安装输出与默认 `0.0.0.0` 监听保持不变；新增商店通道的构建与数据迁移边界见 [Mac App Store](mac-app-store.md)。尚未上架，不要引导用户搜索一个已发布的商店版本。

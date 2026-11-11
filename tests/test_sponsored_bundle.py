@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -114,6 +115,31 @@ def test_bundle_rejects_tampering_or_incompatible_assets(tmp_path: Path, attack:
         (directory / "obc-sponsored-runtime").symlink_to(tmp_path / "outside")
     with pytest.raises(bundle.BundleError):
         bundle.verify_bundle(directory, catalog=catalog)
+
+
+def test_store_uses_only_packaged_sponsored_runtime(tmp_path: Path, monkeypatch) -> None:
+    contents = tmp_path / "OpenBiliClaw.app/Contents"
+    directory = contents / "Resources/sponsored"
+    directory.parent.mkdir(parents=True)
+    catalog, _ = signed_bundle(directory, platform="macos-arm64")
+    binary = contents / "MacOS/obc-sponsored-runtime"
+    binary.parent.mkdir()
+    (directory / binary.name).rename(binary)
+    # Store signing changes the original SDK's signature bytes. The native host
+    # validates that code separately, while the policy must still verify here.
+    binary.write_bytes(b"App Store signed executable")
+    monkeypatch.setattr(bundle, "_catalog", lambda: catalog)
+    monkeypatch.setattr(bundle, "platform_id", lambda: "macos-arm64")
+    monkeypatch.setattr(bundle, "is_mac_app_store", lambda: True)
+    monkeypatch.setattr(bundle.sys, "executable", str(binary.with_name("OpenBiliClawBackend")))
+    monkeypatch.setenv("OPENBILICLAW_SPONSORED_BUNDLE", str(tmp_path / "untrusted"))
+    monkeypatch.setattr(bundle, "_root", lambda: tmp_path / "container")
+
+    assert shlex.split(bundle.ensure_runtime())[0] == str(binary.resolve())
+    (directory / "sponsored-policy.json").write_text("{}")
+    with pytest.raises(bundle.BundleUnavailableError, match="App Store"):
+        bundle.ensure_runtime()
+    assert not (tmp_path / "container").exists()
 
 
 @pytest.mark.parametrize(

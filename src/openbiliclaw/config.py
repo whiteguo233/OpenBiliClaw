@@ -2684,9 +2684,13 @@ def _build_config(
     sponsored_raw = llm_raw.get("sponsored", {})
     if not isinstance(sponsored_raw, dict):
         sponsored_raw = {}
+    from openbiliclaw.runtime.distribution import is_mac_app_store
+
     sponsored = SponsoredRuntimeSettings(
         enabled=bool(sponsored_raw.get("enabled", False)),
-        runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
+        runtime_path=(
+            "" if is_mac_app_store() else str(sponsored_raw.get("runtime_path") or "").strip()
+        ),
         relay_url=str(
             sponsored_raw.get("relay_url", "") or SponsoredRuntimeSettings().relay_url
         ).strip(),

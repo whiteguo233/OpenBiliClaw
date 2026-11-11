@@ -22,6 +22,10 @@
 
 - 认知 prompt 不再重复序列化归档兴趣（issue #342）：`preference_prompt_payload()` 门面统一剔除只增不减的 `archived_interests` 台账，五个偏好 prompt builder 与 `build_cognition_profile_view_v1` 的 legacy / compact-v1 两条视图都不再输出它；持久化存储不变，偏好分析器仍从库内做归档别名去重与证据驱动复燃，无台账输入的 prompt 逐字节不变。真实 Provider 复测（4,752 条台账 / 109,390 条真实事件库）：同一次 `soul.awareness_confusions` 从 852,649 input tokens、¥0.8545 降到 25,787 tokens、¥0.0297，且 4,752 条台账与 0 条台账的出站请求逐字节相同。[验收记录](testing/2026-11-10-issue-342-cognition-archive-e2e.md)。
 
+- Mac App Store build 5 合入主干 `8b760446`，打包签名免费模型运行组件；商店版由宿主校验嵌套代码，并关闭运行时下载 Ego Lite 的入口。
+- Mac App Store build 5 通过 Apple 二进制检查，于 2026-11-10 00:08（北京时间）重新提审，当前等待审核。[审核回执](verification/2026-11-07-mac-app-store-distribution.md#2026-11-10-build-5-重新提审)
+- 修复首启无模型配置时准备免费组件返回 503 的问题。配置写入鉴权继续作用于该路由。
+
 - 免费初始化修复合入收尾：Core 合并前回归 707 passed，Rust 81 passed，静态检查通过；临时后端停止，保留验收证据及 4B 工具协议 / 浏览器实测缺口。此次不发安装包或 SDK，后续需同步构建。[合入验证](testing/2026-11-09-setup-progressive-options.md#2026-11-09-合入验证与清理)。
 
 - 初始化真实请求验收：两个免费模型各完成 40 条 GitHub Star 的偏好、画像与首轮推荐，流式对话、三路并发及反馈去重通过；4B 画像工具首次协议失败、两次复测成功，保留未解决项。浏览器点击因权限不可用按用户要求待续。[验收边界](testing/2026-11-09-setup-progressive-options.md#真实后端与真实模型请求补充)。
@@ -242,6 +246,28 @@
 
 - 修复抖音账号初始化采集：本人 `profile/self` 补齐网页端参数，喜欢 / 收藏 / 关注更正为 `favorite` GET / `listcollection` POST / `following/list` GET，并修复分类与分页。个人记录只返回本人 API 数据，正常空列表不再被推荐卡片补满；API 降级仅保留有效 partial，避免错误行为污染画像。缺失 / 错误列表与零页响应不伪报空；默认 300 条任务额度保留。补充请求、分页、真实 bridge 与四 scope 入口回归；Chrome 实装真实账号复测取得作品 / 收藏 / 喜欢 / 关注 23 / 4 / 7 / 8 条并落库 42 条对应事件，第二页注入断网保留真实首屏 18 条且不重复导入。追加正式 18420 服务复测保留 7 条有效关注，完整画像链路受抖音 403 与原模型 429 阻塞。另用 Codex 订阅 `gpt-6.1-sol` 真实复测，修复后成功分析同批 7 条记录；确认正式 0.3.230 需补齐 #334 的 JSON 传输兼容，未切换正式 worker 或写回画像。本地实现未发布，范围与限制见 [验证记录](verification/2026-11-05-douyin-account-bootstrap.md)。
 - （2026-11-04）修复「喜欢的题材被当成不喜欢」的避雷粒度根因：偏好分析 prompt 不再把负向证据强制导向 `disliked_topics`（删掉「只能用于 disliked_topics」与「负向优先级最高、不能被 signal_strength 抵消」两条），改为中立的证据粒度契约——负向证据说明的是「这一次」而不是「这个题材」，单条事件不许命名比它更宽的类别，标题恰好是类别词时仍只代表这一条内容，正负冲突时取更近的一次；推荐出口的子串匹配同步加粒度闸，只对 ≥4 字符或带限定词的短语级避雷词生效，2–3 字裸类别词按结构化 topic 精确匹配。真实事故链：一条标题就叫《科普》的视频被点踩一次 → 画像写入 `disliked_topics: ["科普"]` → 缓存出口删掉 198 行，包含同一画像里仍是兴趣的「天文科普 / 健康科普」，封杀后 240 条推荐里 0 条科普；修复后同一份本地快照的删除量 235 → 10，科普 / 崩坏 / 综艺 归零，同时保留「运动康复」「五分钟讲清式内容」这类短语级过滤。
+
+- Mac App Store 的 Intel build 3 在 2026-11-08 提交后被标记为「二进制文件无效」。Apple Silicon 商店归档现在只保留 arm64 代码，筛除 Ollama 的 Intel 侧载库。GitHub 构建增加内置 Ollama 的真实向量推理检查。
+
+- Mac App Store 的 `OpenBiliClaw Hub 1.0.0 (3)` 于 2026-11-08 02:55（北京时间）完成提交，六张真实截图随版本提交。发行方已确认第三方内容使用权，声明保存后通过预检查。
+
+- Mac App Store 已上传并重新载入核验 6 张 2880×1800 RGB 的候选 3 真实界面，依次覆盖推荐、收藏、稍后再看、模型、平台源和手机二维码；旧低分辨率二维码从当前版本移除，素材库原件保留。新二维码图片识别与同机 LAN 手机网页请求通过，完整素材摘要已保存，本轮未修改二进制。
+
+- Mac App Store 发行范围按发行方要求保存为仅中国大陆，不自动加入未来地区；build 3 按标准加密算法、不在法国分发完成问卷，出口合规缺项消除。内容版权声明按发行方确认保存后通过提审预检查；手机 App 和账号级 DSA 设置保持原有配置。
+
+- Mac App Store 许可文本补漏：冻结 TOC 中还包含 pystray，签名前记录现覆盖三项已识别 Python GPL/LGPL 依赖，并保留 `COPYING.LGPL` 等补充文本；build 3 替代 build 2，已于 2026-11-08 提交审核。相关打包测试 130 passed / 2 skipped；签名 App 冒烟同步检查三项记录及 LGPL 补充条款，Intel 和 Apple Silicon 的同轮沙盒真实请求与退出清理通过。
+
+- Mac App Store 商店名称保存为 OpenBiliClaw Hub，副标题「你的 AI 内容中枢」；安装后的桌面 App 仍名为 OpenBiliClaw。1.0.0 (2) 已由 Xcode 完成上传（含架构与 dSYM 警告），尚未提交审核。
+
+- Mac App Store 桌面显示名称统一为 `OpenBiliClaw`：同步 App 文件名、原生窗口、退出菜单、本地化、商店文案、构建和真实冒烟入口，移除产品名称中的 Backend 后缀；最终商店提交为 `1.0.0 (3)`。
+
+- [商店版 1.0.0 (2) 发行归档验证](verification/2026-11-07-mac-app-store-distribution.md)：Apple Distribution 归档与 Installer 签名导出成功，改名后的 Intel 真实沙盒请求、退出清理及独立 Apple Silicon QA 通过；免费发行、无内购，商店上传与提审状态另行核对。
+
+- 新增独立的 [Mac App Store 构建](mac-app-store.md)：Xcode 原生宿主、继承沙盒的冻结后端与内置服务、容器数据、显式登录启动和商店更新边界；保留原 DMG。真实签名沙盒请求发现并修复 Uvicorn 信号重放绕过子进程清理的问题，`1.0.0 (3)` 已提交 Apple 审核。
+
+- Mac App Store 候选续验：修复配置独立 Ollama 对话模型后重启丢失内置 embedding 服务、原生就绪探测忽略 IPv6 绑定的问题；双启动真实请求验证通过，arm64 CI 增加同一路径，并在退出测试前等待实际原生按钮启用。记录实际 GPL/LGPL 依赖的商店分发许可待核对项，不将 QA 包作为已可提交的发行包。
+
+- Mac App Store QA 归档在签名前保留已确认的两项 Python GPL/LGPL 依赖许可证原文、实际版本与来源；缺失原文即停止构建。该有限记录不替代对应源码提供或商店分发许可确认。
 
 - 修复画像把「账号导入」读成「用户行为」的根因（假时间 + 存量当行为）：B 站三条账号同步路径补齐真实时间——`get_following` 解析 `/x/relation/followings` 的 `mtime`，历史 `view_at`、收藏 `fav_time` 镜像进 canonical `metadata.timestamp`，CLI guided init 采集同样保留；首次同步给事件标 `snapshot`。本机账本实测 89,866 条观看只落在 950 个 `created_at` 秒、2,429 条关注只落在 93 个秒，正是「同一秒关注四十多人」的来源。新增 `soul/event_provenance.py` 在 prompt 边界统一投影：`created_at` 不再进入模型（只认 `metadata.timestamp`），存量关注聚合成一行「导入存量：关注了 N 位创作者（时间区间）」，无时间事件标 `time_quality=ingest`。偏好 / 觉察 / 灵魂画像 / 洞察四条 prompt 同步加规则：不得用库存推断外向、EI 只认用户自己的表达、MBTI 不得当 insight 证据；`ProfileBuilder` 对 MBTI 输出做 pole 校验、type 与维度一致性重算，任一维度 strength < 0.60 时把 confidence 压到 0.55。偏好 / 觉察两条 prompt 的用户消息渲染 golden 随之重新采样，并在测试里注明是显式的契约变更。
 

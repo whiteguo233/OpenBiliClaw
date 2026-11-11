@@ -9485,6 +9485,7 @@ function bindSettings() {
   const BACKEND_UPDATE_REASON_TEXT = {
     dirty_worktree: "代码目录有未提交改动，更新被阻止",
     unsupported_install_mode: "当前安装方式不支持自动更新",
+    app_store_managed: "此版本通过 Mac App Store 更新。请在 App Store 中检查更新。",
     docker_install_mode: "Docker 安装通过拉取新镜像升级，无法就地自更新",
     untrusted_remote: "git 远端不在允许列表，更新被阻止（可在后端日志查看实际远端地址）",
     branch_not_fast_forwardable: "本地代码与发布版本分叉，无法快进更新",
@@ -9528,7 +9529,8 @@ function bindSettings() {
     const isGitInstall = installMode === "git";
     const isFrozenInstall = installMode === "frozen";
     const isDockerInstall = installMode === "docker";
-    const autoApplyUnsupported = ["frozen", "docker", "unsupported"].includes(installMode);
+    const isStoreInstall = installMode === "mac_app_store";
+    const autoApplyUnsupported = ["frozen", "docker", "unsupported", "mac_app_store"].includes(installMode);
     const autoUpdateToggle = document.getElementById("cfgAutoUpdate");
     if (autoUpdateToggle instanceof HTMLInputElement) {
       autoUpdateToggle.disabled = autoApplyUnsupported;
@@ -9569,6 +9571,8 @@ function bindSettings() {
           backend.state === "update_available"
             ? "Docker 安装：发现新版镜像，在部署目录执行 docker compose pull && docker compose up -d 完成升级。"
             : "Docker 安装：升级通过拉取新镜像完成（docker compose pull && docker compose up -d）。";
+      } else if (isStoreInstall) {
+        hint = "此版本通过 Mac App Store 更新。请在 App Store 中检查更新。";
       } else if (isFrozenInstall) {
         hint = "桌面安装包：发现新版时点击上方链接下载新安装包完成升级。";
       } else if (installMode && !isGitInstall) {
