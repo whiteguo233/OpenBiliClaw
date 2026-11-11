@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1205,10 +1206,90 @@ dependencies = ["httpx>=0.27", "Pillow>=10; python_version >= '3.11'"]
     ]
 
 
+@pytest.mark.parametrize(
+    ("caller_runtime_key", "with_external_config"),
+    [
+        (None, False),
+        (None, True),
+        ("OPENBILICLAW_FULL_WORKER", False),
+        ("OPENBILICLAW_RECOMMENDATION_SOCK", False),
+        ("OPENBILICLAW_RECOMMENDATION_PORT", False),
+    ],
+)
+def test_restart_process_keeps_env_provenance(
+    monkeypatch: pytest.MonkeyPatch, caller_runtime_key: str | None, with_external_config: bool
+) -> None:
+    from openbiliclaw.config import Config
+    from openbiliclaw.runtime.autostart import guards
+
+    for key in tuple(os.environ):
+        if key.startswith("OPENBILICLAW_") or key in {"GOOGLE_API_KEY", "GEMINI_API_KEY"}:
+            monkeypatch.delenv(key)
+    external_env = {
+        "OPENBILICLAW_PROJECT_ROOT": "/caller/profile",
+        "PATH": "/caller/bin",
+    }
+    config_env = {
+        "OPENBILICLAW_API_AUTH_PASSWORD": "test-only-password",
+        "OPENBILICLAW_LLM_DEFAULT_PROVIDER": "ollama",
+        "GOOGLE_API_KEY": "test-only-key",
+    }
+    if with_external_config:
+        external_env.update(config_env)
+    runtime_env = {
+        "OPENBILICLAW_FULL_WORKER": "1",
+        "OPENBILICLAW_IMAGE_SERVICE_URL": "http://127.0.0.1:8421",
+        "OPENBILICLAW_RECOMMENDATION_SOCK": "/tmp/recommendation.sock",
+        "OPENBILICLAW_RECOMMENDATION_PORT": "8422",
+        "OPENBILICLAW_RUNTIME_DATA_DIR": "/caller/profile/data",
+    }
+    if caller_runtime_key is not None:
+        external_env[caller_runtime_key] = runtime_env[caller_runtime_key]
+    for key, value in external_env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(guards, "_startup_env_keys", None)
+    guards.snapshot_startup_env()
+    for key, value in runtime_env.items():
+        monkeypatch.setenv(key, value)
+    live_env = dict(os.environ)
+    restart_envs: list[dict[str, str]] = []
+
+    def capture_exec(_executable: str, _argv: list[str], env: dict[str, str] | None = None) -> None:
+        restart_envs.append(dict(os.environ if env is None else env))
+        raise OSError("simulated restart failure")
+
+    monkeypatch.setattr(updater.os, "execv", capture_exec)
+    monkeypatch.setattr(updater.os, "execve", capture_exec)
+    with pytest.raises(OSError, match="simulated restart failure"):
+        updater.AutoUpdateService._restart_process()
+
+    assert len(restart_envs) == 1
+    restart_env = restart_envs[0]
+    assert {key: restart_env.get(key) for key in external_env} == external_env
+    assert not (runtime_env.keys() - external_env.keys()) & restart_env.keys()
+    # A failed exec must leave the running backend's wiring intact.
+    changed_keys = {
+        key
+        for key in live_env.keys() | os.environ.keys()
+        if live_env.get(key) != os.environ.get(key)
+    }
+    assert not changed_keys
+
+    # Model the replacement interpreter: only inherited inputs enter its snapshot.
+    monkeypatch.setattr(os, "environ", restart_env)
+    monkeypatch.setattr(guards, "_startup_env_keys", None)
+    guards.snapshot_startup_env()
+    expected_managed = set(config_env) if with_external_config else set()
+    if caller_runtime_key is not None:
+        expected_managed.add(caller_runtime_key)
+    assert guards.active_env_managed_inputs(Config()) == sorted(expected_managed)
+
+
 def test_restart_process_uses_module_entrypoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, list[str]]] = []
+    restart_envs: list[dict[str, str]] = []
     monkeypatch.setattr(updater.sys, "executable", r"C:\OpenBiliClaw\.venv\Scripts\python.exe")
     monkeypatch.setattr(
         updater.sys,
@@ -1217,8 +1298,11 @@ def test_restart_process_uses_module_entrypoint(
     )
     monkeypatch.setattr(
         updater.os,
-        "execv",
-        lambda executable, argv: calls.append((executable, list(argv))),
+        "execve",
+        lambda executable, argv, env: (
+            calls.append((executable, list(argv))),
+            restart_envs.append(env),
+        ),
     )
 
     updater.AutoUpdateService._restart_process()
@@ -1236,6 +1320,9 @@ def test_restart_process_uses_module_entrypoint(
             ],
         )
     ]
+    # No startup snapshot is available: preserve even unknown inputs.
+    assert len(restart_envs) == 1
+    assert restart_envs[0] == dict(os.environ)
 
 
 @pytest.mark.asyncio

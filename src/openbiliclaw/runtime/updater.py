@@ -1451,6 +1451,8 @@ class AutoUpdateService:
     @staticmethod
     def _restart_process() -> None:
         """Restart the git-install CLI through a cross-platform module entry."""
+        from openbiliclaw.runtime.autostart.guards import build_restart_env
+
         argv = [sys.executable, "-m", "openbiliclaw.cli", *sys.argv[1:]]
         logger.info("Restarting process: %s", argv)
-        os.execv(sys.executable, argv)
+        os.execve(sys.executable, argv, build_restart_env())

@@ -42,6 +42,52 @@ def test_active_env_managed_inputs_ignores_empty_or_project_root_env(
     assert active_env_managed_inputs(cfg) == []
 
 
+def test_active_env_managed_inputs_ignores_runtime_injected_worker_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four-process wiring written after startup must not disable the switch."""
+    from openbiliclaw.runtime.autostart import guards
+
+    cfg = Config()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", "/tmp/openbiliclaw")
+    monkeypatch.setattr(guards, "_startup_env_keys", None)
+    guards.snapshot_startup_env()
+    # What packaging/entry.py and cli._run_api_server() set on themselves.
+    monkeypatch.setenv("OPENBILICLAW_FULL_WORKER", "1")
+    monkeypatch.setenv("OPENBILICLAW_IMAGE_SERVICE_URL", "http://127.0.0.1:8421")
+    monkeypatch.setenv("OPENBILICLAW_RECOMMENDATION_SOCK", "/tmp/openbiliclaw/recommendation.sock")
+
+    assert guards.active_env_managed_inputs(cfg) == []
+
+
+def test_active_env_managed_inputs_keeps_caller_supplied_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real exported override still blocks autostart even with a snapshot."""
+    from openbiliclaw.runtime.autostart import guards
+
+    cfg = Config()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", "/tmp/openbiliclaw")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD", "secret")
+    monkeypatch.setattr(guards, "_startup_env_keys", None)
+    guards.snapshot_startup_env()
+    monkeypatch.setenv("OPENBILICLAW_FULL_WORKER", "1")
+
+    assert guards.active_env_managed_inputs(cfg) == ["OPENBILICLAW_API_AUTH_PASSWORD"]
+
+
+def test_startup_env_snapshot_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from openbiliclaw.runtime.autostart import guards
+
+    monkeypatch.setattr(guards, "_startup_env_keys", None)
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", "/tmp/openbiliclaw")
+    guards.snapshot_startup_env()
+    monkeypatch.setenv("OPENBILICLAW_FULL_WORKER", "1")
+    guards.snapshot_startup_env()
+
+    assert "OPENBILICLAW_FULL_WORKER" not in guards._startup_env_keys
+
+
 @pytest.mark.parametrize("macos", [False, True])
 def test_autostart_accepts_rediscoverable_packaged_sponsored_bundle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
