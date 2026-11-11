@@ -1496,7 +1496,7 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
 
     return {
       kind: "empty",
-      message: "这会儿还没新东西，先运行 init、discover 或 recommend",
+      message: "暂时没有新候选，后台会继续补货。",
       items: [],
     };
   }

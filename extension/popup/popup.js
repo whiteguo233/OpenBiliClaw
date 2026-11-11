@@ -8419,7 +8419,7 @@ function renderRecommendationState(stateShape) {
   }
 
   showRecommendationEmptyState("这会儿还没新东西", stateShape.message);
-  setHint("先跑 init、discover 或 recommend，再回来瞅瞅。");
+  setHint("暂时没有新候选，后台会继续补货。");
 }
 
 async function loadProfileSummary({ force = false } = {}) {

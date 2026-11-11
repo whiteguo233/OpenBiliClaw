@@ -29,11 +29,7 @@ test("chat tab layout pins a compact composer below a flexible history pane", ()
   assert.doesNotMatch(chatMessagesBlock, /max-height:/);
   assert.match(chatFormBlock, /margin-top:\s*auto;/);
   assert.match(chatFormBlock, /flex-shrink:\s*0;/);
-  assert.doesNotMatch(
-    popupHtml,
-    /\.shell:has\(#viewChat:not\(\[hidden\]\)\)\s+\.footer\s*\{[\s\S]*?display:\s*none;/,
-    "the global activity footer must stay visible on the chat tab",
-  );
+  assert.match(popupHtml, /body\.chat-tab-active \.footer \{ display: none; \}/);
 });
 
 test("pending confirmations stay bounded and scroll independently from chat history", () => {
@@ -106,9 +102,10 @@ test("chat textarea keeps inner spacing and readable line height", () => {
   assert.match(chatInputBlock, /border-radius:\s*14px;/);
 });
 
-test("chat tab folds marketing chrome without hiding the activity footer", () => {
+test("chat tab folds marketing chrome and hides the recommendation footer", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const popupHelpers = readFileSync(resolve("popup", "popup-helpers.js"), "utf8");
 
   assert.match(popupHtml, /<details class="chat-controls is-chat-mode" id="chatControls">/);
   assert.match(popupHtml, /id="chatControlsMode">对话</);
@@ -125,18 +122,17 @@ test("chat tab folds marketing chrome without hiding the activity footer", () =>
   assert.match(popupHtml, /body\.chat-tab-active \.brand-copy h1 \{ display: none; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.brand-mark \{ width: 26px; height: 26px;/);
   assert.match(popupHtml, /body\.chat-tab-active \.tab-button \{ min-height: 38px; padding: 6px 4px; \}/);
-  assert.match(popupHtml, /body\.chat-tab-active \.footer \{ padding: 8px 10px; \}/);
-  assert.match(popupHtml, /body\.chat-tab-active \.footer-headline \{ display: none; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.footer \{ display: none; \}/);
   assert.match(popupJs, /classList\.toggle\("chat-tab-active", tabName === "chat"\)/);
   assert.match(popupJs, /classList\.toggle\("is-chat-mode", popupChatSubtab === "chat"\)/);
   assert.match(popupJs, /elements\.chatControlsMode\.textContent/);
   assert.match(popupJs, /elements\.chatControlsPending\.textContent/);
   assert.match(popupJs, /elements\.chatControlsSkill\.textContent/);
   assert.match(popupJs, /elements\.chatControlsPersona\.textContent/);
-  assert.doesNotMatch(
-    popupHtml,
-    /\.shell:has\(#viewChat:not\(\[hidden\]\)\)\s+\.footer\s*\{[\s\S]*?display:\s*none;/,
-  );
+  assert.doesNotMatch(popupJs, /先跑 init、discover 或 recommend/);
+  assert.match(popupJs, /暂时没有新候选，后台会继续补货。/);
+  assert.doesNotMatch(popupHelpers, /先运行 init、discover 或 recommend/);
+  assert.match(popupHelpers, /message: "暂时没有新候选，后台会继续补货。"/);
 });
 
 test("chat input placeholder rotation array and timer are defined", () => {

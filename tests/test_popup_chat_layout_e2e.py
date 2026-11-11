@@ -56,7 +56,7 @@ def _rects(page: Page) -> dict[str, Any]:
             controlsOpen: document.getElementById('chatControls')?.open ?? null,
             heroSub: display('.hero-sub'),
             brandTitle: display('.brand-copy h1'),
-            footerHeadline: display('.footer-headline'),
+            footer: display('.footer'),
           };
         }"""
     )
@@ -99,4 +99,4 @@ def test_popup_chat_folds_chrome_and_keeps_the_composer_inline(chromium_page: Pa
     assert form is not None and form["height"] <= 135
     assert rects["heroSub"] == "none"
     assert rects["brandTitle"] == "none"
-    assert rects["footerHeadline"] == "none"
+    assert rects["footer"] == "none"

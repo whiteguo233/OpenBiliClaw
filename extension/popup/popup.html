@@ -3486,7 +3486,7 @@
     body.chat-tab-active .hero-actions button.mobile-button { width: auto; padding: 0 6px; }
     body.chat-tab-active .tabs-shell { padding: 4px; }
     body.chat-tab-active .tab-button { min-height: 38px; padding: 6px 4px; }
-    body.chat-tab-active .footer { padding: 8px 10px; }
+    body.chat-tab-active .footer { display: none; }
 
     .chat-intro {
       padding: 14px;
@@ -4047,9 +4047,8 @@
       color: var(--text-muted);
     }
 
-    /* On the chat tab the activity footer stays reachable but its second line
-       folds away, returning that height to the conversation. */
-    body.chat-tab-active .footer-headline { display: none; }
+    /* On the chat tab the activity footer is hidden entirely; the
+       recommendation tabs keep it. */
 
     .footer-hint::before {
       content: "";
