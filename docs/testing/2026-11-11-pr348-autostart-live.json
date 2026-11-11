@@ -1,0 +1,293 @@
+[
+  {
+    "name": "environment",
+    "artifacts": "<isolated-root>",
+    "source": "<worktree>/src/openbiliclaw/__init__.py",
+    "platform": "darwin",
+    "machine": "x86_64",
+    "default_worker_mode": true
+  },
+  {
+    "name": "process_started",
+    "case": "cli",
+    "pid": 60644
+  },
+  {
+    "name": "cli_default_status",
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "尚未开启开机自启动。"
+    }
+  },
+  {
+    "name": "cli_real_health",
+    "http_status": 200,
+    "response": {
+      "status": "ok",
+      "service": "openbiliclaw-api",
+      "profile_ready": false,
+      "embedding_ready": false,
+      "llm_registered": true
+    }
+  },
+  {
+    "name": "cli_enable",
+    "http_status": 200,
+    "response": {
+      "supported": true,
+      "enabled": true,
+      "registered": true,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "开机自启动已开启。"
+    }
+  },
+  {
+    "name": "real_plist_verified",
+    "path": "~/Library/LaunchAgents/com.openbiliclaw.daemon.plist",
+    "argv": [
+      "<isolated-root>/venv/bin/python",
+      "-m",
+      "openbiliclaw.cli",
+      "start"
+    ],
+    "working_directory": "<isolated-root>/cli"
+  },
+  {
+    "name": "after_production_execve",
+    "response": {
+      "supported": true,
+      "enabled": true,
+      "registered": true,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "开机自启动已开启。"
+    }
+  },
+  {
+    "name": "production_restart_verified",
+    "pid_unchanged": 60644,
+    "startup_keys": [
+      "OPENBILICLAW_PROJECT_ROOT"
+    ],
+    "active_keys": [
+      "OPENBILICLAW_FULL_WORKER",
+      "OPENBILICLAW_IMAGE_SERVICE_URL",
+      "OPENBILICLAW_PROJECT_ROOT",
+      "OPENBILICLAW_RECOMMENDATION_SOCK"
+    ],
+    "managed": []
+  },
+  {
+    "name": "cli_disable_after_restart",
+    "http_status": 200,
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "尚未开启开机自启动。"
+    }
+  },
+  {
+    "name": "native_launch_prepare",
+    "http_status": 200,
+    "response": {
+      "supported": true,
+      "enabled": true,
+      "registered": true,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "开机自启动已开启。"
+    }
+  },
+  {
+    "name": "real_plist_verified",
+    "path": "~/Library/LaunchAgents/com.openbiliclaw.daemon.plist",
+    "argv": [
+      "<isolated-root>/venv/bin/python",
+      "-m",
+      "openbiliclaw.cli",
+      "start"
+    ],
+    "working_directory": "<isolated-root>/cli"
+  },
+  {
+    "name": "launchctl_bootstrap",
+    "returncode": 0,
+    "stderr": ""
+  },
+  {
+    "name": "launchd_started_backend",
+    "response": {
+      "supported": true,
+      "enabled": true,
+      "registered": true,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "开机自启动已开启。"
+    }
+  },
+  {
+    "name": "launchd_running",
+    "fields": [
+      "state = running",
+      "pid = 60660",
+      "state = active",
+      "state = active"
+    ]
+  },
+  {
+    "name": "native_launch_disable",
+    "http_status": 200,
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "尚未开启开机自启动。"
+    }
+  },
+  {
+    "name": "process_started",
+    "case": "external-env",
+    "pid": 60668
+  },
+  {
+    "name": "external_env_status",
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": false,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "env_managed",
+      "detail": "检测到环境变量配置，自启动登录会话可能缺失：OPENBILICLAW_WORKER"
+    }
+  },
+  {
+    "name": "external_env_enable_rejected",
+    "http_status": 409,
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": false,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "env_managed",
+      "detail": "检测到环境变量配置，自启动登录会话可能缺失：OPENBILICLAW_WORKER"
+    }
+  },
+  {
+    "name": "process_started",
+    "case": "desktop-entry",
+    "pid": 60675
+  },
+  {
+    "name": "desktop_source_entry_status",
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "尚未开启开机自启动。"
+    }
+  },
+  {
+    "name": "desktop_source_entry_enable",
+    "http_status": 200,
+    "response": {
+      "supported": true,
+      "enabled": true,
+      "registered": true,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "开机自启动已开启。"
+    }
+  },
+  {
+    "name": "real_plist_verified",
+    "path": "~/Library/LaunchAgents/com.openbiliclaw.daemon.plist",
+    "argv": [
+      "<isolated-root>/venv/bin/python",
+      "-m",
+      "openbiliclaw.cli",
+      "start"
+    ],
+    "working_directory": "<isolated-root>/desktop-entry"
+  },
+  {
+    "name": "desktop_source_entry_disable",
+    "http_status": 200,
+    "response": {
+      "supported": true,
+      "enabled": false,
+      "registered": false,
+      "can_manage": true,
+      "platform": "darwin",
+      "mechanism": "launchd",
+      "manage_ollama": false,
+      "ollama_required": true,
+      "reason": "none",
+      "detail": "尚未开启开机自启动。"
+    }
+  },
+  {
+    "name": "all_scenarios_passed"
+  },
+  {
+    "name": "cleanup",
+    "no_user_plist": true,
+    "no_user_job": true,
+    "direct_processes_stopped": true
+  }
+]

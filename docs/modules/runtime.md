@@ -585,6 +585,10 @@ warning = autostart.reconcile(config)
 - `build_restart_env()`：为源码自动更新的 `os.execve()` 重启复制环境，移除启动快照之后注入的 `OPENBILICLAW_*`，让下一进程重新构建 worker、推荐传输和图片服务接线；保留调用方原本导出的同名变量、provider 凭据和其它环境。未建立快照时保守保留全部变量；不修改当前进程环境，重启失败后现有服务仍可继续运行。测试通过共享 fixture 在每个用例前重置快照、结束后恢复，避免 CLI／桌面入口污染其它守卫用例。
 - `reconcile(config)`：让配置 intent 与当前用户 OS 登录项对账；`enabled=false` 时移除残留项，`enabled=true` 且登录项缺失时在 env guard 通过后补注册。CLI daemon 与冻结桌面入口使用同一实现，失败返回可记录的警告而不阻断启动。
 
+真实验收（2026-11-11）：Intel macOS 26.5.1 上 CLI／桌面源码入口的真实 HTTP 开关、
+生产 `execve` 重启、实际 plist 写入及 launchd 拉起通过，显式外部 worker 变量仍返回 409。
+未覆盖注销登录、签名安装包重装和 Windows／Docker 原生端到端；见[验收记录](../testing/2026-11-11-pr348-autostart.md#真实后端http-请求和-macos-launchd-补充验收)。
+
 公开接口：
 
 - `GET /api/autostart-status`：远程可读、降级模式可读，返回固定字段集；只展示 `enabled`、`registered`、`supported`、`can_manage`、`reason` 等状态，不包含 Cookie / API Key 等敏感配置。`enabled=false + registered=true` 会明确返回“系统自启动残留项”，供设置页提供一键关闭清理。
