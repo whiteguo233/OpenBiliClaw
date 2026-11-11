@@ -202,3 +202,5 @@ Instagram 是显式 opt-in、`init-only` 的浏览器来源。只有用户选择
 `scripts/profile_initialization_live.py --root <全新目录> --model <批准模型>` 用生产后端、正式验签 SDK、真实公开 GitHub 收藏和实际浏览器初始化按钮运行四阶段；验证画像区块、模型用量、重启持久化及桌面/手机/CLI。没有替换响应或注入事件。`--platform bangumi --username <公开账号>` 可显式选择另一公开来源。仅归档白名单证据，不上传配置、SDK、数据库或服务器原始日志。
 
 `.github/workflows/profile-initialization-live.yml` 在独立 Linux / macOS 运行器对两个模型分别执行；macOS 使用该运行器独立的加密临时钥匙串。当前结果尚待运行，不以任务创建代替真实通过。
+
+验收脚本保留配置的 40 条公开样本上限带来的来源 `partial` 警告；仅当已入库 40 条、唯一警告为该来源的采集 partial 且阶段 2/3/4 全部为 `ok` 时接受这一预期状态，其他 partial、短采集、模型/发现失败仍失败。失败时也归档实际用量计数。Linux 首轮浏览器依赖安装遇到 Azure APT 镜像 DNS 故障，后续使用运行器预装的真实 Chrome，避免重复下载浏览器依赖。

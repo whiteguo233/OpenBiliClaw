@@ -7,6 +7,9 @@ on:
       - .github/workflows/profile-initialization-live.yml
       - src/openbiliclaw/soul/profile_builder.py
   workflow_dispatch:
+concurrency:
+  group: profile-initialization-live-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -23,6 +26,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          cache: pip
       - name: Prepare isolated encrypted macOS keychain
         if: runner.os == 'macOS'
         shell: bash
@@ -38,11 +42,16 @@ jobs:
       - name: Install production backend and browser
         run: |
           python -m pip install -e .
-          python -m playwright install --with-deps chromium
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            google-chrome --version
+          else
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
+          fi
       - name: Real GUI four-stage init, persisted profile, restart and CLI
         env:
           MODEL: ${{ matrix.model }}
           PYTHONPATH: src
+          OBC_LIVE_BROWSER_CHANNEL: chrome
         shell: bash
         run: python scripts/profile_initialization_live.py --root "$RUNNER_TEMP/obc-profile-live" --model "$MODEL"
       - name: Archive allowlisted evidence only

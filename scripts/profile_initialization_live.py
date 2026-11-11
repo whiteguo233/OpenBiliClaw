@@ -27,6 +27,42 @@ from openbiliclaw.llm.sponsored_profiles import CHAT_MODELS
 from openbiliclaw.runtime.sponsored_bundle import ensure_runtime
 
 
+def validate_completed_stages(
+    status: dict[str, Any],
+    *,
+    platform: str,
+    collected: int,
+    sample_limit: int,
+) -> None:
+    """Accept only the explicitly bounded source warning, never a failed LLM stage."""
+    stages = status.get("stages", [])
+    assert len(stages) == 4, "initialization did not report four stages"
+    assert all(stage.get("status") == "ok" for stage in stages[1:]), (
+        "analysis/profile/discovery did not pass"
+    )
+    first = stages[0]
+    if first.get("status") == "warning":
+        assert first.get("reason") == platform + "_partial", "unexpected collection warning"
+        assert status.get("reason") == platform + "_partial", "another partial failure occurred"
+        assert collected == sample_limit, "partial source did not fulfill the configured sample"
+    else:
+        assert first.get("status") == "ok", "collection did not pass"
+        assert not status.get("partial_success"), "unexpected partial initialization"
+
+
+def capture_usage(root: Path, report: dict[str, Any]) -> None:
+    """Retain bounded, credential-free diagnostics even when a later assertion fails."""
+    database = root / "data/openbiliclaw.db"
+    if not database.exists():
+        return
+    with sqlite3.connect(database) as db:
+        db.row_factory = sqlite3.Row
+        report["real_collected_events"] = db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        report["usage"] = [
+            dict(row) for row in db.execute("SELECT provider, model, caller FROM llm_usage")
+        ]
+
+
 def run(root: Path, model: str, username: str, platform: str) -> None:
     root.mkdir(parents=True, exist_ok=False)
     evidence = root / "evidence"
@@ -126,7 +162,10 @@ def run(root: Path, model: str, username: str, platform: str) -> None:
         start()
         with httpx.Client(base_url=origin, timeout=240, trust_env=False) as client:
             with sync_playwright() as driver:
-                browser = driver.chromium.launch(headless=True)
+                browser = driver.chromium.launch(
+                    headless=True,
+                    channel=os.environ.get("OBC_LIVE_BROWSER_CHANNEL") or None,
+                )
                 page = browser.new_page(viewport={"width": 1440, "height": 1080})
                 page.goto(origin + "/web/", timeout=90000)
                 page.wait_for_selector(".init-onboarding", timeout=90000)
@@ -190,9 +229,15 @@ def run(root: Path, model: str, username: str, platform: str) -> None:
                 assert status.get("initialized") and not status.get("running"), (
                     "init did not finish"
                 )
-                assert not status.get("partial_success"), "four-stage init only partially succeeded"
-                assert all(s.get("status") == "ok" for s in status["stages"]), (
-                    "a stage did not pass"
+                capture_usage(root, report)
+                validate_completed_stages(
+                    status,
+                    platform=platform,
+                    collected=report["real_collected_events"],
+                    sample_limit=40,
+                )
+                report["source_collection_warning"] = (
+                    status.get("reason") if status.get("partial_success") else None
                 )
                 response = client.get("/api/profile-summary")
                 response.raise_for_status()
@@ -296,6 +341,10 @@ def run(root: Path, model: str, username: str, platform: str) -> None:
         save()
         raise
     finally:
+        try:
+            capture_usage(root, report)
+        except sqlite3.Error:
+            report["diagnostics_incomplete"] = True
         stop()
         log.close()
         save()

@@ -1,0 +1,822 @@
+{
+  "model": "Qwen/Qwen3.5-4B",
+  "platform": "github",
+  "public_username": "whiteguo233",
+  "mocked_responses": false,
+  "configuration": {
+    "default_chain": [
+      "siliconflow-free-qwen35-4b"
+    ]
+  },
+  "stage_history": [
+    {
+      "seconds": 14.8,
+      "stages": [
+        {
+          "n": 1,
+          "label": "拉取数据",
+          "status": "running",
+          "reason": null,
+          "progress": {
+            "done": 0,
+            "total": 1,
+            "note": "正在采集 GitHub · 只读拉取公开 Star 仓库",
+            "mode": "determinate",
+            "elapsed_seconds": null,
+            "max_seconds": null
+          },
+          "eta_seconds": null
+        },
+        {
+          "n": 2,
+          "label": "分析偏好",
+          "status": "pending",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 3,
+          "label": "生成并保存完整画像",
+          "status": "pending",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 4,
+          "label": "生成首轮可用推荐",
+          "status": "pending",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        }
+      ]
+    },
+    {
+      "seconds": 24.28,
+      "stages": [
+        {
+          "n": 1,
+          "label": "拉取数据",
+          "status": "warning",
+          "reason": "github_partial",
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 2,
+          "label": "分析偏好",
+          "status": "running",
+          "reason": null,
+          "progress": {
+            "done": 0,
+            "total": 4,
+            "note": "全平台共 40 条事件 · 已完成 0/4 批 · AI 开始处理（并发上限 1）",
+            "mode": "determinate",
+            "elapsed_seconds": 0,
+            "max_seconds": 3600
+          },
+          "eta_seconds": null
+        },
+        {
+          "n": 3,
+          "label": "生成并保存完整画像",
+          "status": "pending",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 4,
+          "label": "生成首轮可用推荐",
+          "status": "pending",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        }
+      ]
+    },
+    {
+      "seconds": 149.99,
+      "stages": [
+        {
+          "n": 1,
+          "label": "拉取数据",
+          "status": "warning",
+          "reason": "github_partial",
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 2,
+          "label": "分析偏好",
+          "status": "ok",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 3,
+          "label": "生成并保存完整画像",
+          "status": "running",
+          "reason": null,
+          "progress": {
+            "done": 0,
+            "total": 0,
+            "note": "正在综合偏好、历史与认知线索",
+            "mode": "indeterminate",
+            "elapsed_seconds": 0,
+            "max_seconds": 3600
+          },
+          "eta_seconds": null
+        },
+        {
+          "n": 4,
+          "label": "生成首轮可用推荐",
+          "status": "pending",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        }
+      ]
+    },
+    {
+      "seconds": 153.13,
+      "stages": [
+        {
+          "n": 1,
+          "label": "拉取数据",
+          "status": "warning",
+          "reason": "github_partial",
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 2,
+          "label": "分析偏好",
+          "status": "ok",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 3,
+          "label": "生成并保存完整画像",
+          "status": "ok",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 4,
+          "label": "生成首轮可用推荐",
+          "status": "running",
+          "reason": null,
+          "progress": {
+            "done": 0,
+            "total": 4,
+            "note": "正在基于完整画像发现 GitHub 内容",
+            "mode": "determinate",
+            "elapsed_seconds": null,
+            "max_seconds": null
+          },
+          "eta_seconds": null
+        }
+      ]
+    },
+    {
+      "seconds": 242.3,
+      "stages": [
+        {
+          "n": 1,
+          "label": "拉取数据",
+          "status": "warning",
+          "reason": "github_partial",
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 2,
+          "label": "分析偏好",
+          "status": "ok",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 3,
+          "label": "生成并保存完整画像",
+          "status": "ok",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        },
+        {
+          "n": 4,
+          "label": "生成首轮可用推荐",
+          "status": "ok",
+          "reason": null,
+          "progress": null,
+          "eta_seconds": null
+        }
+      ]
+    }
+  ],
+  "ok": false,
+  "prerequisites": {
+    "bilibili_logged_in": false,
+    "bilibili_check": "failed",
+    "bilibili_detail": "后端还没有收到 B站 Cookie。",
+    "llm_ready": true,
+    "embedding_ready": true,
+    "embedding_check": "ok",
+    "embedding_detail": "",
+    "embedding_repair_running": false,
+    "embedding_repair_completed": 0,
+    "embedding_repair_total": 0,
+    "ollama_phase": "ready",
+    "embedding_pull_status": "",
+    "embedding_required": true,
+    "enabled_platforms": [
+      "github"
+    ],
+    "source_capabilities": {
+      "tiktok": {
+        "discover": {
+          "mode": "optional-credential",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "readiness": "ready",
+          "detail": "公开推荐流 / 创作者 / 话题标签走访客身份；配置登录 Cookie 后可解锁关键词搜索与更高限额。"
+        },
+        "profile": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+        },
+        "bootstrap": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+        },
+        "incremental": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+        },
+        "native-save": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "站内收藏在已登录浏览器标签页内执行；后端只接收任务结果。"
+        },
+        "cookie-sync": {
+          "mode": "login-required",
+          "required": false,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "插件检测 sessionid 家族后同步登录证据；Cookie 值经统一凭据端点验证后落盘。"
+        }
+      },
+      "github": {
+        "discover": {
+          "mode": "optional-credential",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "detail": "公开仓库 Search API 可匿名使用；PAT 仅用于身份确认和提高限额。"
+        },
+        "profile": {
+          "mode": "optional-credential",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "detail": "已提供公开用户名或 PAT，可只读加载公开 Starred 仓库。"
+        },
+        "bootstrap": {
+          "mode": "optional-credential",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "detail": "已提供公开用户名或 PAT，可只读加载公开 Starred 仓库。"
+        }
+      },
+      "linuxdo": {
+        "discover": {
+          "mode": "anonymous",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "readiness": "ready",
+          "detail": "公开 search/hot/feed/creator/related 无需个人账号凭据。"
+        },
+        "profile": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "unavailable",
+          "readiness": "unverified",
+          "detail": "画像信号需要浏览器会话，并由 /session/current.json 正面确认账号。"
+        },
+        "bootstrap": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "unavailable",
+          "readiness": "unverified",
+          "detail": "收藏、点赞和阅读记录需要已登录的 Linux.do 浏览器会话。"
+        },
+        "incremental": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "unavailable",
+          "readiness": "unverified",
+          "detail": "周期个人信号同步需要已登录的 Linux.do 浏览器会话。"
+        },
+        "cookie-sync": {
+          "mode": "optional-credential",
+          "required": false,
+          "ready": false,
+          "state": "unavailable",
+          "readiness": "unverified",
+          "detail": "Cookie 心跳只是观察证据，不等同于账号身份已验证。"
+        }
+      },
+      "v2ex": {
+        "discover": {
+          "mode": "optional-credential",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "detail": "公开 API 与 Feed 可匿名发现；PAT 仅用于增强。"
+        },
+        "profile": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "detail": "浏览器尚未登录 V2EX；公开发现仍可使用。"
+        },
+        "bootstrap": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "detail": "浏览器尚未登录 V2EX；公开发现仍可使用。"
+        },
+        "incremental": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "detail": "浏览器尚未登录 V2EX；公开发现仍可使用。"
+        },
+        "cookie-sync": {
+          "mode": "login-required",
+          "required": false,
+          "ready": false,
+          "state": "login_required",
+          "detail": "等待浏览器扩展上报 V2EX 登录状态。"
+        }
+      },
+      "web": {
+        "discover": {
+          "mode": "anonymous",
+          "required": true,
+          "ready": false,
+          "state": "unavailable",
+          "detail": "全局 Web 来源开关未启用；recipe 不会被调度。"
+        }
+      },
+      "weibo": {
+        "discover": {
+          "mode": "anonymous",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "readiness": "ready",
+          "detail": "搜索、热搜和公开作者时间线无需登录。"
+        },
+        "profile": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "初始化本人收藏、关注和互动需要微博浏览器登录态。"
+        },
+        "bootstrap": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "个人事件只在微博同源浏览器任务中读取，后端不接收 Cookie。"
+        },
+        "cookie-sync": {
+          "mode": "optional-credential",
+          "required": false,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "插件仅上报布尔登录状态；游客 SUB 不算登录凭据。"
+        }
+      },
+      "instagram": {
+        "discover": {
+          "mode": "optional-credential",
+          "required": true,
+          "ready": true,
+          "state": "ready",
+          "readiness": "ready",
+          "detail": "保留匿名 topic/creator 路径；已登录时可读取页面自然返回的 topic 媒体，不提交搜索。"
+        },
+        "profile": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "个人点赞、收藏和关注只在 Instagram 同源浏览器任务中读取；后端不接收 Cookie。"
+        },
+        "bootstrap": {
+          "mode": "login-required",
+          "required": true,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "个人点赞、收藏和关注只在 Instagram 同源浏览器任务中读取；后端不接收 Cookie。"
+        },
+        "cookie-sync": {
+          "mode": "optional-credential",
+          "required": false,
+          "ready": false,
+          "state": "login_required",
+          "readiness": "login_required",
+          "detail": "插件仅上报 sessionid 是否存在；Cookie 值始终留在浏览器内。"
+        }
+      }
+    }
+  },
+  "elapsed_seconds": 244.2,
+  "start_http_status": 202,
+  "start_response": {
+    "run_id": "a4584bde0a014b22995066992b1c31db",
+    "running": true,
+    "sequence": 0,
+    "current_stage": 0,
+    "total_stages": 4,
+    "stages": [
+      {
+        "n": 1,
+        "label": "拉取数据",
+        "status": "pending",
+        "reason": null
+      },
+      {
+        "n": 2,
+        "label": "分析偏好",
+        "status": "pending",
+        "reason": null
+      },
+      {
+        "n": 3,
+        "label": "生成并保存完整画像",
+        "status": "pending",
+        "reason": null
+      },
+      {
+        "n": 4,
+        "label": "生成首轮可用推荐",
+        "status": "pending",
+        "reason": null
+      }
+    ],
+    "partial_success": false,
+    "status": "starting",
+    "reason": "none",
+    "detail": "",
+    "last_activity": "2026-11-11 16:08:23",
+    "last_heartbeat_at": "2026-11-11 16:08:23",
+    "last_progress_at": "2026-11-11 16:08:23",
+    "progress_sequence": 0,
+    "warnings": []
+  },
+  "final_status": {
+    "initialized": true,
+    "running": false,
+    "run_id": "a4584bde0a014b22995066992b1c31db",
+    "sequence": 41,
+    "current_stage": 4,
+    "total_stages": 4,
+    "stages": [
+      {
+        "n": 1,
+        "label": "拉取数据",
+        "status": "warning",
+        "reason": "github_partial",
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 2,
+        "label": "分析偏好",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 3,
+        "label": "生成并保存完整画像",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      },
+      {
+        "n": 4,
+        "label": "生成首轮可用推荐",
+        "status": "ok",
+        "reason": null,
+        "progress": null,
+        "eta_seconds": null
+      }
+    ],
+    "partial_success": true,
+    "can_start": false,
+    "can_manage": true,
+    "prerequisites": {
+      "bilibili_logged_in": false,
+      "bilibili_check": "failed",
+      "bilibili_detail": "后端还没有收到 B站 Cookie。",
+      "llm_ready": true,
+      "embedding_ready": true,
+      "embedding_check": "ok",
+      "embedding_detail": "",
+      "embedding_repair_running": false,
+      "embedding_repair_completed": 0,
+      "embedding_repair_total": 0,
+      "ollama_phase": "ready",
+      "embedding_pull_status": "",
+      "embedding_required": true,
+      "enabled_platforms": [
+        "github"
+      ],
+      "source_capabilities": {
+        "tiktok": {
+          "discover": {
+            "mode": "optional-credential",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "readiness": "ready",
+            "detail": "公开推荐流 / 创作者 / 话题标签走访客身份；配置登录 Cookie 后可解锁关键词搜索与更高限额。"
+          },
+          "profile": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+          },
+          "bootstrap": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+          },
+          "incremental": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+          },
+          "native-save": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "站内收藏在已登录浏览器标签页内执行；后端只接收任务结果。"
+          },
+          "cookie-sync": {
+            "mode": "login-required",
+            "required": false,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "插件检测 sessionid 家族后同步登录证据；Cookie 值经统一凭据端点验证后落盘。"
+          }
+        },
+        "github": {
+          "discover": {
+            "mode": "optional-credential",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "detail": "公开仓库 Search API 可匿名使用；PAT 仅用于身份确认和提高限额。"
+          },
+          "profile": {
+            "mode": "optional-credential",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "detail": "已提供公开用户名或 PAT，可只读加载公开 Starred 仓库。"
+          },
+          "bootstrap": {
+            "mode": "optional-credential",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "detail": "已提供公开用户名或 PAT，可只读加载公开 Starred 仓库。"
+          }
+        },
+        "linuxdo": {
+          "discover": {
+            "mode": "anonymous",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "readiness": "ready",
+            "detail": "公开 search/hot/feed/creator/related 无需个人账号凭据。"
+          },
+          "profile": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "unavailable",
+            "readiness": "unverified",
+            "detail": "画像信号需要浏览器会话，并由 /session/current.json 正面确认账号。"
+          },
+          "bootstrap": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "unavailable",
+            "readiness": "unverified",
+            "detail": "收藏、点赞和阅读记录需要已登录的 Linux.do 浏览器会话。"
+          },
+          "incremental": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "unavailable",
+            "readiness": "unverified",
+            "detail": "周期个人信号同步需要已登录的 Linux.do 浏览器会话。"
+          },
+          "cookie-sync": {
+            "mode": "optional-credential",
+            "required": false,
+            "ready": false,
+            "state": "unavailable",
+            "readiness": "unverified",
+            "detail": "Cookie 心跳只是观察证据，不等同于账号身份已验证。"
+          }
+        },
+        "v2ex": {
+          "discover": {
+            "mode": "optional-credential",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "detail": "公开 API 与 Feed 可匿名发现；PAT 仅用于增强。"
+          },
+          "profile": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "detail": "浏览器尚未登录 V2EX；公开发现仍可使用。"
+          },
+          "bootstrap": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "detail": "浏览器尚未登录 V2EX；公开发现仍可使用。"
+          },
+          "incremental": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "detail": "浏览器尚未登录 V2EX；公开发现仍可使用。"
+          },
+          "cookie-sync": {
+            "mode": "login-required",
+            "required": false,
+            "ready": false,
+            "state": "login_required",
+            "detail": "等待浏览器扩展上报 V2EX 登录状态。"
+          }
+        },
+        "web": {
+          "discover": {
+            "mode": "anonymous",
+            "required": true,
+            "ready": false,
+            "state": "unavailable",
+            "detail": "全局 Web 来源开关未启用；recipe 不会被调度。"
+          }
+        },
+        "weibo": {
+          "discover": {
+            "mode": "anonymous",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "readiness": "ready",
+            "detail": "搜索、热搜和公开作者时间线无需登录。"
+          },
+          "profile": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "初始化本人收藏、关注和互动需要微博浏览器登录态。"
+          },
+          "bootstrap": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "个人事件只在微博同源浏览器任务中读取，后端不接收 Cookie。"
+          },
+          "cookie-sync": {
+            "mode": "optional-credential",
+            "required": false,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "插件仅上报布尔登录状态；游客 SUB 不算登录凭据。"
+          }
+        },
+        "instagram": {
+          "discover": {
+            "mode": "optional-credential",
+            "required": true,
+            "ready": true,
+            "state": "ready",
+            "readiness": "ready",
+            "detail": "保留匿名 topic/creator 路径；已登录时可读取页面自然返回的 topic 媒体，不提交搜索。"
+          },
+          "profile": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "个人点赞、收藏和关注只在 Instagram 同源浏览器任务中读取；后端不接收 Cookie。"
+          },
+          "bootstrap": {
+            "mode": "login-required",
+            "required": true,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "个人点赞、收藏和关注只在 Instagram 同源浏览器任务中读取；后端不接收 Cookie。"
+          },
+          "cookie-sync": {
+            "mode": "optional-credential",
+            "required": false,
+            "ready": false,
+            "state": "login_required",
+            "readiness": "login_required",
+            "detail": "插件仅上报 sessionid 是否存在；Cookie 值始终留在浏览器内。"
+          }
+        }
+      }
+    },
+    "reason": "github_partial",
+    "detail": "GitHub 采集状态 github_status=partial：已保留并用于画像建模 40 条公开 starred repository 事件，但分页、结果上限或上游响应未能证明完整。",
+    "last_activity": "2026-11-11 16:12:09",
+    "last_heartbeat_at": "2026-11-11 16:12:09",
+    "last_progress_at": "2026-11-11 16:12:09",
+    "progress_sequence": 41
+  },
+  "error_type": "AssertionError",
+  "error": "four-stage init only partially succeeded"
+}
