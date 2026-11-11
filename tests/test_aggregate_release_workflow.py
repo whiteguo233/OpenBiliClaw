@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import sys
 import textwrap
 import tomllib
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -18,6 +22,115 @@ def read_text(relative_path: str) -> str:
 def project_version() -> str:
     pyproject = tomllib.loads(read_text("pyproject.toml"))
     return str(pyproject["project"]["version"])
+
+
+def release_step_script(name: str) -> str:
+    workflow = read_text(".github/workflows/release-extension.yml")
+    _, marker, step = workflow.partition(f"      - name: {name}\n")
+    assert marker, f"missing release workflow step: {name}"
+    step = step.split("\n      - name: ", 1)[0]
+    _, marker, script = step.partition("        run: |\n")
+    assert marker, f"missing shell script for release workflow step: {name}"
+    return textwrap.dedent(script)
+
+
+@pytest.mark.parametrize("release_exists", [False, True])
+def test_extension_component_release_never_takes_latest(
+    tmp_path: Path, release_exists: bool
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh_log = tmp_path / "gh.jsonl"
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            """\
+            import json
+            import os
+            import sys
+
+            with open(os.environ["GH_LOG"], "a") as log:
+                log.write(json.dumps(sys.argv[1:]) + "\\n")
+            if sys.argv[1:3] == ["release", "view"]:
+                sys.exit(0 if os.environ["RELEASE_EXISTS"] == "true" else 1)
+            """
+        ),
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+            "GH_LOG": str(gh_log),
+            "GITHUB_REPOSITORY": "example/project",
+            "RELEASE_TAG": "extension-v0.0.1",
+            "RELEASE_EXISTS": str(release_exists).lower(),
+            "FIREFOX_SIGNING_ACTIVE": "false",
+            "SAFARI_PACKAGED": "false",
+        }
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-euo",
+            "pipefail",
+            "-c",
+            release_step_script("Create GitHub Release and upload extension package"),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    commands = [json.loads(line) for line in gh_log.read_text().splitlines()]
+    action = "edit" if release_exists else "create"
+    publish_commands = [command for command in commands if command[:2] == ["release", action]]
+    assert len(publish_commands) == 1
+    assert "--latest=false" in publish_commands[0]
+    assert sum(command[:2] == ["release", "upload"] for command in commands) == 2
+
+
+@pytest.mark.parametrize("matches_backend", [False, True])
+def test_extension_aggregate_sync_requires_matching_backend_version(
+    tmp_path: Path, matches_backend: bool
+) -> None:
+    version = project_version()
+    (tmp_path / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+    script_dir = tmp_path / ".github" / "scripts"
+    script_dir.mkdir(parents=True)
+    sync_log = tmp_path / "sync.log"
+    (script_dir / "sync-aggregate-release.sh").write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$RELEASE_TAG" > "$SYNC_LOG"\n'
+    )
+    release_tag = f"extension-v{version}" if matches_backend else "extension-v0.0.1"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{env['PATH']}",
+            "RELEASE_TAG": release_tag,
+            "SYNC_LOG": str(sync_log),
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", release_step_script("Update aggregate latest release")],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    if matches_backend:
+        assert sync_log.read_text().strip() == release_tag
+    else:
+        assert not sync_log.exists()
+        assert f"Standalone extension release {release_tag}" in result.stdout
 
 
 def test_aggregate_release_helper_updates_latest_release() -> None:
