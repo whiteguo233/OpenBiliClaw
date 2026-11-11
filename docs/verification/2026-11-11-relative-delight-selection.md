@@ -80,3 +80,11 @@ pytest -m 'not integration'
 - `ruff check src/ tests/`、`ruff format --check src/ tests/`、`mypy src/` 均通过。
 - `pytest -m 'not integration'`：13,870 passed、51 skipped、189 deselected；首轮 1 个旧测试未区分 0.55 shortlist 与默认 0.60 入池线而失败。该测试现显式配置 admission=0.50，独立验证旧 shortlist 兼容性，同时另有测试保证 shortlist 不能绕过正式 admission；`pytest -m 'not integration' --lf --last-failed-no-failures=none` 最终 1 passed，无遗留失败。
 - 最后两处消费/raw headroom 修正后，再跑存储/runtime/边界组合 482 passed、delight API 20 passed、补货协调器/来源 deficit 组合 80 passed。新增边界文件共 31 个参数化用例，涵盖消费到底、旧已读库存、旧历史准备挤占、非法分数、过期、失败写入、冷启动和点赞保留。
+
+## Git 合入收尾（2026-11-11）
+
+- 修复提交为 `e05d5c36`；真实请求验收与脱敏回执提交为 `9be71b27`。真实生成链路的上游 429 缺口继续保留，不因合入代码而改判成功。
+- 合入前 `main` 与 `origin/main` 均为 `020d4151`，修复分支从该基线直接演进；收尾采用快进合入并推送 `origin/main`，保留原始修复和验收提交。
+- 合入前追加检查：`PYTHONPATH=src pytest -q tests/test_delight_relative_selection.py tests/test_docs_index.py tests/test_release_consistency.py`，**38 passed**。应用代码与已经完成完整检查、真实请求验收的版本一致；文档、架构与 changelog 随分支同步。
+- 版本继续为 `0.3.237`，本轮只收尾 Git 交付，不发版或重启正式服务。
+- 清理范围仅为本任务已合入的本地分支与 worktree；主工作区原有 `outputs/`、`promo/` 以及其他任务的 worktree 保留。
