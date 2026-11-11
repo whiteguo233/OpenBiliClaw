@@ -5901,7 +5901,7 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function mbtiHtml(value) {
-      if (!value) return `<p class="video-meta">MBTI 还没推断出来，再多看一阵。</p>`;
+      if (!value || (typeof value === "object" && !(value.type || value.mbti || value.name))) return `<p class="video-meta">仅凭观看和收藏无法可靠判断 MBTI，可在聊一聊中补充自述或测试结果。</p>`;
       if (typeof value !== "object") return `<p class="video-meta">${escapeHtml(value)}</p>`;
       const type = value.type || value.mbti || value.name || "—";
       const axes = [

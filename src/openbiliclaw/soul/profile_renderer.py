@@ -40,6 +40,9 @@ def render_profile_markdown(profile: OnionProfile) -> str:
         core_lines.append(f"- 置信度: {profile.core.mbti.confidence:.2f}")
         if profile.core.mbti.inferred_from:
             core_lines.append(f"- 推断来源: {', '.join(profile.core.mbti.inferred_from)}")
+    else:
+        core_lines.append("\n### MBTI")
+        core_lines.append("仅凭观看和收藏无法可靠判断 MBTI，可在聊一聊中补充自述或测试结果。")
     sections.append("\n".join(core_lines))
 
     # Values layer

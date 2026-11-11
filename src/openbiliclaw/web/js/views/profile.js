@@ -131,7 +131,7 @@ function render() {
   const coreHtml = [];
   if (p.core_traits.length) coreHtml.push(`<div style="margin-bottom:8px">${chipList(p.core_traits, "brand")}</div>`);
   if (p.deep_needs.length) coreHtml.push(`<div style="margin-bottom:8px"><span style="font-size:11px;color:var(--text-muted)">\u6DF1\u5C42\u9700\u6C42</span>${chipList(p.deep_needs)}</div>`);
-  if (p.mbti?.type) coreHtml.push(renderMBTI(p.mbti));
+  coreHtml.push(renderMBTI(p.mbti));
   if (coreHtml.length) html += section("CORE", coreHtml.join(""));
 
   // Values & Drivers
@@ -280,7 +280,7 @@ function render() {
 // ── MBTI ─────────────────────────────────────────────────────
 function renderMBTI(mbti) {
   const display = getMbtiDisplayState(mbti);
-  if (!display.type) return "";
+  if (!display.type) return `<div class="profile-mbti-unknown">仅凭观看和收藏无法可靠判断 MBTI，可在聊一聊中补充自述或测试结果。</div>`;
   const dims = display.dimensions.length ? display.dimensions : normalizeMbtiDimensions(mbti);
   let dimsHtml = "";
   for (const d of dims) {
