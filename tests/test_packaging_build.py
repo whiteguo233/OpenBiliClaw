@@ -561,7 +561,7 @@ def test_desktop_release_workflow_explains_macos_drag_installation() -> None:
     ).read_text(encoding="utf-8")
 
     assert "Developer ID 签名和 Apple 公证" in workflow
-    assert "箭头将 OpenBiliClaw 拖到 Applications，再从 Applications 打开" in workflow
+    assert "将 OpenBiliClaw 拖到 Applications 后启动" in workflow
     assert build_module.MACOS_INSTALLER_COMMAND_NAME not in workflow
     assert "xattr -dr" not in workflow
     assert "codesign --force" not in workflow

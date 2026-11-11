@@ -681,10 +681,10 @@ def _write_macos_drag_background(directory: Path) -> Path:
         image = Image.new("RGB", (width * scale, height * scale), "#f1f7fa")
         draw = ImageDraw.Draw(image)
         for y, text, size, color in (
-            (31, "将 OpenBiliClaw 拖到「应用程序」", 25, "#10283a"),
-            (70, "Drag OpenBiliClaw to Applications", 15, "#3f5969"),
-            (263, "复制完成后，从「应用程序」打开 OpenBiliClaw。", 16, "#10283a"),
-            (291, "Then open OpenBiliClaw from Applications.", 14, "#3f5969"),
+            (31, "将 OpenBiliClaw 拖到「应用程序」或其他可写目录", 25, "#10283a"),
+            (70, "Drag OpenBiliClaw to Applications or another writable folder", 15, "#3f5969"),
+            (263, "复制完成后，从所选目录打开 OpenBiliClaw。", 16, "#10283a"),
+            (291, "Then open OpenBiliClaw from the chosen folder.", 14, "#3f5969"),
         ):
             draw.text(
                 (width * scale // 2, y * scale),

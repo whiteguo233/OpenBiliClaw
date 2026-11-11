@@ -384,8 +384,8 @@ jobs:
           **桌面预发布安装包**。macOS 安装包均经过 Developer ID 签名和 Apple 公证；缺少凭据或公证失败时停止对应构建，不生成实验包。后端源码仍为 source-only，此处只发桌面应用二进制。
 
           ### 安装
-          - **macOS**：退出旧版后打开 DMG，按窗口里的箭头将 OpenBiliClaw 拖到 Applications，再从 Applications 打开。无需解除隔离；首次打开可能显示正常的互联网下载确认。
-          - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
+          - **macOS**：退出旧版，打开 DMG，将 OpenBiliClaw 拖到 Applications 后启动，也可以用 Finder 拖到其他可写目录。升级时在原目录替换。无需解除隔离；首次打开可能显示正常的互联网下载确认。
+          - **Windows**：在「选择目标位置」页选安装目录。升级默认沿用原目录；换盘请先卸载旧版，再选择新目录。SmartScreen 弹窗点「更多信息 → 仍要运行」。
 
           自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。
           EOF
