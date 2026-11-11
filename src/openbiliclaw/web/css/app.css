@@ -1523,7 +1523,7 @@ body.chat-view-active .back-to-top {
   max-height: min(30dvh, 240px);
   display: flex;
   flex-direction: column;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
@@ -1634,7 +1634,7 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
   overscroll-behavior: contain;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
-  padding: 0 4px 10px;
+  padding: 0 4px 8px;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
 }
@@ -1856,9 +1856,9 @@ body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-h
   z-index: 10;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 4px 10px;
-  padding-bottom: max(10px, var(--safe-bottom));
+  gap: 6px;
+  padding: 6px 4px 8px;
+  padding-bottom: max(8px, var(--safe-bottom));
   align-items: flex-end;
   max-width: 100%;
   box-sizing: border-box;
@@ -3029,7 +3029,7 @@ body.auth-locked #tab-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 2px 8px;
+  padding: 2px 2px 6px;
 }
 
 .chat-agent-topbar-btn {

@@ -1,0 +1,26 @@
+{
+  "os": 26100,
+  "commit": "ade39de3792c295234568a6917d63d445608227a",
+  "published_setup_sha256": "f48619ad5e2366a93b3dcdba85e9051bac7f86b56656109890fcc62ebda6d6ee",
+  "rebuilt_setup_sha256": "8d40c0faf27087776ae1da363e6d7aec6309be050ae972b230be35190c08a7db",
+  "frozen_exe_sha256": "12e5ce9e8f5f65b6882788b50fa17ddbb64cfbd6fbdd84a2075eed86ae22e67e",
+  "checks": {
+    "published_interactive_upgrade_skips_destination": true,
+    "rebuild_prefills_registered_directory": true,
+    "interactive_wrong_path_rejected": true,
+    "upgraded_binary_serves_http": {
+      "status": "ok",
+      "embedding_ready": true
+    },
+    "real_free_model_stream_persisted": {
+      "seconds": 10.17,
+      "events": {
+        "delta": 11,
+        "final": 1,
+        "done": 1
+      }
+    },
+    "silent_wrong_path_rejected": 7,
+    "reinstalled_in_unicode_path_with_persisted_chat": true
+  }
+}

@@ -2417,6 +2417,9 @@ class RecommendationEngine:
         from openbiliclaw.recommendation.delight import effective_delight_threshold
 
         prefs = getattr(profile, "preferences", None)
+        set_topics = getattr(self._database, "set_delight_disliked_topics", None)
+        if callable(set_topics):
+            set_topics(getattr(prefs, "disliked_topics", []) or [])
         exploration_openness = float(getattr(prefs, "exploration_openness", 0.5))
         default_threshold = effective_delight_threshold(exploration_openness)
         dynamic_threshold = getattr(self._database, "dynamic_delight_threshold", None)
@@ -2428,6 +2431,7 @@ class RecommendationEngine:
         rows = self._database.get_pool_candidates_needing_delight_score(
             limit=limit,
             min_delight_score_for_reason=effective_threshold,
+            min_relevance_score=None,
             xhs_self_nickname=self._xhs_self_nickname(),
         )
         if not rows:
@@ -2454,17 +2458,6 @@ class RecommendationEngine:
         scored_count = 0
         for candidate in candidates:
             persisted_score = max(0.01, min(1.0, float(candidate.relevance_score or 0.0)))
-            if persisted_score < effective_threshold:
-                persisted = self._database.update_delight_score(
-                    candidate.bvid,
-                    delight_score=persisted_score,
-                    delight_reason="",
-                    delight_hook="",
-                )
-                if persisted:
-                    scored_count += 1
-                continue
-
             reason = self._evo_delight_reason(candidate)
             hook = self._evo_delight_hook(candidate)
             if not reason or not hook:
@@ -2477,10 +2470,13 @@ class RecommendationEngine:
                 )
                 continue
 
-            # Only nudge candidates that ALREADY qualify: visual never changes
-            # who becomes a delight candidate, only their ranking score among
-            # qualifiers, and it can only add (never demote).
-            visual_bonus = await self._visual_cover_bonus(candidate, visual_anchor_vecs)
+            # Keep the existing visual calibration guard; all prepared rows
+            # retain formal copy so relative promotions need no model call.
+            visual_bonus = (
+                await self._visual_cover_bonus(candidate, visual_anchor_vecs)
+                if persisted_score >= effective_threshold
+                else 0.0
+            )
             final_score = min(1.0, persisted_score + visual_bonus)
 
             persisted = self._database.update_delight_score(

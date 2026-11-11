@@ -332,8 +332,8 @@ Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Rele
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)
 - Current desktop installer release: `desktop-v*`, with available `.dmg` / `.exe` assets when the same-version desktop channel has shipped; missing channels are shown as unpublished instead of being backfilled from a previous release
 
-- **macOS**: download the DMG that matches your Mac: `OpenBiliClaw-macos-v*-arm64.dmg` for Apple silicon, or `OpenBiliClaw-macos-v*-x64.dmg` for Intel when the release provides it. Quit the old version and open the DMG. Follow the arrow to drag OpenBiliClaw into Applications, then open it from Applications. New packages use Developer ID signing and Apple notarization; no quarantine-removal command is needed.
-- **Windows**: download `OpenBiliClaw-windows-*-Setup.exe` — double-click to install. The final wizard page offers a checked "Launch OpenBiliClaw" checkbox; the newly installed version starts only when you click Finish (upgrades stop mutex-less old instances first; when the running app is an AppMutex build, Setup/Uninstall first show the standard "OpenBiliClaw is currently running" prompt and re-check after you close it — clicking Finish hands off to the new version, and unchecking skips the launch). `/SILENT` / `/VERYSILENT` installs have no wizard pages and still launch the new version automatically once Setup succeeds; with the app still running, a silent install/uninstall paired with `/SUPPRESSMSGBOXES` is cancelled instead, so close the app first.
+- **macOS**: download the DMG that matches your Mac: `OpenBiliClaw-macos-v*-arm64.dmg` for Apple silicon, or `OpenBiliClaw-macos-v*-x64.dmg` for Intel when the release provides it. Quit the old version, open the DMG, use Finder to drag the app into Applications or another writable folder, then launch it from there. For an upgrade, replace the app in its existing folder. New packages use Developer ID signing and Apple notarization; no quarantine-removal command is needed.
+- **Windows**: download `OpenBiliClaw-windows-*-Setup.exe` — double-click to install. Type a path or click Browse on the Select Destination Location page. Upgrades default to the current folder; to move to another drive, quit the app, uninstall it from Windows Settings, and then reinstall in the new folder. For a fresh install, you can also specify `/DIR="D:\Apps\OpenBiliClaw"`. The final wizard page offers a checked "Launch OpenBiliClaw" checkbox; the newly installed version starts only when you click Finish (upgrades stop mutex-less old instances first; when the running app is an AppMutex build, Setup/Uninstall first show the standard "OpenBiliClaw is currently running" prompt and re-check after you close it — clicking Finish hands off to the new version, and unchecking skips the launch). `/SILENT` / `/VERYSILENT` installs have no wizard pages and still launch the new version automatically once Setup succeeds; with the app still running, a silent install/uninstall paired with `/SUPPRESSMSGBOXES` is cancelled instead, so close the app first.
 
 The macOS app still targets 10.15+. Only the optional Tailnet helper built with Go 1.26.6 has a
 measured minimum of macOS 12; on 10.15 / 11 the local app continues normally while this remote edge
@@ -663,6 +663,11 @@ Public feed routing: `[network] direct/system/custom → local DNS or proxied Do
 SiliconFlow is a preconfigured LLM instance in the existing instance list. Choose 8B or 4B and route it through ordinary default/module chains; select cloud BGE-M3 or local Ollama independently for embeddings. This unified configuration change is awaiting an application release. [Design and verification](docs/testing/2026-11-06-unified-providers.md).
 
 ```text
+admitted copy-ready content → unread / current dislikes / temporal / history filters
+                           → exact Top 10% identities (ceil; nonempty min 1) → delight queue
+                           └ remaining identities → ordinary feed / shared inventory
+view / dismiss / dislike → committed state → delight.refreshed → UI refill + bounded supply wake
+
 Setup / popup / desktop / mobile / CLI → ordinary config API
   ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
   │   → LLMService → LLMRegistry → selected provider adapter

@@ -1073,7 +1073,7 @@ origins, methods and public DNS; it does not pin the host's socket resolution. S
 [browser workflow module](modules/browser-workflows.md) for executor-specific boundaries.
 ## macOS 桌面包签名
 
-Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。打开正式 DMG 后，按 Finder 窗口里的箭头把 OpenBiliClaw 拖到「应用程序」，再从「应用程序」打开。升级前先退出旧版本；GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
+Developer ID 签名与 Apple 公证仅适用于桌面构建，不改变本文的源码 / Docker 安装流程、依赖或配置。正式 DMG 可用 Finder 拖入 Applications 或其他可写目录，升级时退出后在原目录替换。Windows 桌面向导可选安装目录，换盘前需卸载旧版；这些操作不改变源码安装或 Docker 的数据目录。GitHub Actions 的 macOS 桌面构建强制签名和公证，凭据缺失即失败；Apple 凭据仅在构建机或 CI 保存。详见[打包模块](modules/packaging.md)。
 
 内置向量版的构建会为 BGE-M3 模型和文件系统开销预留 DMG 卷空间。普通安装和升级步骤相同。
 

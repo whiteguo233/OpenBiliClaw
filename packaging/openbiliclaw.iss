@@ -45,6 +45,10 @@ VersionInfoProductName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
+; Show the destination during interactive upgrades too, prefilled with the
+; registered installation directory.
+DisableDirPage=no
+UsePreviousAppDir=yes
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; Per-user install → no admin rights, no UAC prompt. The app is unsigned, so
@@ -112,6 +116,43 @@ Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Flags: nowait skipifnots
 ; older %LOCALAPPDATA%\OpenBiliClaw packaged-app root, on first run.
 
 [Code]
+function DestinationError: String;
+var
+  PreviousDir, SelectedDir: String;
+begin
+  Result := '';
+  // Per-user Setup uses this registration for all installer variants. Inno
+  // only appends to the existing uninstall log when {app} stays the same.
+  if RegQueryStringValue(HKCU,
+       'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+       ExpandConstant('{#SetupSetting("AppId")}') + '_is1',
+       'Inno Setup: App Path', PreviousDir) and (PreviousDir <> '') then
+  begin
+    SelectedDir := RemoveBackslashUnlessRoot(ExpandFileName(WizardDirValue));
+    PreviousDir := RemoveBackslashUnlessRoot(ExpandFileName(PreviousDir));
+    if CompareText(SelectedDir, PreviousDir) <> 0 then
+      Result := 'OpenBiliClaw is already installed at:' + #13#10 + PreviousDir + #13#10#13#10 +
+        'Keep this folder to upgrade, or uninstall OpenBiliClaw ' +
+        'from Windows Settings before choosing a new folder. Your user data is kept.';
+  end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ErrorMessage: String;
+begin
+  Result := True;
+  if (CurPageID = wpSelectDir) and not WizardSilent then
+  begin
+    ErrorMessage := DestinationError;
+    if ErrorMessage <> '' then
+    begin
+      MsgBox(ErrorMessage, mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+end;
+
 procedure StopRunningInstance;
 var
   ResultCode: Integer;
@@ -149,6 +190,8 @@ end;
 // Runs right before files are copied (both fresh installs and upgrades).
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopRunningInstance;
-  Result := '';
+  // Also validate /DIR on silent runs, before stopping the old application.
+  Result := DestinationError;
+  if Result = '' then
+    StopRunningInstance;
 end;

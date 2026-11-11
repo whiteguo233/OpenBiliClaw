@@ -29,11 +29,7 @@ test("chat tab layout pins a compact composer below a flexible history pane", ()
   assert.doesNotMatch(chatMessagesBlock, /max-height:/);
   assert.match(chatFormBlock, /margin-top:\s*auto;/);
   assert.match(chatFormBlock, /flex-shrink:\s*0;/);
-  assert.doesNotMatch(
-    popupHtml,
-    /\.shell:has\(#viewChat:not\(\[hidden\]\)\)\s+\.footer\s*\{[\s\S]*?display:\s*none;/,
-    "the global activity footer must stay visible on the chat tab",
-  );
+  assert.match(popupHtml, /body\.chat-tab-active \.footer \{ display: none; \}/);
 });
 
 test("pending confirmations stay bounded and scroll independently from chat history", () => {
@@ -73,6 +69,8 @@ test("chat composer stays compact so short side panels keep room for messages", 
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const chatFormBlock = cssBlockWith(popupHtml, ".chat-form", /margin-top:\s*auto;/);
   const chatInputShellBlock = cssBlockWith(popupHtml, ".chat-input-shell", /padding:/);
+  const chatComposeRowBlock = cssBlockWith(popupHtml, ".chat-compose-row", /display:\s*flex;/);
+  const chatSendBlock = cssBlockWith(popupHtml, ".chat-send-button", /flex:\s*0\s+0\s+auto;/);
   const chatInputBlocks = [...popupHtml.matchAll(/\.chat-input\s*\{[\s\S]*?\}/g)].map((match) => match[0]);
   const chatInputBlock = chatInputBlocks.at(-1) ?? "";
   const chatStatusEmptyBlock = popupHtml.match(/\.chat-status:empty\s*\{[\s\S]*?\}/)?.[0] ?? "";
@@ -80,14 +78,17 @@ test("chat composer stays compact so short side panels keep room for messages", 
     popupHtml.match(/\.chat-status:not\(:empty\)\s*\{[\s\S]*?\}/)?.[0] ?? "";
   const chatMarkup = popupHtml.match(/<form id="chatForm"[\s\S]*?<\/form>/)?.[0] ?? "";
 
-  assert.match(chatFormBlock, /gap:\s*8px;/);
-  assert.match(chatFormBlock, /padding-top:\s*8px;/);
-  assert.match(chatInputShellBlock, /gap:\s*6px;/);
-  assert.match(chatInputShellBlock, /padding:\s*10px\s+12px;/);
-  assert.match(chatInputBlock, /min-height:\s*68px;/);
-  assert.match(chatInputBlock, /max-height:\s*88px;/);
+  assert.match(chatFormBlock, /gap:\s*6px;/);
+  assert.match(chatFormBlock, /padding-top:\s*6px;/);
+  assert.match(chatInputShellBlock, /gap:\s*0;/);
+  assert.match(chatInputShellBlock, /padding:\s*6px\s+10px;/);
+  assert.match(chatInputBlock, /min-height:\s*48px;/);
+  assert.match(chatInputBlock, /max-height:\s*84px;/);
+  assert.match(chatComposeRowBlock, /align-items:\s*stretch;/);
+  assert.match(chatSendBlock, /flex:\s*0\s+0\s+auto;/);
   assert.match(chatStatusEmptyBlock, /display:\s*none;/);
   assert.match(chatStatusFilledBlock, /min-height:\s*16px;/);
+  assert.match(chatMarkup, /class="chat-compose-row"/);
   assert.match(chatMarkup, /<textarea id="chatInput" class="chat-input" rows="2"/);
 });
 
@@ -96,9 +97,42 @@ test("chat textarea keeps inner spacing and readable line height", () => {
   const chatInputBlocks = [...popupHtml.matchAll(/\.chat-input\s*\{[\s\S]*?\}/g)].map((match) => match[0]);
   const chatInputBlock = chatInputBlocks.at(-1) ?? "";
 
-  assert.match(chatInputBlock, /padding:\s*8px\s+10px;/);
+  assert.match(chatInputBlock, /padding:\s*7px\s+4px;/);
   assert.match(chatInputBlock, /line-height:\s*1\.6;/);
   assert.match(chatInputBlock, /border-radius:\s*14px;/);
+});
+
+test("chat tab folds marketing chrome and hides the recommendation footer", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const popupHelpers = readFileSync(resolve("popup", "popup-helpers.js"), "utf8");
+
+  assert.match(popupHtml, /<details class="chat-controls is-chat-mode" id="chatControls">/);
+  assert.match(popupHtml, /id="chatControlsMode">对话</);
+  assert.match(popupHtml, /id="chatControlsSkill">口味伙伴</);
+  assert.match(popupHtml, /id="chatControlsPersona">自然朋友</);
+  assert.match(popupHtml, /class="chat-controls-pending"/);
+  assert.match(popupHtml, /\.chat-controls > summary \{[\s\S]*?min-height: 34px;/);
+  assert.match(popupHtml, /class="chat-agent-bar chat-only"/);
+  assert.match(popupHtml, /class="chat-pending chat-only"/);
+  assert.match(popupHtml, /\.chat-controls > summary \{/);
+  assert.match(popupHtml, /\.chat-controls:not\(\.is-chat-mode\) \.chat-only \{ display: none; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.hero-sub \{ display: none; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.hero \{ padding: 6px 10px; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.brand-copy h1 \{ display: none; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.brand-mark \{ width: 26px; height: 26px;/);
+  assert.match(popupHtml, /body\.chat-tab-active \.tab-button \{ min-height: 38px; padding: 6px 4px; \}/);
+  assert.match(popupHtml, /body\.chat-tab-active \.footer \{ display: none; \}/);
+  assert.match(popupJs, /classList\.toggle\("chat-tab-active", tabName === "chat"\)/);
+  assert.match(popupJs, /classList\.toggle\("is-chat-mode", popupChatSubtab === "chat"\)/);
+  assert.match(popupJs, /elements\.chatControlsMode\.textContent/);
+  assert.match(popupJs, /elements\.chatControlsPending\.textContent/);
+  assert.match(popupJs, /elements\.chatControlsSkill\.textContent/);
+  assert.match(popupJs, /elements\.chatControlsPersona\.textContent/);
+  assert.doesNotMatch(popupJs, /先跑 init、discover 或 recommend/);
+  assert.match(popupJs, /暂时没有新候选，后台会继续补货。/);
+  assert.doesNotMatch(popupHelpers, /先运行 init、discover 或 recommend/);
+  assert.match(popupHelpers, /message: "暂时没有新候选，后台会继续补货。"/);
 });
 
 test("chat input placeholder rotation array and timer are defined", () => {
@@ -132,4 +166,20 @@ test("chat tab scrolls restored history to the newest message", () => {
   assert.match(popupJs, /requestAnimationFrame/);
   assert.match(setActiveTabBlock, /tabName === "chat"[\s\S]*scrollChatMessagesToBottom\(\)/);
   assert.match(hydrateBlock, /replaceChildren\(\)[\s\S]*scrollChatMessagesToBottom\(\)/);
+});
+
+test("guess cards stay compact in the popup", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const cardBlock = cssBlockWith(popupHtml, ".dialogue-card", /border-radius:/);
+  const titleBlocks = [...popupHtml.matchAll(/\.dialogue-card-title\s*\{[\s\S]*?\}/g)].map(
+    (match) => match[0],
+  );
+  const titleBlock = titleBlocks.at(-1) ?? "";
+  const actionsBlock = cssBlockWith(popupHtml, ".dialogue-card-actions", /margin-top:/);
+
+  assert.match(cardBlock, /padding:\s*10px;/);
+  assert.match(cardBlock, /border-radius:\s*14px;/);
+  assert.match(titleBlock, /font-size:\s*12px;/);
+  assert.match(titleBlock, /line-height:\s*1\.45;/);
+  assert.match(actionsBlock, /margin-top:\s*8px;/);
 });

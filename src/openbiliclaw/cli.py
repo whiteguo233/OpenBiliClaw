@@ -861,12 +861,17 @@ def _build_registry() -> Any:
 def _build_llm_concurrency_gate() -> Any:
     """Return the single LLM gate owned by this CLI process composition."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.concurrency import LLMConcurrencyGate
+    from openbiliclaw.llm.concurrency import (
+        LLMConcurrencyGate,
+        apply_background_budget_config,
+    )
 
     cached = _RUNTIME_COMPONENTS.get("llm_concurrency_gate")
     if cached is not None:
         return cached
-    gate = LLMConcurrencyGate(load_config().llm.concurrency)
+    config = load_config()
+    gate = LLMConcurrencyGate(config.llm.concurrency)
+    apply_background_budget_config(gate, config)
     _RUNTIME_COMPONENTS["llm_concurrency_gate"] = gate
     return gate
 
@@ -18546,14 +18551,17 @@ def delight() -> None:
         if callable(dynamic_threshold)
         else default_threshold
     )
-    candidate = database.get_delight_candidate(min_delight_score=threshold)
+    from openbiliclaw.recommendation.delight import select_delight_candidates
+
+    selected = select_delight_candidates(database, fallback_threshold=threshold, limit=1)
+    candidate = selected[0] if selected else None
 
     _print_page_title("惊喜推荐", "从池中寻找你可能意外喜欢的内容")
     if candidate is None:
         _print_status_panel(
             "info",
             "暂时没有惊喜候选",
-            "池中还没有文案已就绪的高分惊喜内容，多刷一阵会有的。",
+            "当前没有可展示的惊喜内容：可能已看完、被偏好过滤，或文案仍在准备；新内容就绪后会自动补充。",
         )
         return
 

@@ -19,7 +19,9 @@ from openbiliclaw.discovery.pool_snapshot import (
 )
 from openbiliclaw.recommendation.delight import (
     DEFAULT_DELIGHT_THRESHOLD,
+    count_selected_delights,
     effective_delight_threshold,
+    select_delight_candidates,
 )
 from openbiliclaw.runtime.image_cache import (
     cleanup_image_cache,
@@ -721,8 +723,9 @@ class ContinuousRefreshController:
         last_refresh_at = max(parsed_refresh_values).isoformat() if parsed_refresh_values else ""
         pending_delight_count = 0
         with suppress(Exception):
-            pending_delight_count = self.database.count_delight_candidates(
-                min_delight_score=self._dynamic_delight_threshold(),
+            pending_delight_count = count_selected_delights(
+                self.database,
+                fallback_threshold=self._dynamic_delight_threshold(),
             )
         pool_counts = self._pool_readiness_counts()
         payload: dict[str, object] = {
@@ -1041,6 +1044,13 @@ class ContinuousRefreshController:
                     break
 
             available = self.database.count_pool_candidates()
+            # A one-item cold pool belongs entirely to delight. It is still
+            # browseable supply, even though the ordinary-feed count is zero.
+            ranked_delights = getattr(self.database, "get_ranked_delight_candidates", None)
+            if available <= 0 and callable(ranked_delights):
+                available = len(
+                    ranked_delights(limit=1, include_liked=True, include_delivered=True)
+                )
             self._update_llm_inventory_state(available)
             if available <= 0:
                 pending = 0
@@ -1740,28 +1750,26 @@ class ContinuousRefreshController:
         ):
             return None
 
-        # Pull a small batch and filter disliked topics in Python — there
-        # are typically only a handful of high-score candidates and a
-        # very short disliked list, so the overhead is negligible.
-        candidates = self.database.get_delight_candidates(
-            min_delight_score=self._dynamic_delight_threshold(),
+        disliked_phrases = self._load_disliked_topic_phrases()
+        set_topics = getattr(self.database, "set_delight_disliked_topics", None)
+        if callable(set_topics):
+            set_topics(disliked_phrases)
+        candidates = select_delight_candidates(
+            self.database,
+            fallback_threshold=self._dynamic_delight_threshold(),
             limit=20,
         )
         if not candidates:
             return None
 
-        disliked_phrases = self._load_disliked_topic_phrases()
-        candidate: dict[str, Any] | None = None
-        for row in candidates:
-            title = str(row.get("title", "")).lower()
-            tags_raw = str(row.get("tags", "")).lower()
-            haystack = f"{title} {tags_raw}"
-            if any(phrase in haystack for phrase in disliked_phrases if phrase):
-                continue
-            candidate = row
-            break
-        if candidate is None:
+        from openbiliclaw.recommendation.exclusion import filter_recommendation_rows
+
+        candidates = filter_recommendation_rows(
+            candidates, disliked_phrases, restore_on_total_fuzzy_match=False
+        )
+        if not candidates:
             return None
+        candidate = candidates[0]
         return {
             "bvid": str(candidate.get("bvid", "")),
             "item_key": str(candidate.get("item_key", "")),
@@ -3672,8 +3680,8 @@ class ContinuousRefreshController:
         the refresh tick)."""
         try:
             return int(
-                self.database.count_delight_candidates(
-                    min_delight_score=self._dynamic_delight_threshold()
+                count_selected_delights(
+                    self.database, fallback_threshold=self._dynamic_delight_threshold()
                 )
             )
         except Exception:

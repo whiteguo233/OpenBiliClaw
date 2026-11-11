@@ -1,7 +1,7 @@
 """FastAPI app for the browser-extension backend."""
 
 # [INPUT]: 配置、MemoryManager、Database 与来源事件规范化器
-# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用路由；向 worker 发布 runtime-stream 在线心跳
+# [OUTPUT]: 共用 API 路由、精确惊喜队列与消费后补位事件；发布 runtime-stream 在线心跳
 # [POS]: API 组合根，负责请求边界与事件入口，不在此复制来源解析规则
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -2381,7 +2381,10 @@ def create_app(
         # Injection path: caller provides swappable components.
         # Auto-create stable components (database, memory_manager) if missing.
         from openbiliclaw.config import llm_concurrency_from_config
-        from openbiliclaw.llm.concurrency import LLMConcurrencyGate
+        from openbiliclaw.llm.concurrency import (
+            LLMConcurrencyGate,
+            apply_background_budget_config,
+        )
         from openbiliclaw.runtime.events import RuntimeEventHub as _RuntimeEventHub
 
         _db = database
@@ -2457,6 +2460,7 @@ def create_app(
             )
         if injected_gate is None:
             injected_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
+            apply_background_budget_config(injected_gate, config)
 
         with suppress(Exception):
             soul_engine._llm_concurrency_gate = injected_gate
@@ -2577,9 +2581,13 @@ def create_app(
             )
     if ctx.llm_concurrency_gate is None:
         from openbiliclaw.config import llm_concurrency_from_config
-        from openbiliclaw.llm.concurrency import LLMConcurrencyGate
+        from openbiliclaw.llm.concurrency import (
+            LLMConcurrencyGate,
+            apply_background_budget_config,
+        )
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
+        apply_background_budget_config(ctx.llm_concurrency_gate, config)
 
     ctx.configure_director(config)
     from openbiliclaw.api.director import register_director_routes
@@ -12122,6 +12130,22 @@ def create_app(
         save_cognition_updates(updates)
         return CognitionUpdateSeenResponse(ok=True, id=update_id)
 
+    async def _refresh_delight_supply() -> None:
+        """Wake queue readers and reuse the bounded, debounced refill path."""
+        publish = getattr(ctx.event_hub, "publish", None)
+        if not callable(publish):
+            publish = getattr(getattr(ctx.runtime_controller, "event_hub", None), "publish", None)
+        if callable(publish):
+            with suppress(Exception):
+                await publish({"type": "delight.refreshed", "message": "惊喜推荐队列已更新"})
+        coordinator = getattr(ctx.runtime_controller, "candidate_eval_coordinator", None)
+        notify = getattr(coordinator, "notify", None)
+        if callable(notify):
+            with suppress(Exception):
+                notify("delight_consumed")
+        with suppress(Exception):
+            await _trigger_replenishment_if_needed()
+
     @app.post("/api/delight/trigger")
     async def trigger_delight(payload: dict[str, Any] | None = None) -> Any:
         """Manually push N distinct delight candidates via WebSocket.
@@ -12152,9 +12176,10 @@ def create_app(
             with suppress(Exception):
                 threshold = float(dynamic_threshold())
 
-        candidates = ctx.database.get_delight_candidates(
-            min_delight_score=threshold,
-            limit=count,
+        from openbiliclaw.recommendation.delight import select_delight_candidates
+
+        candidates = select_delight_candidates(
+            ctx.database, fallback_threshold=threshold, limit=count
         )
         pushed: list[str] = []
         for row in candidates:
@@ -12248,8 +12273,11 @@ def create_app(
         if callable(dynamic_threshold):
             with suppress(Exception):
                 threshold = float(dynamic_threshold())
-        rows = ctx.database.get_delight_candidates(
-            min_delight_score=threshold,
+        from openbiliclaw.recommendation.delight import select_delight_candidates
+
+        rows = select_delight_candidates(
+            ctx.database,
+            fallback_threshold=threshold,
             limit=max(1, min(100, int(requested_limit))),
             include_liked=True,
             include_delivered=True,
@@ -12260,9 +12288,11 @@ def create_app(
         load_phrases = getattr(controller, "_load_disliked_topic_phrases", None)
         disliked_phrases = load_phrases() if callable(load_phrases) else []
 
-        def passes_filter(row: dict[str, Any]) -> bool:
-            haystack = f"{str(row.get('title', '')).lower()} {str(row.get('tags', '')).lower()}"
-            return not any(p and p in haystack for p in disliked_phrases)
+        from openbiliclaw.recommendation.exclusion import filter_recommendation_rows
+
+        rows = filter_recommendation_rows(
+            rows, disliked_phrases, restore_on_total_fuzzy_match=False
+        )
 
         items = [
             {
@@ -12299,7 +12329,6 @@ def create_app(
                 ),
             }
             for row in rows
-            if passes_filter(row)
         ]
         return {"items": items}
 
@@ -12430,7 +12459,11 @@ def create_app(
                     # only expose the older delivered-only marker.
                     ctx.database.mark_delight_notified(bvid)
             except Exception:
-                logger.debug("Failed to mark viewed delight bvid %s", bvid)
+                logger.exception("Failed to mark viewed delight bvid %s", bvid)
+                return JSONResponse(
+                    status_code=500, content={"ok": False, "error": "persist_failed"}
+                )
+            await _refresh_delight_supply()
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
 
         if response_type == "dismiss":
@@ -12447,6 +12480,7 @@ def create_app(
                         "error": "persist_failed",
                     },
                 )
+            await _refresh_delight_supply()
             return reaction_response("dismissed")
 
         if response_type == "like":
@@ -12505,6 +12539,7 @@ def create_app(
                     source_event="negative",
                     evidence_id=bvid,
                 )
+            await _refresh_delight_supply()
             return reaction_response("disliked")
 
         # Chat

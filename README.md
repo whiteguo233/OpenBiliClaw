@@ -335,8 +335,8 @@ npm run package:firefox        # 额外打成未签名 openbiliclaw-extension-v*
 - 当前插件 release：`extension-v*`，并附 `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip`（Firefox 临时调试）；启用 AMO signing 时还会附 `openbiliclaw-extension-v*-firefox.xpi`（Firefox 正式安装）
 - 当前桌面安装包 release：`desktop-v*`，同版本桌面 channel 完成后会附可用的 `.dmg` / `.exe`；缺失 channel 显示未发布，不回填上一版资产
 
-- **macOS**：从发布页下载与你的 Mac 匹配的 DMG：Apple 芯片用 `OpenBiliClaw-macos-v*-arm64.dmg`；Intel 用 `OpenBiliClaw-macos-v*-x64.dmg`（如发布页提供）。退出旧版后打开 DMG，按窗口里的箭头将 OpenBiliClaw 拖到「应用程序」，复制完成后从「应用程序」打开。新包经过 Developer ID 签名与 Apple 公证，无需解除隔离命令。
-- **Windows**：下载 `OpenBiliClaw-windows-*-Setup.exe`，双击安装。向导最后一页提供默认勾选的「Launch OpenBiliClaw」复选框，点「完成」才会启动刚安装的新版本（升级时安装器会先结束无互斥体的旧实例；若运行中的是已带 AppMutex 的新版应用，安装/卸载会先弹「OpenBiliClaw 正在运行」提示，退出应用后点 OK 自动重检，正常点「完成」即完成新旧交接，取消勾选则不启动）；`/SILENT` / `/VERYSILENT` 静默安装没有向导界面，安装成功后仍会自动启动新版本；但应用仍在运行时静默安装（配合 `/SUPPRESSMSGBOXES`）会按取消处理，需先退出应用。
+- **macOS**：从发布页下载与你的 Mac 匹配的 DMG：Apple 芯片用 `OpenBiliClaw-macos-v*-arm64.dmg`；Intel 用 `OpenBiliClaw-macos-v*-x64.dmg`（如发布页提供）。退出旧版后打开 DMG，用 Finder 将 app 拖入「应用程序」或其他可写目录，再从该目录启动。升级时请在原目录替换旧 app。新包经过 Developer ID 签名与 Apple 公证，无需解除隔离命令。
+- **Windows**：下载 `OpenBiliClaw-windows-*-Setup.exe`，双击安装。在「选择目标位置」页可输入路径或点「浏览」；升级时默认沿用原目录，如需换盘请先退出并在 Windows 设置中卸载旧版，再重装到新目录。也可在全新安装时用 `/DIR="D:\Apps\OpenBiliClaw"` 指定目标。向导最后一页提供默认勾选的「Launch OpenBiliClaw」复选框，点「完成」才会启动刚安装的新版本（升级时安装器会先结束无互斥体的旧实例；若运行中的是已带 AppMutex 的新版应用，安装/卸载会先弹「OpenBiliClaw 正在运行」提示，退出应用后点 OK 自动重检，正常点「完成」即完成新旧交接，取消勾选则不启动）；`/SILENT` / `/VERYSILENT` 静默安装没有向导界面，安装成功后仍会自动启动新版本；但应用仍在运行时静默安装（配合 `/SUPPRESSMSGBOXES`）会按取消处理，需先退出应用。
 
 macOS 主应用继续以 10.15+ 为兼容目标；只有 Go 1.26.6 构建的可选 Tailnet helper 实测要求
 macOS 12+。10.15 / 11 会只降级远程 Tailnet，本机应用功能仍照常。
@@ -664,6 +664,11 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 硅基流动作为预置 LLM 实例：在现有实例列表选择8B/4B，默认链和模块链决定调用顺序；Embedding 独立选择云端 BGE-M3 或本地 Ollama。本次统一入口改动待随应用发布。[结构与验收](docs/testing/2026-11-06-unified-providers.md)。
 
 ```text
+admitted copy-ready content → unread / current dislikes / temporal / history filters
+                           → exact Top 10% identities (ceil; nonempty min 1) → delight queue
+                           └ remaining identities → ordinary feed / shared inventory
+view / dismiss / dislike → committed state → delight.refreshed → UI refill + bounded supply wake
+
 Setup / popup / desktop / mobile / CLI → ordinary config API
   ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
   │   → LLMService → LLMRegistry → selected provider adapter

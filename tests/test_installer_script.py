@@ -17,6 +17,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ISS_PATH = PROJECT_ROOT / "packaging" / "openbiliclaw.iss"
 
 
+def test_windows_upgrade_keeps_the_destination_page_visible() -> None:
+    """Inno defaults to hiding this page when a previous install is registered."""
+    script = ISS_PATH.read_text(encoding="utf-8")
+    setup = script.split("[Setup]", 1)[1].split("[Tasks]", 1)[0]
+    settings = {
+        key.strip().lower(): value.strip().lower()
+        for line in setup.splitlines()
+        if line.strip() and not line.lstrip().startswith(";")
+        for key, _, value in [line.partition("=")]
+    }
+    assert settings.get("disabledirpage", "auto") == "no", (
+        "Inno Setup hides Select Destination Location during upgrades"
+    )
+    assert settings.get("usepreviousappdir", "yes") == "yes", (
+        "In-place upgrades must start with the previously selected directory"
+    )
+
+
 def _run_entries() -> list[dict[str, str]]:
     """Parse [Run] section entries into {filename, description, flags} dicts."""
     text = ISS_PATH.read_text(encoding="utf-8")

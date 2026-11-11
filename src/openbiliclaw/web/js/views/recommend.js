@@ -115,6 +115,9 @@ const DELIGHT_AUTO_ADVANCE_MS = 60000;
 const DELIGHT_DRAG_DEAD_ZONE = 10;
 const DELIGHT_SWIPE_THRESHOLD = 50;
 let _delightAutoTimer = null;
+let _delightRefreshTimer = null;
+let _delightRefreshGeneration = 0;
+let _delightRefreshPending = false;
 let _delightDragging = false;
 let _delightSwipeStartX = 0;
 let _delightNavTimer = null;
@@ -689,6 +692,7 @@ function renderDelightTray() {
         });
         patchState({ activeDelights: updated });
         rerenderDelightOnly();
+        if (_delightRefreshPending) scheduleDelightRefresh();
       }, 120);
     });
 
@@ -935,6 +939,50 @@ function skipDelightAt(index) {
   const newIdx = Math.min(index, Math.max(0, filtered.length - 1));
   patchState({ activeDelights: filtered, delightCurrentIndex: newIdx });
   rerenderDelightOnly();
+  scheduleDelightRefresh();
+}
+
+function scheduleDelightRefresh() {
+  clearTimeout(_delightRefreshTimer);
+  const generation = ++_delightRefreshGeneration;
+  if (state.activeDelights.some((item) => normalizeDelightCandidate(item).composer_open)) {
+    _delightRefreshPending = true;
+    return;
+  }
+  _delightRefreshPending = false;
+  _delightRefreshTimer = setTimeout(async () => {
+    try {
+      const delights = await fetchDelightBatch();
+      if (generation !== _delightRefreshGeneration) return;
+      if (state.activeDelights.some((item) => normalizeDelightCandidate(item).composer_open)) {
+        _delightRefreshPending = true;
+        return;
+      }
+      const currentKey = normalizeDelightCandidate(
+        state.activeDelights[state.delightCurrentIndex],
+      ).bvid;
+      const local = new Map(state.activeDelights.map((item) => {
+        const normalized = normalizeDelightCandidate(item);
+        return [normalized.bvid, normalized];
+      }));
+      const next = delights.map((item) => {
+        const normalized = normalizeDelightCandidate(item);
+        const previous = local.get(normalized.bvid);
+        return previous
+          ? { ...normalized, draft: previous.draft, turns: previous.turns }
+          : normalized;
+      });
+      patchState({
+        activeDelights: next,
+        delightCurrentIndex: Math.max(0, next.findIndex((item) => item.bvid === currentKey)),
+      });
+      rerenderDelightOnly();
+      void hydrateDelightTurns();
+    } catch {
+      // Preserve the current queue on a read failure. Reconnect or the next
+      // committed supply/consumption event will retry without a polling loop.
+    }
+  }, 300);
 }
 
 async function handleDelightAction(d, action) {
@@ -951,6 +999,7 @@ async function handleDelightAction(d, action) {
     });
     patchState({ activeDelights: updated });
     rerenderDelightOnly();
+    if (_delightRefreshPending) scheduleDelightRefresh();
     return;
   }
 
@@ -1948,16 +1997,7 @@ function hydrateRecommendSideChannels() {
     })
     .catch(() => {});
 
-  fetchDelightBatch()
-    .then((delights) => {
-      patchState({
-        activeDelights: delights.map(normalizeDelightCandidate),
-        delightCurrentIndex: 0,
-      });
-      rerenderDelightOnly();
-      void hydrateDelightTurns();
-    })
-    .catch(() => {});
+  scheduleDelightRefresh();
 }
 
 // ── Public API ───────────────────────────────────────────────
@@ -1977,6 +2017,7 @@ export function initRecommendView(root) {
 
 export function onStreamConnect() {
   restartFailedRecoveries();
+  scheduleDelightRefresh();
 }
 
 export function onStreamEvent(payload) {
@@ -2027,6 +2068,8 @@ export function onStreamEvent(payload) {
       });
       rerenderHeaderOnly();
     }
+  } else if (type === "delight.refreshed") {
+    scheduleDelightRefresh();
   } else if (type === "delight.candidate") {
     const item = payload.data || payload;
     if (item?.title) {

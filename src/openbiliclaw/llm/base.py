@@ -51,6 +51,18 @@ class LLMRateLimitError(LLMProviderError):
     """Raised when a provider rate-limits a request."""
 
 
+class LLMBudgetExhaustedError(LLMRateLimitError):
+    """Raised when the self-imposed background LLM budget refuses a request.
+
+    This is admission control, not a provider failure: no request was sent.
+    It subclasses :class:`LLMRateLimitError` so every existing "back off and
+    skip this cycle, do not retry hard" path applies, but the message names the
+    local `scheduler.llm_budget_max_calls` window instead of the provider.
+    Callers that own a multi-call unit of work (e.g. the cognition cycle) catch
+    it to stop between chunks instead of consuming the retry.
+    """
+
+
 class LLMAuthError(LLMProviderError):
     """Raised when a provider rejects our credentials (HTTP 401).
 

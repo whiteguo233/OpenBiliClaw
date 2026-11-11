@@ -560,3 +560,83 @@ def test_mobile_delight_feedback_button_does_not_also_open_content(
     assert stub.delight_post_received.wait(timeout=2)
     assert [post["response"] for post in stub.delight_posts] == ["like"]
     assert chromium_page.evaluate("() => window.__openedUrls") == []
+
+
+def test_mobile_delight_refill_event_replaces_consumed_queue_without_reload(
+    mobile_web_server: tuple[str, MobileWebStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = mobile_web_server
+    chromium_page.goto(f"{base_url}/m/#/recommend")
+    expect(chromium_page.locator(".delight-title")).to_contain_text("会让你意外喜欢的一条")
+    with stub.lock:
+        stub.delight.update(bvid="BVnew", title="自动补位的新内容")
+    chromium_page.evaluate("() => window.__emitRuntimeEvent({type: 'delight.refreshed'})")
+    expect(chromium_page.locator(".delight-title")).to_contain_text("自动补位的新内容")
+
+
+def test_mobile_delight_refill_preserves_composer_until_blur(
+    mobile_web_server: tuple[str, MobileWebStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = mobile_web_server
+    chromium_page.goto(f"{base_url}/m/#/recommend")
+    chromium_page.locator('[data-delight-action="chat"]').click()
+    composer = chromium_page.locator(".delight-composer-input")
+    composer.fill("正在输入的草稿")
+    with stub.lock:
+        stub.delight.update(bvid="BVnew", title="稍后显示的新内容")
+    chromium_page.evaluate("() => window.__emitRuntimeEvent({type: 'delight.refreshed'})")
+    expect(composer).to_be_focused()
+    expect(composer).to_have_value("正在输入的草稿")
+    with chromium_page.expect_response("**/api/delight/pending-batch"):
+        composer.evaluate("element => element.blur()")
+    expect(chromium_page.locator(".delight-title")).to_contain_text("稍后显示的新内容")
+
+
+def test_mobile_late_initial_delight_read_cannot_erase_a_new_refill(
+    mobile_web_server: tuple[str, MobileWebStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = mobile_web_server
+    held: list[Any] = []
+
+    def hold_first(route: Any) -> None:
+        if not held:
+            held.append(route)
+        else:
+            route.continue_()
+
+    chromium_page.route("**/api/delight/pending-batch", hold_first)
+    with chromium_page.expect_request("**/api/delight/pending-batch"):
+        chromium_page.goto(f"{base_url}/m/#/recommend")
+    with stub.lock:
+        stub.delight.update(bvid="BVnew", title="先返回的新补位")
+    chromium_page.evaluate("() => window.__emitRuntimeEvent({type: 'delight.refreshed'})")
+    expect(chromium_page.locator(".delight-title")).to_contain_text("先返回的新补位")
+    with chromium_page.expect_response("**/api/delight/pending-batch") as late:
+        held[0].fulfill(status=200, content_type="application/json", body='{"items": []}')
+    late.value.finished()
+    # Let the completed stale body's promise chain run before asserting that
+    # it cannot undo the newer committed queue already visible in the page.
+    chromium_page.wait_for_timeout(200)
+    expect(chromium_page.locator(".delight-title")).to_contain_text("先返回的新补位")
+
+
+def test_mobile_same_delight_keeps_saved_draft_after_deferred_refresh(
+    mobile_web_server: tuple[str, MobileWebStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = mobile_web_server
+    chromium_page.goto(f"{base_url}/m/#/recommend")
+    chromium_page.locator('[data-delight-action="chat"]').click()
+    composer = chromium_page.locator(".delight-composer-input")
+    composer.fill("下次还要继续写的草稿")
+    with stub.lock:
+        stub.delight["title"] = "同一条内容的新标题"
+    chromium_page.evaluate("() => window.__emitRuntimeEvent({type: 'delight.refreshed'})")
+    with chromium_page.expect_response("**/api/delight/pending-batch"):
+        composer.evaluate("element => element.blur()")
+    expect(chromium_page.locator(".delight-title")).to_contain_text("同一条内容的新标题")
+    chromium_page.locator('[data-delight-action="chat"]').click()
+    expect(chromium_page.locator(".delight-composer-input")).to_have_value("下次还要继续写的草稿")

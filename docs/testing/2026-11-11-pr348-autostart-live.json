@@ -5,12 +5,14 @@
     "source": "<worktree>/src/openbiliclaw/__init__.py",
     "platform": "darwin",
     "machine": "x86_64",
-    "default_worker_mode": true
+    "default_worker_mode": true,
+    "integration_base": "fd2d23e219536adf6e40474fc092d38b3493de4f",
+    "preserved_author_commit": "78242f0d53048b5d9f836fbe3326a3592de1d560"
   },
   {
     "name": "process_started",
     "case": "cli",
-    "pid": 60644
+    "pid": 65811
   },
   {
     "name": "cli_default_status",
@@ -82,7 +84,7 @@
   },
   {
     "name": "production_restart_verified",
-    "pid_unchanged": 60644,
+    "pid_unchanged": 65811,
     "startup_keys": [
       "OPENBILICLAW_PROJECT_ROOT"
     ],
@@ -161,7 +163,7 @@
     "name": "launchd_running",
     "fields": [
       "state = running",
-      "pid = 60660",
+      "pid = 65830",
       "state = active",
       "state = active"
     ]
@@ -185,7 +187,7 @@
   {
     "name": "process_started",
     "case": "external-env",
-    "pid": 60668
+    "pid": 65840
   },
   {
     "name": "external_env_status",
@@ -221,7 +223,7 @@
   {
     "name": "process_started",
     "case": "desktop-entry",
-    "pid": 60675
+    "pid": 65845
   },
   {
     "name": "desktop_source_entry_status",

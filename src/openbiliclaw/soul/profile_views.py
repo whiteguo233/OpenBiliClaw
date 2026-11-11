@@ -190,12 +190,17 @@ def preference_prompt_payload(preference: Mapping[str, object]) -> dict[str, obj
     """Return the LLM-facing projection of a persisted preference payload.
 
     Drops storage-only data that no prompt contract reads: the
-    ``last_decay_at`` decay cursor on ``interests`` and the append-only
-    ``archived_interests`` lifecycle ledger. Every other field passes through
+    ``last_decay_at`` decay cursor on ``interests``, ``state="archived"``
+    lifecycle rows inside ``interests``, and the append-only
+    ``archived_interests`` ledger. Every remaining field passes through
     unchanged and in its original order, so a payload without those fields
     renders byte-identically. Callers that serialize a preference payload
     outside :func:`build_cognition_profile_view_v1` — notably the legacy JSON
     dumps in ``llm.prompts`` — must run it through this helper first.
+
+    Archived rows stay in storage (the lifecycle design never deletes them) and
+    the analyzer merges/reactivates from that stored list, so a prompt does not
+    need the tombstone to keep lifecycle semantics (v0.3.236).
     """
     projected = {
         key: value
@@ -208,15 +213,19 @@ def preference_prompt_payload(preference: Mapping[str, object]) -> dict[str, obj
     cleaned: list[object] = []
     changed = False
     for item in interests:
-        if isinstance(item, Mapping) and any(
-            key in item for key in _COGNITION_INTERNAL_RECORD_FIELDS
-        ):
-            item = {
-                key: value
-                for key, value in item.items()
-                if key not in _COGNITION_INTERNAL_RECORD_FIELDS
-            }
-            changed = True
+        if isinstance(item, Mapping):
+            state = str(item.get("state", "") or "").strip().lower()
+            if state == "archived":
+                # Lifecycle tombstone: persisted history, not live preference.
+                changed = True
+                continue
+            if any(key in item for key in _COGNITION_INTERNAL_RECORD_FIELDS):
+                item = {
+                    key: value
+                    for key, value in item.items()
+                    if key not in _COGNITION_INTERNAL_RECORD_FIELDS
+                }
+                changed = True
         cleaned.append(item)
     if not changed:
         return projected

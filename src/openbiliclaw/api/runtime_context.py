@@ -852,6 +852,16 @@ class RuntimeContext:
 
         if self.database is None:
             return
+        set_delight_provider = getattr(self.database, "set_delight_dislikes_provider", None)
+        if callable(set_delight_provider):
+
+            def delight_dislikes() -> list[str]:
+                getter = getattr(self.soul_engine, "get_effective_disliked_topics", None)
+                if not callable(getter):
+                    getter = getattr(self.runtime_controller, "_load_disliked_topic_phrases", None)
+                return list(getter()) if callable(getter) else []
+
+            set_delight_provider(delight_dislikes)
         from openbiliclaw.saved_sync.adapters.extension import (
             build_extension_native_save_adapters,
         )
@@ -1433,7 +1443,11 @@ class RuntimeContext:
             TrendingStrategy,
         )
         from openbiliclaw.llm import build_llm_registry
-        from openbiliclaw.llm.concurrency import LLMConcurrencyGate, background_llm_concurrency
+        from openbiliclaw.llm.concurrency import (
+            LLMConcurrencyGate,
+            apply_background_budget_config,
+            background_llm_concurrency,
+        )
         from openbiliclaw.llm.registry import build_embedding_service
         from openbiliclaw.llm.service import LLMService, module_overrides_from_config
         from openbiliclaw.llm.usage_recorder import UsageRecorder
@@ -1457,6 +1471,7 @@ class RuntimeContext:
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_gate = self.llm_concurrency_gate or LLMConcurrencyGate(llm_concurrency)
+        apply_background_budget_config(new_llm_gate, new_config)
         new_inventory_available: int | None = None
         count_pool = getattr(self.database, "count_pool_candidates", None)
         if callable(count_pool):

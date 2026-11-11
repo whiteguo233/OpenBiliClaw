@@ -147,6 +147,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| 相对惊喜与精确占位 | ✅ | `get_ranked_delight_candidates()` 先过滤后取前 10%，与普通推荐、库存和整理共享具体身份；支持单条冷启动、同分、已读后补位和旧快照回填。 |
 | 动态来源注册与多来源证据 | ✅ | `custom_sources` 管理实例与份额；候选/cache 新增 `source_id/source_name`，`content_source_provenance` 保留同一 canonical 内容的多来源发现证据。相同 URL 仅占一份库存与反馈身份。公开平台库存合并到 canonical `web`，内部实例配额仍独立。 |
 | 待确认列表批量可见性读取 | ✅ | `get_chat_confirmation_refs(session=...)` 用一次连接/查询读取当前 surface 已打开的活动对象，过滤条件与逐 ref 的 `get_chat_confirmation_turn()` 一致；避免数百个待聊对象每次轮询都创建数百个 SQLite 连接 |
 | 推荐读取事务内复用 | ✅ | 隔离快照和库存读取复用同一事务的动态阈值及相同 SQL 原始行；每次仍执行完整资格过滤与独立 topic window，事务结束清空。 |
@@ -818,21 +819,20 @@ raw_by_source = db.count_pool_raw_material_by_source()
 ### Delight Readiness
 
 ```python
-rows = db.get_delight_candidates(min_delight_score=0.75, limit=20)
-count = db.count_delight_candidates(min_delight_score=0.75)
+rows = db.get_ranked_delight_candidates(limit=20, include_liked=True, include_delivered=True)
+db.set_delight_dislikes_provider(load_latest_effective_dislikes)
 backlog = db.get_pool_candidates_needing_delight_score(
-    limit=30,
-    min_delight_score_for_reason=0.75,
+    limit=50, min_delight_score_for_reason=0.75, min_relevance_score=None,
 )
 ```
 
-行为说明：
-
-- `get_delight_candidates()` 与 `count_delight_candidates()` 使用相同的 copy-ready 条件：`pool_expression / pool_topic_label` 必须非空，且 `delight_reason / delight_hook` 必须是它们的同步快照。
-- evaluator 的 `relevance_reason` 只是评估诊断字段；即使旧数据已把它写进 `delight_reason`，快照不一致的行也不会被任何 pending/API/runtime 出口读取。
-- `get_pool_candidates_needing_delight_score()` 只领取正式文案已就绪的行；未生成推荐词的内容不会开始 delight 打分。`update_delight_score()` 返回是否真正写入，并在 SQL 层要求文案非空；带 `reason/hook` 的写入还必须与当前正式快照逐项一致，从查询到写入之间文案发生变化时会整体拒绝。profile floor 或动态阈值升高时，copy-ready 且已低于新门槛、仍带旧 `reason/hook` 的行会被领取并清空。
-- 动态阈值样本只统计 copy-ready 的已打分行，旧版在推荐词生成前留下的分数不再影响 Top 10% 校准。
-- 普通推荐的 delight claim guard 以“已送达，或达阈值且正式文案快照已精确同步”为准。任意非空 evaluator reason 不能占位，尚未生成文案的行仍留给 expression-copy backlog，copy-ready 但尚未同步的行也保留给 profile-aware scorer 作最终门槛判断。
+- **已实现**：同一完整合格人口先应用来源准入、正式 copy 精确快照、`delight_seen`、canonical seen、时效、严格发布日期、可跳转来源、普通推荐历史和最新避雷，再选择前 `ceil(N * 0.10)` 个具体身份。唯一键稳定决胜，同分不会额外占位。空池返回空；非空冷池至少 1 条。读取只用 SQLite 与既有本地画像，无模型请求。
+- `get_ranked_delight_candidates()` 是生产相对精选 API；送达不等于已读，`include_delivered=True` 重灌仍可展示未读卡，`include_liked=True` 保留未消费点赞卡。点赞保留项优先占用名额；保留数超过池缩小后的名额时不删除已有点赞。普通推荐历史不作为新的惊喜供给；用户明确点赞且尚未消费的旧惊喜仍按点赞保留合同处理。
+- `set_delight_dislikes_provider()` 由 RuntimeContext 注入，回调解析当前 SoulEngine，热重载不持旧引用；隔离库存读继承该回调。CLI/独立引擎通过 `set_delight_disliked_topics()` 提供画像快照。避雷语义复用推荐出口：类别词只精确匹配结构化 topic，限定短语才匹配正文；惊喜不执行全灭恢复。
+- `dynamic_delight_threshold(default_threshold=...)` 是尾分诊断，非空时可低于默认分；默认仅为空池兼容值。`get_delight_candidates(min_delight_score=...)` / `count_delight_candidates(...)` 保留旧显式分数查询；生产入口不得再以该分数查询代替精确名额。
+- backlog 只领取正式文案就绪、分数或快照仍需同步的行，排除已读及普通推荐历史（未消费点赞例外），优先 fresh 后 shown / suppressed，避雷过滤在 batch limit 前完成，避免旧历史或被禁主题挤占首轮准备名额；`min_relevance_score=None` 只使用来源准入线（包括 exact `explore` 的 0.58），默认 0.55 shortlist 仍不能绕过来源准入。全部合格行准备好正式快照，后续相对晋级不再异步补 reason/hook。`min_delight_score_for_reason` 保留旧调用形状，不再清空低于动态尾分的正式快照。
+- `mark_delight_viewed()` 将 fresh 行原子改为 shown，释放 raw headroom；原始素材计数也排除旧库遗留的 fresh + delight_seen 行，避免已消费内容占住来源补货空间。
+- `update_delight_score()` 仍以条件 UPDATE 原子校验正式文案，拒绝 evaluator reason、缺文案或文案竞态。普通推荐 guard 排除已送达行和本轮精选的精确身份。隔离读缓存候选仅存在于一个只读事务；maintenance 冻结具体占位身份，防止自己的状态写入造成 before/after 库存基准漂移。
 
 ### Platform Availability
 

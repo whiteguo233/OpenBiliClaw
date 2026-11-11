@@ -1,5 +1,17 @@
 # 后端 API
 
+## 惊喜推荐相对精选（2026-11-11，待发布）
+
+| 已实现能力 / 公开 API | 契约 |
+| --- | --- |
+| `GET /api/delight/pending-batch` | 直接取共享存储的精确相对精选集合，先过滤再取名额；`limit` 只是展示上限，返回 `{items}` 结构不变 |
+| `POST /api/delight/trigger` | 复用同一精选集合，手动触发也不能绕过当前避雷、已读和准入 |
+| `POST /api/delight/respond` | 成功 `view/dismiss/dislike` 后发布 `delight.refreshed`、唤醒已有评估协调器，并走既有有界去抖补货；已提交反馈不因补货失败回滚。view 持久化失败返回 500，不假报成功 |
+| 三端补位 | 桌面与扩展已有队列刷新监听；移动端补上同一事件与重连恢复，输入期间等 blur 再更新卡片 |
+
+完整边界见 [推荐模块](recommendation.md#相对精选与边界2026-11-11待发布)。
+
+
 小红书元信息修复（2026-11-06）：搜索响应仅转交当前 note_card 的公开正文与标签名；`POST /api/sources/xhs/observed-urls` 将有界正文同时保存为 body_text、标签保存为 tags，使评估不再只收到标题/短简介。缺失内容不猜测；[验收范围](../testing/2026-11-06-security-metadata.md)。
 
 
