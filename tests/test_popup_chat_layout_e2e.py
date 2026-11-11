@@ -52,6 +52,8 @@ def _rects(page: Page) -> dict[str, Any]:
             form: rect('#chatForm'),
             hero: rect('.hero'),
             tabs: rect('.tabs-shell'),
+            controls: rect('.chat-controls'),
+            controlsOpen: document.getElementById('chatControls')?.open ?? null,
             heroSub: display('.hero-sub'),
             brandTitle: display('.brand-copy h1'),
             footerHeadline: display('.footer-headline'),
@@ -84,9 +86,12 @@ def test_popup_chat_folds_chrome_and_keeps_the_composer_inline(chromium_page: Pa
     form = rects["form"]
     hero = rects["hero"]
     tabs = rects["tabs"]
-    assert messages is not None and messages["height"] >= 120
+    controls = rects["controls"]
+    assert messages is not None and messages["height"] >= 180
     assert hero is not None and hero["height"] <= 45
     assert tabs is not None and tabs["height"] <= 52
+    assert controls is not None and controls["height"] <= 38
+    assert rects["controlsOpen"] is False
     assert input_box is not None and send is not None
     assert send["x"] >= input_box["x"] + input_box["width"], "send button is not inline"
     assert send["height"] >= 44

@@ -3395,6 +3395,79 @@
       overflow: hidden;
     }
 
+    /* The chat tab's controls are secondary: fold the mode switch, role/style
+       and pending inbox behind one compact summary row. */
+    .chat-controls {
+      flex: 0 0 auto;
+      margin-bottom: 6px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface-soft);
+    }
+
+    .chat-controls > summary {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px;
+      list-style: none;
+      cursor: pointer;
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .chat-controls > summary::-webkit-details-marker { display: none; }
+    .chat-controls > summary::marker { content: ""; }
+
+    .chat-controls-current {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .chat-controls-current > span:not(.chat-controls-sep) {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chat-controls-sep { color: var(--text-secondary); }
+
+    .chat-controls-pending {
+      flex: 0 0 auto;
+      margin-left: auto;
+      min-height: 20px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: var(--brand);
+      color: #fff;
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .chat-controls-pending[hidden],
+    .chat-controls[open] .chat-controls-pending { display: none; }
+
+    .chat-controls-chevron {
+      flex: 0 0 auto;
+      color: var(--text-secondary);
+      transition: transform 160ms ease;
+    }
+
+    .chat-controls[open] .chat-controls-chevron { transform: rotate(180deg); }
+    .chat-controls-body { display: grid; gap: 6px; padding: 0 8px 8px; }
+    .chat-controls-body .chat-subtabs { margin-bottom: 0; }
+    .chat-controls-body .chat-agent-bar { margin-bottom: 0; }
+    .chat-controls-body .chat-pending { margin-bottom: 0; }
+    .chat-controls:not(.is-chat-mode) .chat-only { display: none; }
+
     /* The chat tab is a work surface: fold the marketing tagline/Star row,
        keep the brand header to one slim line, and compact the recommendation
        activity footer so history gets the height. */
@@ -6881,33 +6954,48 @@
 
       <section id="viewChat" class="view" role="tabpanel" aria-labelledby="tabChat" hidden>
         <div class="chat-shell">
-          <div class="chat-subtabs" role="tablist" aria-label="对话视图切换">
-            <button id="chatSubtabChat" class="chat-subtab is-active" type="button" role="tab" aria-selected="true" data-chat-subtab="chat">对话</button>
-            <button id="chatSubtabSessions" class="chat-subtab" type="button" role="tab" aria-selected="false" data-chat-subtab="sessions">会话</button>
-            <button id="chatSubtabTasks" class="chat-subtab" type="button" role="tab" aria-selected="false" data-chat-subtab="tasks">任务 <span id="chatTasksBadge" class="tab-count-badge" hidden>0</span></button>
-          </div>
-          <div id="chatSubpanelChat" class="chat-subpanel">
-            <div class="chat-agent-bar">
-              <select id="chatSkillSelect" class="chat-skill-select" aria-label="对话角色" title="对话角色（skill）"></select>
-              <button id="chatPersonaToggle" class="chat-persona-toggle" type="button" aria-haspopup="dialog" aria-controls="chatPersonaDialog">风格 · 自然朋友</button>
-              <button id="chatApprovalsToggle" class="chat-pending-toggle chat-approvals-toggle" type="button" aria-expanded="false" aria-controls="chatApprovalsList" hidden>
-                <span>待审批 <span id="chatApprovalsCount" class="chat-pending-count">0</span></span>
-              </button>
-            </div>
-            <div id="chatApprovalsList" class="chat-pending-list chat-approvals-list" aria-label="待审批操作列表" hidden></div>
-            <div class="chat-pending">
-              <div class="chat-pending-head">
-                <button id="chatPendingToggle" class="chat-pending-toggle" type="button" aria-expanded="false" aria-controls="chatPendingList">
-                  <span>待聊确认 <span id="chatPendingCount" class="chat-pending-count">0</span></span>
-                </button>
-                <label class="chat-badge-pref" title="开启后「对话」标签上显示待聊数量红点；关闭则始终隐藏。默认关闭。">
-                  <input id="chatPendingBadgeToggle" type="checkbox">
-                  <span class="chat-badge-pref-switch" aria-hidden="true"></span>
-                  <span id="chatPendingBadgeToggleText" class="chat-badge-pref-text">标签红点</span>
-                </label>
+          <details class="chat-controls is-chat-mode" id="chatControls">
+            <summary>
+              <span class="chat-controls-current">
+                <span id="chatControlsMode">对话</span>
+                <span class="chat-controls-sep">·</span>
+                <span id="chatControlsSkill">口味伙伴</span>
+                <span class="chat-controls-sep">·</span>
+                <span id="chatControlsPersona">自然朋友</span>
+              </span>
+              <span id="chatControlsPending" class="chat-controls-pending" hidden>待聊 0</span>
+              <span class="chat-controls-chevron" aria-hidden="true">⌄</span>
+            </summary>
+            <div class="chat-controls-body">
+              <div class="chat-subtabs" role="tablist" aria-label="对话视图切换">
+                <button id="chatSubtabChat" class="chat-subtab is-active" type="button" role="tab" aria-selected="true" data-chat-subtab="chat">对话</button>
+                <button id="chatSubtabSessions" class="chat-subtab" type="button" role="tab" aria-selected="false" data-chat-subtab="sessions">会话</button>
+                <button id="chatSubtabTasks" class="chat-subtab" type="button" role="tab" aria-selected="false" data-chat-subtab="tasks">任务 <span id="chatTasksBadge" class="tab-count-badge" hidden>0</span></button>
               </div>
-              <div id="chatPendingList" class="chat-pending-list" aria-label="待聊确认列表" hidden></div>
+              <div class="chat-agent-bar chat-only">
+                <select id="chatSkillSelect" class="chat-skill-select" aria-label="对话角色" title="对话角色（skill）"></select>
+                <button id="chatPersonaToggle" class="chat-persona-toggle" type="button" aria-haspopup="dialog" aria-controls="chatPersonaDialog">风格 · 自然朋友</button>
+                <button id="chatApprovalsToggle" class="chat-pending-toggle chat-approvals-toggle" type="button" aria-expanded="false" aria-controls="chatApprovalsList" hidden>
+                  <span>待审批 <span id="chatApprovalsCount" class="chat-pending-count">0</span></span>
+                </button>
+              </div>
+              <div id="chatApprovalsList" class="chat-pending-list chat-approvals-list chat-only" aria-label="待审批操作列表" hidden></div>
+              <div class="chat-pending chat-only">
+                <div class="chat-pending-head">
+                  <button id="chatPendingToggle" class="chat-pending-toggle" type="button" aria-expanded="false" aria-controls="chatPendingList">
+                    <span>待聊确认 <span id="chatPendingCount" class="chat-pending-count">0</span></span>
+                  </button>
+                  <label class="chat-badge-pref" title="开启后「对话」标签上显示待聊数量红点；关闭则始终隐藏。默认关闭。">
+                    <input id="chatPendingBadgeToggle" type="checkbox">
+                    <span class="chat-badge-pref-switch" aria-hidden="true"></span>
+                    <span id="chatPendingBadgeToggleText" class="chat-badge-pref-text">标签红点</span>
+                  </label>
+                </div>
+                <div id="chatPendingList" class="chat-pending-list" aria-label="待聊确认列表" hidden></div>
+              </div>
             </div>
+          </details>
+          <div id="chatSubpanelChat" class="chat-subpanel">
             <div id="chatMessages" class="chat-messages" role="region" aria-label="口味对话记录" tabindex="0"></div>
             <form id="chatForm" class="chat-form">
               <details class="chat-source-guide">

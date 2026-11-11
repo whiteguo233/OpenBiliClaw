@@ -110,6 +110,16 @@ test("chat tab folds marketing chrome without hiding the activity footer", () =>
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
+  assert.match(popupHtml, /<details class="chat-controls is-chat-mode" id="chatControls">/);
+  assert.match(popupHtml, /id="chatControlsMode">对话</);
+  assert.match(popupHtml, /id="chatControlsSkill">口味伙伴</);
+  assert.match(popupHtml, /id="chatControlsPersona">自然朋友</);
+  assert.match(popupHtml, /class="chat-controls-pending"/);
+  assert.match(popupHtml, /\.chat-controls > summary \{[\s\S]*?min-height: 34px;/);
+  assert.match(popupHtml, /class="chat-agent-bar chat-only"/);
+  assert.match(popupHtml, /class="chat-pending chat-only"/);
+  assert.match(popupHtml, /\.chat-controls > summary \{/);
+  assert.match(popupHtml, /\.chat-controls:not\(\.is-chat-mode\) \.chat-only \{ display: none; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.hero-sub \{ display: none; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.hero \{ padding: 6px 10px; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.brand-copy h1 \{ display: none; \}/);
@@ -118,6 +128,11 @@ test("chat tab folds marketing chrome without hiding the activity footer", () =>
   assert.match(popupHtml, /body\.chat-tab-active \.footer \{ padding: 8px 10px; \}/);
   assert.match(popupHtml, /body\.chat-tab-active \.footer-headline \{ display: none; \}/);
   assert.match(popupJs, /classList\.toggle\("chat-tab-active", tabName === "chat"\)/);
+  assert.match(popupJs, /classList\.toggle\("is-chat-mode", popupChatSubtab === "chat"\)/);
+  assert.match(popupJs, /elements\.chatControlsMode\.textContent/);
+  assert.match(popupJs, /elements\.chatControlsPending\.textContent/);
+  assert.match(popupJs, /elements\.chatControlsSkill\.textContent/);
+  assert.match(popupJs, /elements\.chatControlsPersona\.textContent/);
   assert.doesNotMatch(
     popupHtml,
     /\.shell:has\(#viewChat:not\(\[hidden\]\)\)\s+\.footer\s*\{[\s\S]*?display:\s*none;/,
