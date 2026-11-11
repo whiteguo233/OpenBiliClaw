@@ -407,6 +407,11 @@ const elements = {
   chatSubpanelChat: document.getElementById("chatSubpanelChat"),
   chatSubpanelSessions: document.getElementById("chatSubpanelSessions"),
   chatSubpanelTasks: document.getElementById("chatSubpanelTasks"),
+  chatControls: document.getElementById("chatControls"),
+  chatControlsMode: document.getElementById("chatControlsMode"),
+  chatControlsSkill: document.getElementById("chatControlsSkill"),
+  chatControlsPersona: document.getElementById("chatControlsPersona"),
+  chatControlsPending: document.getElementById("chatControlsPending"),
   chatSkillSelect: document.getElementById("chatSkillSelect"),
   chatPersonaToggle: document.getElementById("chatPersonaToggle"),
   chatPersonaDialog: document.getElementById("chatPersonaDialog"),
@@ -999,6 +1004,7 @@ function setActiveTab(requestedTab, { libraryTab = "" } = {}) {
   }
   popupLibraryVisible = tabName === "library";
   state.activeTab = tabName;
+  document.body.classList.toggle("chat-tab-active", tabName === "chat");
 
   const tabs = [
     ["recommend", elements.tabRecommend, elements.viewRecommend],
@@ -5967,6 +5973,10 @@ function renderPendingConfirmations() {
   if (elements.chatPendingCount instanceof HTMLElement) {
     elements.chatPendingCount.textContent = countText;
   }
+  if (elements.chatControlsPending instanceof HTMLElement) {
+    elements.chatControlsPending.textContent = `待聊 ${countText}`;
+    elements.chatControlsPending.hidden = count <= 0;
+  }
   if (elements.chatPendingTabCount instanceof HTMLElement) {
     elements.chatPendingTabCount.textContent = countText;
     elements.chatPendingTabCount.hidden = !showChatPendingBadge || count <= 0;
@@ -6172,6 +6182,9 @@ function renderPopupPersonaPicker() {
     elements.chatPersonaToggle.disabled = !state.online;
     elements.chatPersonaToggle.setAttribute("aria-busy", String(saving));
   }
+  if (elements.chatControlsPersona) {
+    elements.chatControlsPersona.textContent = saving ? "保存中…" : (persona?.title || "自然朋友");
+  }
   if (!elements.chatPersonaDialog?.open) return;
   elements.chatPersonaExamplePrompt.textContent = popupPersonaExamplePrompt ? `例如你说：“${popupPersonaExamplePrompt}”` : "";
   elements.chatPersonaExamplePrompt.hidden = !popupPersonaExamplePrompt;
@@ -6223,8 +6236,12 @@ async function selectPopupPersona(personaId) {
 }
 
 function renderChatSkillSelect() {
-  if (!(elements.chatSkillSelect instanceof HTMLSelectElement)) return;
   const selected = currentPopupSkill();
+  if (elements.chatControlsSkill) {
+    elements.chatControlsSkill.textContent =
+      popupChatSkills.find((skill) => skill.name === selected)?.title || "口味伙伴";
+  }
+  if (!(elements.chatSkillSelect instanceof HTMLSelectElement)) return;
   elements.chatSkillSelect.replaceChildren();
   if (popupChatSkills.length === 0) {
     const option = document.createElement("option");
@@ -6441,6 +6458,13 @@ function syncPopupTasksPolling() {
 
 function setChatSubtab(name) {
   popupChatSubtab = ["chat", "sessions", "tasks"].includes(name) ? name : "chat";
+  if (elements.chatControls instanceof HTMLElement) {
+    elements.chatControls.classList.toggle("is-chat-mode", popupChatSubtab === "chat");
+  }
+  if (elements.chatControlsMode instanceof HTMLElement) {
+    elements.chatControlsMode.textContent =
+      { chat: "对话", sessions: "会话", tasks: "任务" }[popupChatSubtab] || "对话";
+  }
   const tabs = [
     ["chat", elements.chatSubtabChat, elements.chatSubpanelChat],
     ["sessions", elements.chatSubtabSessions, elements.chatSubpanelSessions],
@@ -8395,7 +8419,7 @@ function renderRecommendationState(stateShape) {
   }
 
   showRecommendationEmptyState("这会儿还没新东西", stateShape.message);
-  setHint("先跑 init、discover 或 recommend，再回来瞅瞅。");
+  setHint("暂时没有新候选，后台会继续补货。");
 }
 
 async function loadProfileSummary({ force = false } = {}) {

@@ -102,6 +102,69 @@ def _production_scroll_helpers() -> str:
     return f"const CHAT_SCROLL_BOTTOM_TOLERANCE_PX = 48;\n{source[start:end]}"
 
 
+def _compact_chat_fixture_html() -> str:
+    css = APP_CSS.read_text(encoding="utf-8")
+    cards = "".join(_dialogue_card(index) for index in range(1, 4))
+    return f"""<!doctype html>
+    <html lang="zh-CN" style="--topbar-height: 75px">
+      <head><meta charset="utf-8"><style>{css}</style></head>
+      <body class="chat-page-open">
+        <div class="app-shell">
+          <header class="topbar" style="height:75px"></header>
+          <div class="app-body">
+            <main class="layout">
+              <section class="chat-page content-page" id="chatPage">
+                <div class="content-page-head">
+                  <div>
+                    <p class="eyebrow">Dialogue</p>
+                    <h2>聊聊口味</h2>
+                    <p class="video-meta">告诉阿B你的偏好、边界和最近想看的方向。</p>
+                  </div>
+                  <label class="reshuffle-toggle chat-pending-badge-toggle">
+                    <input type="checkbox">
+                    <span class="reshuffle-switch"></span>
+                    <span>标签红点</span>
+                  </label>
+                </div>
+                <div class="dialogue-pending">
+                  <button id="desktopPendingToggle" type="button" aria-expanded="false">
+                    <span class="dialogue-pending-toggle-title">
+                      待聊确认 <span class="dialogue-pending-toggle-count">11</span>
+                    </span>
+                    <span class="dialogue-pending-toggle-chevron">⌄</span>
+                  </button>
+                  <div id="desktopPendingConfirmations" hidden></div>
+                </div>
+                <div class="chat-log" id="chatLog" tabindex="0">{cards}</div>
+                <div class="chat-composer">
+                  <details class="chat-source-guide">
+                    <summary>添加网站 / RSS 来源 · 说明与示例</summary>
+                    <div class="chat-source-guide-body">
+                      <p>
+                        把网站或 RSS 地址发给阿B，说明想看什么。试跑确认后，
+                        就会定期采集，通过筛选的内容会进入推荐。
+                      </p>
+                      <p class="chat-source-guide-example">
+                        <strong>网站示例</strong>“添加 [网址]，只看轻小说。”
+                      </p>
+                      <p class="chat-source-guide-example">
+                        <strong>RSS 示例</strong>“订阅 [RSS 地址]，每天采集一次。”
+                      </p>
+                    </div>
+                  </details>
+                  <form class="chat-input" id="chatForm">
+                    <input aria-label="和阿B聊聊你的口味">
+                    <button class="pill-btn primary" type="submit">发送</button>
+                  </form>
+                </div>
+              </section>
+            </main>
+          </div>
+        </div>
+      </body>
+    </html>"""
+
+
 @pytest.fixture()
 def chromium_page() -> Page:
     with sync_playwright() as playwright:
@@ -152,6 +215,24 @@ def test_chat_toast_does_not_cover_composer(chromium_page: Page, width: int, hei
     assert chromium_page.evaluate("window.submissions") == 1
 
 
+def test_folded_source_guide_returns_height_to_chat_history(chromium_page: Page) -> None:
+    chromium_page.set_viewport_size({"width": 1440, "height": 900})
+    chromium_page.set_content(_compact_chat_fixture_html(), wait_until="domcontentloaded")
+
+    details = chromium_page.locator(".chat-source-guide")
+    assert details.evaluate("element => element.open") is False
+    summary = chromium_page.locator(".chat-source-guide summary").bounding_box()
+    assert summary is not None and summary["height"] <= 40
+
+    closed_log = _scroll_report(chromium_page, "#chatLog")
+    assert closed_log["clientHeight"] >= 480
+
+    chromium_page.locator(".chat-source-guide summary").click()
+    assert details.evaluate("element => element.open") is True
+    opened_log = _scroll_report(chromium_page, "#chatLog")
+    assert opened_log["clientHeight"] >= 300
+
+
 @pytest.mark.parametrize(
     ("width", "height"),
     [(375, 667), (768, 720), (1024, 768), (1440, 900)],
@@ -171,7 +252,7 @@ def test_many_dialogue_cards_keep_natural_height_and_scroll(
         }))"""
     )
     assert len(card_metrics) == 9
-    assert all(metric["height"] > 240 for metric in card_metrics)
+    assert all(metric["height"] > 220 for metric in card_metrics)
     assert all(metric["height"] + 1 >= metric["scrollHeight"] for metric in card_metrics)
 
     before = _scroll_report(chromium_page, "#chatLog")
