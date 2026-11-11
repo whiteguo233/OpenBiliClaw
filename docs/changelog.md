@@ -8,6 +8,7 @@
 - 自启动真实验收补充：Intel macOS 26.5.1 的 CLI／桌面源码入口、实际 HTTP 开关、生产 `execve` 重启和 launchd 拉起通过；显式外部 worker 配置仍返回 409。测试登录项和进程已清理，未进行注销登录或安装包重装。[验收记录](testing/2026-11-11-pr348-autostart.md#真实后端http-请求和-macos-launchd-补充验收)。
 - **Windows 安装器目标目录**：交互式安装和升级都会显示「选择目标位置」，升级时预选原目录；如需换盘，先卸载旧版再选择新目录，避免多个安装路径共用同一卸载登记。安装器脚本测试覆盖该行为；macOS DMG 引导同步说明可拖入 Applications 或其他可写目录。
 - **Windows 安装器目标目录原生验收**：GitHub Actions Windows Server 2025 上通过交互升级页可见并预填原目录、换目录被拒、静默安装返回 7、卸载后中文/空格路径重装，以及安装后真实免费模型 SSE 请求和聊天持久化。[验收记录](testing/2026-11-10-desktop-install-destination.md)。
+- **插件设置页列方向空白段修复**：设置页状态行在纵向 flex section 中误用 180px flex 基准，模型 / 通用 tab 出现 180px 空白段；基础样式改为内容高度，仅横向探测行保留撑满宽度。真实后端 + 真实数据 + Chrome 400×700 下七个 tab 复测，模型 panel 2628→2448px、通用 2718→2228px，无水平溢出。[验收记录](testing/2026-11-11-extension-settings-layout.md)。
 
 - 惊喜推荐修复合入收尾（2026-11-11，待下次发版）：合入前追加边界、文档及版本一致性回归 38 passed；保留真实模型 429 的验收缺口。版本不变，正式服务本轮不重启。[合入记录](verification/2026-11-11-relative-delight-selection.md#git-合入收尾2026-11-11)。
 

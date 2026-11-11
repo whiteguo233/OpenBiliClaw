@@ -55,6 +55,10 @@ Safari发行环境（2026-11-06）：`release-extension.yml` 使用macOS15 runne
 
 实际 MV3 验收发现小鱼面板把 `/api` 重复拼进 URL。面板现在统一向 `requestJson` 传 `/fish/*` 相对路径，由公共 helper 添加一次 `/api`；配置、状态、账号保存/清除、扫码生成/轮询与运行入口共用此约定。新增公共 helper 与面板事件组合回归，覆盖 HTTP 方法与最终路径。后端公开 API 不变。
 
+## 设置页状态行高度修复（2026-11-11）
+
+设置页的 `.settings-probe-status` 不再把 `flex: 1 1 180px` 作为基础样式：基础状态行按内容高度渲染，只有横向 `.settings-probe-row` 内的状态行继续占满剩余宽度。修复前「模型」tab 默认链下方和「通用」tab 的 Tailnet / 保存同步 / 重新初始化状态下方各出现 180px 空白段；修复后模型 panel 2628→2448px、通用 2718→2228px。真实后端与真实数据下的 Chrome 400×700 七个 tab 验收、窄屏换行和静态回归见[验收记录](../testing/2026-11-11-extension-settings-layout.md)。
+
 ## 弹窗设置布局（2026-10-23）
 
 设置分类改为随弹窗宽度采用四列（极窄屏三列）换行，七个分类不再套用六列固定网格或窄屏 92px 最小列宽。320–600px 的真实 Chromium 布局回归检查所有分类可见、可点击；不改变设置字段与保存 API。验收详见 [布局与封面延迟报告](../verification/2026-10-23-popup-cover-latency.md)。

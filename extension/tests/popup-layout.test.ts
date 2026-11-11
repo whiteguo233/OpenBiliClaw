@@ -429,3 +429,17 @@ test("profile cognition details stay hidden until a card is expanded", () => {
 
   assert.match(hiddenDetailsBlock, /display:\s*none;/);
 });
+
+test("settings probe status stays content-sized inside column sections", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const baseBlock = popupHtml.match(/\.settings-probe-status\s*\{[^}]*\}/)?.[0] ?? "";
+  const rowBlock =
+    popupHtml.match(/\.settings-probe-row \.settings-probe-status\s*\{[^}]*\}/)?.[0] ?? "";
+
+  // The base status is inline metadata. Giving it a 180px flex basis while it
+  // sits directly inside a column-flex section used to reserve a blank 180px
+  // block in 模型 / 通用; only horizontal rows should opt into that width.
+  assert.match(baseBlock, /flex:\s*0 1 auto;/);
+  assert.doesNotMatch(baseBlock, /flex:\s*1 1 180px;/);
+  assert.match(rowBlock, /flex:\s*1 1 180px;/);
+});

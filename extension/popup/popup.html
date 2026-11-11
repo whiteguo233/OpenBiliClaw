@@ -5797,12 +5797,20 @@
 
     .settings-probe-status {
       min-width: 0;
-      flex: 1 1 180px;
+      /* A probe status is inline metadata, not a flexible section body. The
+         old 180px flex-basis also applied when the parent was a column
+         flex container, leaving 180px blank gaps in 模型 / 通用. Only the
+         horizontal probe row below opts into the wide flex behavior. */
+      flex: 0 1 auto;
       color: var(--text-secondary);
       font-size: 11.5px;
       font-weight: 700;
       line-height: 1.45;
       overflow-wrap: anywhere;
+    }
+
+    .settings-probe-row .settings-probe-status {
+      flex: 1 1 180px;
     }
 
     .settings-probe-status[data-tone="success"] {
