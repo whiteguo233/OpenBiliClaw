@@ -4843,6 +4843,14 @@
       font-size: 10.5px;
     }
 
+    @media (max-width: 380px) {
+      .settings-llm-instance-title strong {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
+    }
+
     .settings-llm-badges,
     .settings-llm-instance-actions {
       display: flex;
@@ -4860,6 +4868,8 @@
     .settings-llm-badge {
       display: inline-flex;
       align-items: center;
+      flex: 0 0 auto;
+      white-space: nowrap;
       min-height: 22px;
       padding: 2px 7px;
       border: 1px solid var(--line);
@@ -8809,6 +8819,15 @@
           <a id="backendUpdateDownload" class="settings-secondary-btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases" target="_blank" rel="noopener" hidden>前往下载新安装包</a>
         </div>
         <p class="settings-hint" id="backendUpdateModeHint" hidden></p>
+        <div class="settings-field-row">
+          <input id="cfgAutoUpdate" type="checkbox">
+          <label for="cfgAutoUpdate">自动更新后端</label>
+        </div>
+        <p class="settings-hint">此开关不会更新浏览器插件；插件商店安装由浏览器处理，zip / 开发者模式加载需要手动下载新版并重新加载。</p>
+        <div class="settings-field">
+          <label for="cfgAutoUpdateInterval">自动更新检查间隔小时</label>
+          <input id="cfgAutoUpdateInterval" type="number" min="1" step="1" placeholder="6">
+        </div>
         <p class="settings-hint">最近错误：<span id="backendUpdateError">—</span></p>
         <div class="settings-status-cell">
           <span>插件版本</span>
@@ -8876,15 +8895,6 @@
         <div class="settings-field">
           <label for="cfgSpeculatorIdleInterval">猜测兴趣空闲检查分钟</label>
           <input id="cfgSpeculatorIdleInterval" type="number" min="5" step="1" placeholder="30">
-        </div>
-        <div class="settings-field-row">
-          <input id="cfgAutoUpdate" type="checkbox">
-          <label for="cfgAutoUpdate">自动更新后端</label>
-        </div>
-        <p class="settings-hint">此开关不会更新浏览器插件；插件商店安装由浏览器处理，zip / 开发者模式加载需要手动下载新版并重新加载。</p>
-        <div class="settings-field">
-          <label for="cfgAutoUpdateInterval">自动更新检查间隔小时</label>
-          <input id="cfgAutoUpdateInterval" type="number" min="1" step="1" placeholder="6">
         </div>
         <div class="settings-field">
           <label for="cfgSpeculationInterval">猜测兴趣间隔分钟</label>

@@ -443,3 +443,22 @@ test("settings probe status stays content-sized inside column sections", () => {
   assert.doesNotMatch(baseBlock, /flex:\s*1 1 180px;/);
   assert.match(rowBlock, /flex:\s*1 1 180px;/);
 });
+
+test("settings LLM badges do not split inside narrow cards", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const badgeBlock = popupHtml.match(/\.settings-llm-badge\s*\{[^}]*\}/)?.[0] ?? "";
+
+  // "内置 · 只读" must stay one pill at 360px; the card title may ellipsize,
+  // but the short status badge must not wrap between words.
+  assert.match(badgeBlock, /flex:\s*0 0 auto;/);
+  assert.match(badgeBlock, /white-space:\s*nowrap;/);
+});
+
+test("settings model titles can wrap only in narrow side panels", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const narrowBlock =
+    popupHtml.match(/@media \(max-width: 380px\) \{[\s\S]*?\.settings-llm-instance-title strong[\s\S]*?\n {4}\}/)?.[0] ?? "";
+
+  assert.match(narrowBlock, /white-space:\s*normal;/);
+  assert.match(narrowBlock, /text-overflow:\s*clip;/);
+});

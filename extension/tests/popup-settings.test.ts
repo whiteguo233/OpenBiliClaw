@@ -1338,3 +1338,19 @@ test("disabled TikTok card keeps nested enable control accessible", () => {
   assert.equal(card.dataset.sourceOff, "false");
   assert.equal(face.tabIndex, 0);
 });
+
+test("scheduler auto-update controls stay grouped with version controls", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const auto = popupHtml.indexOf('id="cfgAutoUpdate"');
+  const autoInterval = popupHtml.indexOf('id="cfgAutoUpdateInterval"');
+  const idle = popupHtml.indexOf('id="cfgSpeculatorIdleInterval"');
+  const speculationInterval = popupHtml.indexOf('id="cfgSpeculationInterval"');
+
+  assert.ok(auto >= 0 && autoInterval >= 0 && idle >= 0 && speculationInterval >= 0);
+  // The update toggle/interval belong to the 版本与更新 section, not inside
+  // the speculation fields. A previous markup order put them between
+  // cfgSpeculatorIdleInterval and cfgSpeculationInterval.
+  assert.ok(auto < idle);
+  assert.ok(autoInterval < idle);
+  assert.doesNotMatch(popupHtml.slice(idle, speculationInterval), /cfgAutoUpdate/);
+});

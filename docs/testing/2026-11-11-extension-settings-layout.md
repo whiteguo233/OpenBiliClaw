@@ -34,3 +34,27 @@
 
 - [模型 tab 修复前后](assets/extension-settings-layout-2026-11-11/model-before-after.png)
 - [通用 tab 修复前后](assets/extension-settings-layout-2026-11-11/general-before-after.png)
+
+## 逐 tab 审计补充（2026-11-11）
+
+在 400×700 与 360×700 下逐页打开七个 tab，再检查 320 / 340 / 380 / 430 / 480px 的 tab 栏：
+
+| tab | 结果 |
+| --- | --- |
+| 模型 | 400px 无横向溢出；360px 下「内置 · 只读」徽标不再断成两行，模型名允许完整显示（此前会截断） |
+| 平台源 | 14 个来源卡、Ego Lite 准备态和候选池占比均正常换行，无横向溢出 |
+| 调度 | 自动更新后端开关与检查间隔原先夹在「猜测兴趣空闲检查」和「猜测兴趣间隔」之间，现已归入「版本与更新」区；猜测兴趣字段连续排列 |
+| 高级功能 | 候选评分、Jev、推荐增强、多模态、搜索词、认知预算、回复语气均正常，无溢出 |
+| 养蓝色大肥鱼 | 账号、人设、评论区、节奏与上限、运行记录均正常换行 |
+| 通用 | 此前的三处 180px 空白已消除；Tailnet / 保存同步 / 重新初始化状态按内容高度显示 |
+| 日志 | 日志路径输入保留原生横向滚动；其余字段无溢出 |
+
+- 360px 下 tab 栏为三列三行，400px 下为四列两行；七个标签均完整可见。
+- 所有 tab 面板 `overlayScrollWidth == overlayClientWidth`，没有横向溢出。
+- 修复后所有列方向 probe 状态行高度 ≤ 33px，没有 180px 空块；横向 probe 行仍保持撑满宽度。
+- 回归测试 64 passed。
+
+### 补充截图
+
+- [模型 tab · 360px 前后](assets/extension-settings-layout-2026-11-11/model-narrow-before-after.png)
+- [调度 tab · 360px 前后](assets/extension-settings-layout-2026-11-11/scheduler-before-after.png)
