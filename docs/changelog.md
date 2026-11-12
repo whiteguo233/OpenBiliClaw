@@ -14,6 +14,7 @@
 - **Windows 安装器目标目录原生验收**：GitHub Actions Windows Server 2025 上通过交互升级页可见并预填原目录、换目录被拒、静默安装返回 7、卸载后中文/空格路径重装，以及安装后真实免费模型 SSE 请求和聊天持久化。[验收记录](testing/2026-11-10-desktop-install-destination.md)。
 - **插件设置页列方向空白段修复**：设置页状态行在纵向 flex section 中误用 180px flex 基准，模型 / 通用 tab 出现 180px 空白段；基础样式改为内容高度，仅横向探测行保留撑满宽度。真实后端 + 真实数据 + Chrome 400×700 下七个 tab 复测，模型 panel 2628→2448px、通用 2718→2228px，无水平溢出。[验收记录](testing/2026-11-11-extension-settings-layout.md)。
 - **插件设置页逐 tab 审计**：调度 tab 的自动更新开关 / 间隔从猜测兴趣字段中间移入「版本与更新」；模型卡片在 360px 下「内置 · 只读」徽标不再断行，模型名允许完整显示。400×700 与 360×700 下七个 tab 全部复测无水平溢出，静态回归 64 passed。[验收记录](testing/2026-11-11-extension-settings-layout.md#逐-tab-审计补充2026-11-11)。
+- **插件设置页深度交互审计**：320px 下默认调用链操作按钮移到第二行，避免 provider / model 被截断；新建实例弹窗改为表单内部滚动 + 固定底部取消 / 保存；展开来源卡、全部 details 和弹窗后在 320/360/400px 复测无溢出或保存栏遮挡，回归 66 passed。[验收记录](testing/2026-11-11-extension-settings-layout.md#深度交互审计2026-11-12)。
 
 - 惊喜推荐修复合入收尾（2026-11-11，待下次发版）：合入前追加边界、文档及版本一致性回归 38 passed；保留真实模型 429 的验收缺口。版本不变，正式服务本轮不重启。[合入记录](verification/2026-11-11-relative-delight-selection.md#git-合入收尾2026-11-11)。
 

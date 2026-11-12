@@ -58,3 +58,28 @@
 
 - [模型 tab · 360px 前后](assets/extension-settings-layout-2026-11-11/model-narrow-before-after.png)
 - [调度 tab · 360px 前后](assets/extension-settings-layout-2026-11-11/scheduler-before-after.png)
+
+## 深度交互审计（2026-11-12）
+
+在 320 / 360 / 400px 下打开每个 tab，并实际展开和操作：
+
+- 模型：展开默认调用链；打开「新建实例」弹窗；检查 chain 操作按钮和弹窗底部操作。
+- 平台源：展开 Bilibili / Web，并临时启用后展开小红书 / GitHub / V2EX / Instagram（不保存）。
+- 高级功能：展开全部 `<details>`，包括 Jev 说明和上下文预算。
+- 鱼：展开「今日日报」。
+- 调度 / 通用 / 日志：滚动到底部，检查保存栏遮挡。
+
+发现并修复：
+
+| 问题 | 修复 |
+| --- | --- |
+| 320px 下默认调用链的 3 个操作按钮挤占文案，provider 名称被截断（宽 88px / 内容 115px） | ≤380px 时操作按钮移到第二行，文案宽度恢复为 198px；「测试整链」不再折成两行 |
+| 320/360/400px 新建实例弹窗底部「取消 / 保存实例」在视口外（底部按钮 top=726px，视口 700px） | 弹窗面板改为 `overflow:hidden`，表单内部 `overflow-y:auto`，底部操作 `flex:0 0 auto`；按钮始终可见 |
+| 关闭的 `<details>` 中的 Jev 输入被重叠检测误报 | 确认 closed details 不参与可见性；展开全部 details 后无 overflow / overlap |
+
+展开 4 个来源卡（小红书 / GitHub / V2EX / Instagram）在 320px 和 360px 下均无横向溢出、outside controls 或控件重叠。所有 tab 滚动到底部时，最后内容 bottom 为 567–585px，保存栏 top 为 637px，内容不被遮挡。回归测试 **66 passed**。
+
+### 深度截图
+
+- [模型默认调用链 · 320px 前后](assets/extension-settings-layout-2026-11-11/chain-320-before-after.png)
+- [新建实例弹窗 · 320px 前后](assets/extension-settings-layout-2026-11-11/dialog-320-before-after.png)

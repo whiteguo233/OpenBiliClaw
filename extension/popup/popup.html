@@ -4791,6 +4791,11 @@
       line-height: 1.45;
     }
 
+    .settings-llm-chain-head > .settings-secondary-btn {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     .settings-llm-instance-list,
     .settings-llm-chain-list,
     .settings-llm-module-summary {
@@ -4972,6 +4977,17 @@
       gap: 3px;
     }
 
+    @media (max-width: 380px) {
+      .settings-llm-chain-item {
+        grid-template-columns: 26px minmax(0, 1fr);
+      }
+
+      .settings-llm-chain-actions {
+        grid-column: 2;
+        justify-self: end;
+      }
+    }
+
     .settings-llm-icon-btn,
     .settings-instance-dialog-close {
       display: inline-grid;
@@ -5078,7 +5094,7 @@
       gap: 13px;
       width: 100%;
       max-height: 94vh;
-      overflow-y: auto;
+      overflow: hidden;
       padding: 16px;
       border: 1px solid var(--line);
       border-bottom: 0;
@@ -5112,6 +5128,10 @@
     .settings-instance-dialog-form {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 2px;
       gap: 10px;
     }
 
@@ -5202,6 +5222,9 @@
     .settings-instance-dialog-actions {
       display: grid;
       grid-template-columns: 1fr 1.4fr;
+      flex: 0 0 auto;
+      padding-top: 4px;
+      background: var(--surface-strong);
       gap: 8px;
     }
 

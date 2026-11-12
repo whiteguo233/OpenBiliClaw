@@ -462,3 +462,28 @@ test("settings model titles can wrap only in narrow side panels", () => {
   assert.match(narrowBlock, /white-space:\s*normal;/);
   assert.match(narrowBlock, /text-overflow:\s*clip;/);
 });
+
+test("settings chain rows move actions below the copy in narrow panels", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+
+  assert.match(
+    popupHtml,
+    /@media \(max-width: 380px\) \{[\s\S]*?\.settings-llm-chain-item\s*\{[^}]*grid-template-columns:\s*26px minmax\(0, 1fr\);/,
+  );
+  assert.match(popupHtml, /\.settings-llm-chain-actions\s*\{[^}]*grid-column:\s*2;/);
+  assert.match(
+    popupHtml,
+    /\.settings-llm-chain-head > \.settings-secondary-btn\s*\{[^}]*white-space:\s*nowrap;/,
+  );
+});
+
+test("model instance dialog keeps its action footer visible", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const panel = popupHtml.match(/\.settings-instance-dialog-panel\s*\{[^}]*\}/)?.[0] ?? "";
+  const form = popupHtml.match(/\.settings-instance-dialog-form\s*\{[^}]*\}/)?.[0] ?? "";
+  const actions = popupHtml.match(/\.settings-instance-dialog-actions\s*\{[^}]*\}/)?.[0] ?? "";
+
+  assert.match(panel, /overflow:\s*hidden;/);
+  assert.match(form, /overflow-y:\s*auto;/);
+  assert.match(actions, /flex:\s*0 0 auto;/);
+});
