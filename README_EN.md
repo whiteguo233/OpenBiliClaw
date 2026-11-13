@@ -238,11 +238,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.237 (2026-11-10)**
+📌 Latest: **v0.3.238 (2026-11-14)**
 
-- **Password-free local first launch**. Enable a remote access password in Settings and it takes effect when saved.
-- **Clearer macOS installation**. Follow the arrow in the DMG to drag the app into Applications.
-- **More reliable setup with free models**. Large imports show progress and recover from rate limits or brief disconnects.
+- **Choose the Windows install folder**. Interactive installs and upgrades both show Select Destination Location, prefilled with the previous folder.
+- **More complete free-model profiles**. Initial profiles keep the core and values layers, and unknown MBTI is marked pending.
+- **Roomier chat layout**. Desktop and popup fold non-chat chrome away, so small windows show far more conversation.
+- **Popup settings layout fixed**. The blank stretch and narrow-width clipping are gone, and saving still works at 320px.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
