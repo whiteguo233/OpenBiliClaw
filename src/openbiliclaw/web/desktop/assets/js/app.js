@@ -8433,7 +8433,8 @@ ${cardFeedbackBarHtml()}`;
         : null;
       const response = await fetch(`${base}${ENDPOINTS.chatAgentStream}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        headers: withBearer({ "Content-Type": "application/json", "X-OBC-Auth": "1" }),
         body: JSON.stringify(body),
         signal: watchdog?.signal,
       });
