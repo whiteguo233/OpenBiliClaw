@@ -238,7 +238,7 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.238 (2026-11-14)**
+📌 Latest: **v0.3.239 (2026-11-16)**
 
 - **Choose the Windows install folder**. Interactive installs and upgrades both show Select Destination Location, prefilled with the previous folder.
 - **More complete free-model profiles**. Initial profiles keep the core and values layers, and unknown MBTI is marked pending.
