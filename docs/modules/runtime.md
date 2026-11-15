@@ -1032,6 +1032,10 @@ Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安
 固定目录更新为 `sponsored-runtime-2026-11-08.1`，五平台以 Core `484308bf8f1a7b42ac38565b61e1c838b3423a9d` 生成任务策略并签名，兼容范围严格为 0.3.235。SDK 的公开 API、任务协议、模型和额度保持，Mac 双架构完成 Apple Accepted 公证，Windows 仍使用独立 manifest 验签。发行和真实请求结果见[发布记录](../testing/2026-11-08-release-v0.3.235.md)。
 
 
+### Core 0.3.239 免费组件发行
+
+固定目录 `sponsored-runtime-2026-11-16.1` 对应 Core 0.3.239。本轮 Rust 源码只更新依赖（`rustix` 1.1.5 → 1.1.6，修补 RUSTSEC-2026-0486 的 xattr 未初始化缺陷），无协议、策略或模型变更；以新 Core 契约快照重新签名 manifest，兼容窗口 `core_min = core_max = 0.3.239`；模型、额度、密钥 epoch 与到期时间沿用上一发行，Mac 两架构重新完成 Developer ID 签名与 Apple 公证。公开接口 `ensure_runtime()` 与 `stage_runtime_bundle(destination)` 不变。
+
 ### Core 0.3.237 免费组件发行
 
 固定目录 `sponsored-runtime-2026-11-10.1` 对应 Core 0.3.237。SDK 协商 `request_timeouts`，普通及流式请求按 Core 传入的预算执行，Embedding 沿用单独预算。模型、额度、密钥 epoch 和到期时间沿用上一发行。公开接口 `ensure_runtime()` 与 `stage_runtime_bundle(destination)` 继续对固定归档验签。
