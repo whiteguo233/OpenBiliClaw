@@ -35,6 +35,8 @@
 
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
 
+- PR #351（感谢 @jjjj31）：修复桌面页聊天流缺 CSRF 头导致 `/api/chat/agent/stream` 与 `/api/chat/stream`（含 agent loop 关闭时的旧回退、探针聊天、对话结算）固定 403、气泡卡在“正在思考”且 `chat_turns` 永远 pending；`streamAgentChatTurn()` 与 `streamChatTurn()` 补 `credentials: "same-origin"` 与 `X-OBC-Auth: 1` 头，并加静态回归测试。
+
 ## v0.3.237：首启免密、安装引导与初始化可靠性（2026-11-10）
 
 - 桌面、后端和浏览器插件统一为 0.3.237。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。
