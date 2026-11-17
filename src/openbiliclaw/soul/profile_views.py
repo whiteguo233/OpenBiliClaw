@@ -1061,11 +1061,14 @@ def _profile_catalog_record(value: object) -> dict[str, object]:
         value = asdict(value)
     if not isinstance(value, dict):
         return {}
+    # ``last_seen_at`` only feeds the pending-inbox staleness window (issue
+    # #352); keeping it out of the catalog keeps prompt bytes unchanged for
+    # newly generated hypotheses.
+    storage_only = {"last_decay_at", "last_seen_at", "favorite_up_users", "personality_portrait"}
     return {
         str(key): item
         for key, item in value.items()
-        if key not in {"last_decay_at", "favorite_up_users", "personality_portrait"}
-        and item not in ("", None, [], {})
+        if key not in storage_only and item not in ("", None, [], {})
     }
 
 

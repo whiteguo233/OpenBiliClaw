@@ -181,6 +181,7 @@ class InsightAnalyzer:
                 validated=current.validated or item.validated,
                 created_at=current.created_at or item.created_at,
                 user_verdict=verdict,
+                last_seen_at=max(current.last_seen_at, item.last_seen_at),
             )
         return kept
 
@@ -225,6 +226,7 @@ class InsightAnalyzer:
                 validated=current.validated or item.validated,
                 created_at=current.created_at or item.created_at,
                 user_verdict=verdict,
+                last_seen_at=max(current.last_seen_at, item.last_seen_at),
             )
         return merged
 
@@ -265,12 +267,14 @@ class InsightAnalyzer:
 
     @staticmethod
     def _build_hypothesis(raw_item: dict[str, object]) -> InsightHypothesis:
+        today = datetime.now().date().isoformat()
         return InsightHypothesis(
             hypothesis=str(raw_item.get("hypothesis", "")).strip(),
             evidence=InsightAnalyzer._as_str_list(raw_item.get("evidence")),
             confidence=InsightAnalyzer._clamp_confidence(raw_item.get("confidence")),
             validated=False,
-            created_at=datetime.now().date().isoformat(),
+            created_at=today,
+            last_seen_at=today,
         )
 
     @staticmethod

@@ -29,7 +29,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +51,15 @@ _CONFUSION_DEDUP_MIN_TEXT_LENGTH = 20
 # in the row (``asked_at``) so it survives restarts. Calibrated to the single-user
 # interrupt budget (≤1 ask / 3 days); revisit after provider swap.
 ASK_COOLDOWN_HOURS = 72
+# Default life of an unanswered confusion (issue #352). Every producing source
+# stamps ``expires_at`` at insert time; the daily sweep also treats a NULL
+# ``expires_at`` (all rows written before this default existed) as
+# ``created_at + CONFUSION_TTL_DAYS`` so existing installs drain without a data
+# migration. Calibrated against the ask budget above: one ask per 72h × the 10
+# visible pending slots ≈ 30 days — a confusion that never reached the user in
+# that window can no longer be asked anyway. Revisit together with
+# ``ASK_COOLDOWN_HOURS`` or the pending-list cap (pitfall #3).
+CONFUSION_TTL_DAYS = 30
 # Wait-path TTL: a confusion parked on "wait" self-expires after 14 days if no
 # behavioural signal resolves it. Matches the probe wait window.
 WAIT_TTL_DAYS = 14
@@ -287,6 +296,7 @@ class ConfusionManager:
         active = [self._confusion_as_dict(item) for item in self.list_active()]
         seen: list[dict[str, Any]] = list(active)
         created: list[int] = []
+        expires_at = (datetime.now() + timedelta(days=CONFUSION_TTL_DAYS)).isoformat()
         for cand in valid:
             if any(self._same_confusion(cand, existing) for existing in seen):
                 continue
@@ -297,6 +307,7 @@ class ConfusionManager:
                 interpretation=str(cand.get("interpretation", "")).strip(),
                 interpretation_confidence=_clamp01(cand.get("interpretation_confidence", 0.0)),
                 evidence_refs=[str(r) for r in _as_list(cand.get("evidence_refs")) if str(r)],
+                expires_at=expires_at,
             )
             if cid:
                 created.append(cid)
@@ -335,6 +346,7 @@ class ConfusionManager:
             interpretation="部分确认但未达门槛，可能是弱兴趣或误判。",
             interpretation_confidence=round(confirmation_count / max(1, confirmation_threshold), 4),
             evidence_refs=[str(r) for r in (evidence_refs or []) if str(r)],
+            expires_at=(datetime.now() + timedelta(days=CONFUSION_TTL_DAYS)).isoformat(),
         )
         if cid:
             self._record("confusion_open", topic=domain, after={"id": cid, "source": "stalemate"})
@@ -389,10 +401,17 @@ class ConfusionManager:
         """Topics with an unresolved confusion — frozen against reinforcement."""
         return {c.topic.strip() for c in self.list_active() if c.topic.strip()}
 
-    # -- TTL maintenance (folded into the 12h cognition cycle) ----------------
+    # -- TTL maintenance (folded into the daily cognition cleanup) ------------
 
     def expire_due(self, *, now: datetime | None = None) -> list[int]:
-        """Expire open/clarifying confusions past their wait TTL.
+        """Expire open/clarifying confusions past their TTL.
+
+        A row's TTL is its stored ``expires_at``; a NULL one (every row written
+        before the default TTL existed) falls back to
+        ``created_at + CONFUSION_TTL_DAYS`` so a legacy backlog drains without a
+        data migration. The sweep reads *all* open/clarifying rows — inheriting
+        ``list_confusions``' newest-200 window would leave the oldest rows (the
+        ones actually due) invisible forever (issue #352).
 
         Returns the ids expired. Held updates on an expired confusion are
         discarded (dismissed/expired → discard, spec §Phase 2 unfreeze).
@@ -401,10 +420,8 @@ class ConfusionManager:
             return []
         current = now or datetime.now()
         expired: list[int] = []
-        for confusion in self._list(["open", "clarifying"]):
-            if not confusion.expires_at:
-                continue
-            due = _parse_iso(confusion.expires_at)
+        for confusion in self._expiring_rows():
+            due = _confusion_due_at(confusion)
             if due is None or current < due:
                 continue
             self._discard_all_held(confusion)
@@ -417,6 +434,18 @@ class ConfusionManager:
             expired.append(confusion.id)
             self._record("confusion_expired", topic=confusion.topic, before={"id": confusion.id})
         return expired
+
+    def _expiring_rows(self) -> list[Confusion]:
+        """Every open/clarifying row, ignoring the UI list window."""
+        if self._db is None:
+            return []
+        return [
+            Confusion.from_row(row)
+            for row in self._db.list_confusions(
+                statuses=["open", "clarifying"],
+                limit=None,
+            )
+        ]
 
     # -- Clarification path 1: ask (durable chat, scope="confusion") ----------
 
@@ -1036,3 +1065,25 @@ def _parse_iso(value: str) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _confusion_due_at(confusion: Confusion) -> datetime | None:
+    """Resolve one row's TTL, falling back to ``created_at + CONFUSION_TTL_DAYS``.
+
+    ``expires_at`` is written by the producing sources as local naive ISO, the
+    same clock ``now`` uses. ``created_at`` instead comes from SQLite
+    ``CURRENT_TIMESTAMP`` (naive UTC), so the fallback converts it to local
+    naive before adding the TTL. Returns ``None`` when neither timestamp is
+    parseable — such a row is never auto-expired.
+    """
+    explicit = _parse_iso(confusion.expires_at)
+    if explicit is not None:
+        return explicit
+    created = _parse_iso(confusion.created_at)
+    if created is None:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC).astimezone().replace(tzinfo=None)
+    else:
+        created = created.astimezone().replace(tzinfo=None)
+    return created + timedelta(days=CONFUSION_TTL_DAYS)

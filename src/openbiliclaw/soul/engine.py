@@ -5324,10 +5324,16 @@ class SoulEngine:
         except (TypeError, ValueError):
             confidence = 0.0
         evidence_text = str(item.get("evidence", "")).strip()
+        today = datetime.now().date().isoformat()
+        # Stamp the timestamps: the pending inbox ranks and ages hypotheses by
+        # ``last_seen_at``/``created_at``, and an undated row can never reach a
+        # visible slot (issue #352).
         return InsightHypothesis(
             hypothesis=str(item.get("content", "")).strip(),
             evidence=[evidence_text] if evidence_text else [],
             confidence=round(max(0.0, min(1.0, confidence)) * 0.6, 4),
+            created_at=today,
+            last_seen_at=today,
         )
 
     def _persist_confirmed_deep_candidates(

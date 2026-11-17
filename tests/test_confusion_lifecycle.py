@@ -9,13 +9,14 @@ state machine with crash-recovery idempotency.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from openbiliclaw.soul.awareness_analyzer import AwarenessAnalyzer
 from openbiliclaw.soul.confusion import (
+    CONFUSION_TTL_DAYS,
     MAX_CONFUSION_CANDIDATES_PER_ROUND,
     Confusion,
     ConfusionManager,
@@ -224,12 +225,89 @@ def test_expire_due_expires_past_ttl(tmp_path: Path) -> None:
     future = (datetime.now() + timedelta(days=1)).isoformat()
     stale = db.insert_confusion(topic="stale", observation="x", expires_at=past)
     fresh = db.insert_confusion(topic="fresh", observation="y", expires_at=future)
-    no_ttl = db.insert_confusion(topic="notl", observation="z")
     expired = mgr.expire_due()
     assert expired == [stale]
     assert mgr.get(stale).status == "expired"
     assert mgr.get(fresh).status == "open"
-    assert mgr.get(no_ttl).status == "open"
+
+
+def _backdate_created_at(db: Database, confusion_id: int, when: datetime) -> None:
+    """Rewrite ``created_at`` to simulate a row written months ago.
+
+    SQLite stores ``CURRENT_TIMESTAMP`` as naive UTC, so the probe value is
+    formatted the same way.
+    """
+    db.conn.execute(
+        "UPDATE confusions SET created_at = ? WHERE id = ?",
+        (when.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"), confusion_id),
+    )
+    db.conn.commit()
+
+
+def test_new_awareness_confusion_carries_default_ttl(tmp_path: Path) -> None:
+    mgr = ConfusionManager(_db(tmp_path))
+    now = datetime.now()
+
+    ids = mgr.create_from_awareness_candidates(
+        [{"topic": "解压视频", "observation": "连续点开但停留很短"}]
+    )
+
+    stored = mgr.get(ids[0])
+    assert stored is not None
+    assert stored.expires_at
+    due = datetime.fromisoformat(stored.expires_at)
+    assert now + timedelta(days=CONFUSION_TTL_DAYS - 1) <= due
+    assert due <= now + timedelta(days=CONFUSION_TTL_DAYS + 1)
+
+
+def test_new_speculation_stalemate_confusion_carries_default_ttl(tmp_path: Path) -> None:
+    mgr = ConfusionManager(_db(tmp_path))
+    now = datetime.now()
+
+    cid = mgr.create_from_speculation_stalemate(
+        domain="露营",
+        confirmation_count=1,
+        confirmation_threshold=3,
+    )
+
+    stored = mgr.get(cid) if cid is not None else None
+    assert stored is not None
+    assert stored.expires_at
+    due = datetime.fromisoformat(stored.expires_at)
+    assert now + timedelta(days=CONFUSION_TTL_DAYS - 1) <= due
+    assert due <= now + timedelta(days=CONFUSION_TTL_DAYS + 1)
+
+
+def test_expire_due_ages_out_legacy_rows_without_expires_at(tmp_path: Path) -> None:
+    """Rows written before the default TTL existed must still drain."""
+    db = _db(tmp_path)
+    mgr = ConfusionManager(db)
+    legacy = db.insert_confusion(topic="legacy", observation="三个月前的疑惑")
+    young = db.insert_confusion(topic="young", observation="今天的疑惑")
+    _backdate_created_at(db, legacy, datetime.now(UTC) - timedelta(days=CONFUSION_TTL_DAYS + 1))
+    _backdate_created_at(db, young, datetime.now(UTC) - timedelta(days=1))
+
+    expired = mgr.expire_due()
+
+    assert expired == [legacy]
+    assert mgr.get(legacy).status == "expired"
+    assert mgr.get(young).status == "open"
+
+
+def test_expire_due_scans_beyond_the_default_list_window(tmp_path: Path) -> None:
+    """The TTL sweep must not inherit ``list_confusions``' 200-row UI window."""
+    db = _db(tmp_path)
+    mgr = ConfusionManager(db)
+    future = (datetime.now() + timedelta(days=5)).isoformat()
+    oldest = db.insert_confusion(topic="oldest", observation="最老的一条")
+    for index in range(250):
+        db.insert_confusion(topic=f"t{index}", observation=f"o{index}", expires_at=future)
+    _backdate_created_at(db, oldest, datetime.now(UTC) - timedelta(days=CONFUSION_TTL_DAYS + 1))
+
+    expired = mgr.expire_due()
+
+    assert expired == [oldest]
+    assert mgr.get(oldest).status == "expired"
 
 
 # --------------------------------------------------------------------------

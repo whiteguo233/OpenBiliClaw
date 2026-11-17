@@ -107,6 +107,12 @@ class InsightHypothesis:
     # could hand the hypothesis a high score again, silently undoing the user's
     # 「不准」and putting it back in the 待聊 list. Legacy rows load as "".
     user_verdict: str = ""
+    # Last time an insight pass regenerated or merged this hypothesis. The
+    # pending inbox ages items on this instead of ``created_at`` so a
+    # hypothesis that keeps gaining evidence is not archived as stale while
+    # still being reinforced (issue #352). "" on legacy rows → fall back to
+    # ``created_at``.
+    last_seen_at: str = ""
 
 
 @dataclass
@@ -437,6 +443,7 @@ def insight_hypothesis_to_dict(item: InsightHypothesis) -> dict[str, object]:
         "validated": item.validated,
         "created_at": item.created_at,
         "user_verdict": item.user_verdict,
+        "last_seen_at": item.last_seen_at,
     }
 
 
@@ -448,6 +455,7 @@ def insight_hypothesis_from_dict(raw_data: dict[str, object]) -> InsightHypothes
         validated=bool(raw_data.get("validated", False)),
         created_at=str(raw_data.get("created_at", "")),
         user_verdict=_as_user_verdict(raw_data.get("user_verdict")),
+        last_seen_at=str(raw_data.get("last_seen_at", "") or ""),
     )
 
 
