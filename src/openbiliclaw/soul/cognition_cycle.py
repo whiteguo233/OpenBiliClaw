@@ -322,7 +322,7 @@ class CognitionCycle:
         )
         if cleanup_due:
             try:
-                self._cleanup_stale_pending()
+                self._cleanup_stale_pending(now=current_time)
                 state["last_cleanup_at"] = current_time.isoformat()
                 self._save_state(state)
             except Exception:
@@ -398,14 +398,7 @@ class CognitionCycle:
         except Exception:
             logger.exception("Failed to sync cognition cycle output into profile")
 
-        # 5. Confusion TTL maintenance (Phase 2): expire wait-parked confusions
-        # past their TTL. Best-effort — never breaks the cognition cycle.
-        try:
-            self._confusion_manager().expire_due(now=current_time)
-        except Exception:
-            logger.debug("Confusion TTL sweep failed", exc_info=True)
-
-        # 6. Enumerate any completed clarifying reply that missed its durable
+        # 5. Enumerate any completed clarifying reply that missed its durable
         # attribution receipt. The hook only submits the dedicated typed replay
         # command; analysis and mutation remain in the settlement worker.
         if self._confusion_replay_hook is not None:
@@ -700,14 +693,26 @@ class CognitionCycle:
             self._save_state(state)
         return total_added
 
-    def _cleanup_stale_pending(self) -> None:
-        """Daily dedup of hypotheses and duplicate open confusions.
+    def _cleanup_stale_pending(self, *, now: datetime | None = None) -> None:
+        """Daily sweep: expire overdue confusions, then dedup both queues.
 
         Runs regardless of whether awareness/insight LLM work is due, so the
-        queue stays small even on quiet days.  Confirmation history is only
-        downgraded (dismissed), never deleted.
+        pending inbox drains even on quiet days. Confirmation history is only
+        downgraded (``expired`` / ``dismissed``), never deleted.
+
+        The TTL sweep lives here rather than in the 12h awareness branch: it
+        used to sit after ``result.ran = True``, so a profile whose awareness
+        pass was throttled never expired anything, and it inherited the
+        newest-200 list window (issue #352).
         """
-        # 1. Collapse duplicate hypotheses in the insight layer.
+        current = now or datetime.now()
+        # 1. Expire confusions past their TTL (stored, or created_at + default).
+        try:
+            self._confusion_manager().expire_due(now=current)
+        except Exception:
+            logger.debug("Confusion TTL sweep failed", exc_info=True)
+
+        # 2. Collapse duplicate hypotheses in the insight layer.
         try:
             insights = self._load_insights()
             from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
@@ -718,7 +723,7 @@ class CognitionCycle:
         except Exception:
             logger.debug("Daily insight dedup sweep failed", exc_info=True)
 
-        # 2. Dismiss duplicate open confusions, keeping the newest/first row.
+        # 3. Dismiss duplicate open confusions, keeping the newest/first row.
         try:
             db = getattr(self._memory, "_database", None)
             if db is None:
@@ -741,7 +746,7 @@ class CognitionCycle:
                     db.update_confusion(
                         int(cand["id"]),
                         status="dismissed",
-                        resolved_at=datetime.now().astimezone().isoformat(),
+                        resolved_at=current.astimezone().isoformat(),
                         resolution_note="daily cleanup duplicate",
                     )
                 else:

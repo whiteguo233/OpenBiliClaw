@@ -570,10 +570,18 @@ _TERMINAL_CARD_STATES = frozenset({"confirmed", "rejected", "revised"})
 # unvalidated hypothesis is concrete enough to ask about; open confusions use
 # 0.50 because their explicit contradiction is already stronger evidence.
 # The badge/list is deliberately capped at ten to keep the entry readable,
-# while `total` still reports the full deduplicated backlog.
+# while `total` reports the deduplicated backlog inside the staleness window.
 _PENDING_HYPOTHESIS_MIN_CONFIDENCE = 0.60
 _PENDING_CONFUSION_MIN_CONFIDENCE = 0.50
 _PENDING_CONFIRMATION_LIMIT = 10
+# A pending item that has sunk out of the visible window can no longer be
+# opened, so counting it forever only inflates the badge (issue #352). Both
+# kinds age out of the inbox after this window; nothing is deleted — the
+# hypothesis keeps feeding profile/insight views, it just stops being asked.
+# Calibrated to the same ask budget as confusions: one ask per 72h
+# (``confusion.ASK_COOLDOWN_HOURS``) × the 10 visible slots ≈ 30 days. Revisit
+# this constant together with either input.
+_PENDING_CONFIRMATION_MAX_AGE_DAYS = 30
 # Similarity threshold used to collapse near-duplicate pending confirmation
 # titles (e.g. the same hypothesis generated with slightly different wording).
 # Manual opens still resolve by exact ref, so keeping the strongest copy in the
@@ -4279,7 +4287,23 @@ def create_app(
         deferred_until = _confirmation_deferred_until(state, ref=ref)
         return deferred_until is not None and now < deferred_until
 
-    def _hypothesis_confirmation_items() -> list[dict[str, Any]]:
+    def _pending_confirmation_rank(item: dict[str, Any]) -> tuple[str, float, int, str]:
+        """Newest-first ordering shared by the candidate and page stages.
+
+        ``last_seen_at`` (the last insight pass that reinforced the row) outranks
+        ``created_at`` so a hypothesis that keeps gaining evidence is not buried
+        behind newer-but-unreinforced ones — and so ordering uses the same clock
+        as the staleness window.
+        """
+        seen_at = str(item.get("last_seen_at") or item.get("created_at") or "").strip()
+        return (
+            seen_at or "0000-00-00",
+            float(item.get("confidence", 0.0) or 0.0),
+            0 if item.get("kind") == "confusion" else 1,
+            str(item.get("ref", "")),
+        )
+
+    def _hypothesis_confirmation_items(*, now: datetime | None = None) -> list[dict[str, Any]]:
         from openbiliclaw.soul.identity import build_hash8_map
 
         loader = getattr(ctx.soul_engine, "_load_insights", None)
@@ -4290,6 +4314,7 @@ def create_app(
         except Exception:
             logger.debug("Failed to load pending hypotheses", exc_info=True)
             return []
+        current = now or datetime.now(UTC)
         by_title = {
             str(getattr(item, "hypothesis", "")).strip(): item
             for item in hypotheses
@@ -4309,6 +4334,23 @@ def create_app(
                 or confidence < _PENDING_HYPOTHESIS_MIN_CONFIDENCE
             ):
                 continue
+            # The user already ruled on this one. The settlement receipt is keyed
+            # by the title hash, so a later pass that rewords the title would drop
+            # the receipt and re-queue a rejected hypothesis; the verdict on the
+            # hypothesis itself survives rewording (issue #352).
+            if str(getattr(hypothesis, "user_verdict", "") or "").strip():
+                continue
+            last_seen_at = str(getattr(hypothesis, "last_seen_at", "") or "")
+            created_at = str(getattr(hypothesis, "created_at", "") or "")
+            last_activity = _parse_confirmation_timestamp(last_seen_at or created_at)
+            if last_activity is None:
+                # An undated row cannot be placed in the window or ranked, so it
+                # can never reach a visible slot — do not let it inflate `total`
+                # either. Every live creation path stamps a date (issue #352).
+                logger.debug("Skipping undated pending hypothesis: %s", ref)
+                continue
+            if current - last_activity > timedelta(days=_PENDING_CONFIRMATION_MAX_AGE_DAYS):
+                continue
             if callable(settlement_reader) and settlement_reader(ref) is not None:
                 continue
             items.append(
@@ -4322,7 +4364,8 @@ def create_app(
                         if str(value).strip()
                     ],
                     "confidence": confidence,
-                    "created_at": str(getattr(hypothesis, "created_at", "") or ""),
+                    "created_at": created_at,
+                    "last_seen_at": last_seen_at,
                 }
             )
         return items
@@ -4412,14 +4455,7 @@ def create_app(
         *,
         session: str = "",
     ) -> list[dict[str, Any]]:
-        def rank(item: dict[str, Any]) -> tuple[str, float, int, str]:
-            created_at = str(item.get("created_at", "") or "").strip() or "0000-00-00"
-            return (
-                created_at,
-                float(item.get("confidence", 0.0) or 0.0),
-                0 if item.get("kind") == "confusion" else 1,
-                str(item.get("ref", "")),
-            )
+        rank = _pending_confirmation_rank
 
         confirmation_state = _load_dialogue_confirmation_state()
         now = datetime.now(UTC)
@@ -4438,7 +4474,7 @@ def create_app(
 
         hypotheses = [
             item
-            for item in _hypothesis_confirmation_items()
+            for item in _hypothesis_confirmation_items(now=now)
             if not _is_confirmation_deferred(
                 confirmation_state,
                 ref=item["ref"],
@@ -4500,14 +4536,7 @@ def create_app(
         session: str = "",
         candidates: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        def rank(item: dict[str, Any]) -> tuple[str, float, int, str]:
-            created_at = str(item.get("created_at", "") or "").strip() or "0000-00-00"
-            return (
-                created_at,
-                float(item.get("confidence", 0.0) or 0.0),
-                0 if item.get("kind") == "confusion" else 1,
-                str(item.get("ref", "")),
-            )
+        rank = _pending_confirmation_rank
 
         if candidates is None:
             candidates = _pending_confirmation_candidates(session=session)

@@ -163,6 +163,38 @@ async def test_awareness_retries_once_and_succeeds(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_daily_cleanup_expires_confusions_when_llm_passes_are_throttled(
+    tmp_path: Path,
+) -> None:
+    """Issue #352: the TTL sweep must not depend on awareness/insight being due."""
+    memory = _seed_memory(tmp_path)
+    cycle = CognitionCycle(
+        memory=memory,
+        awareness_analyzer=_FlakyAwarenessAnalyzer(fail_first_n=0, succeed_payload=[]),
+        insight_analyzer=_NoopInsightAnalyzer(),  # type: ignore[arg-type]
+        min_interval_seconds=3600,
+    )
+    now = datetime(2026, 5, 16, 12, 0, 0)
+    state = cycle._load_state()  # noqa: SLF001 — internal contract is the test surface
+    state["last_awareness_at"] = now.isoformat()
+    state["last_insight_at"] = now.isoformat()
+    state["last_cleanup_at"] = (now - timedelta(days=2)).isoformat()
+    cycle._save_state(state)  # noqa: SLF001
+    db = memory._database  # noqa: SLF001 — test seeding
+    stale = db.insert_confusion(topic="legacy", observation="三个月没被问过的旧疑惑")
+    db.conn.execute(
+        "UPDATE confusions SET created_at = ? WHERE id = ?",
+        (datetime(2026, 2, 1, 0, 0, 0).strftime("%Y-%m-%d %H:%M:%S"), stale),
+    )
+    db.conn.commit()
+
+    result = await cycle.run_if_due(now=now)
+
+    assert result.throttled is True, "no LLM pass is due in this window"
+    assert db.get_confusion(stale)["status"] == "expired"
+
+
+@pytest.mark.asyncio
 async def test_due_cycle_triggers_confusion_attribution_replay_once(tmp_path: Path) -> None:
     memory = _seed_memory(tmp_path)
     replay_calls = 0

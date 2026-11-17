@@ -37,6 +37,8 @@
 
 - PR #351（感谢 @jjjj31）：修复桌面页聊天流缺 CSRF 头导致 `/api/chat/agent/stream` 与 `/api/chat/stream`（含 agent loop 关闭时的旧回退、探针聊天、对话结算）固定 403、气泡卡在“正在思考”且 `chat_turns` 永远 pending；`streamAgentChatTurn()` 与 `streamChatTurn()` 补 `credentials: "same-origin"` 与 `X-OBC-Auth: 1` 头，并加静态回归测试。
 
+- 待聊确认「只进不出」修复（issue #352）：疑惑在**生成时**写入 30 天 TTL（72h ask 冷却 × 10 个可见槽位的校准值），历史 `expires_at IS NULL` 行按 `created_at + 30 天` 回退，存量无需迁移即可清除；TTL 扫描从 12h awareness 分支移入每日清理，并改为读取全部 open/clarifying 行（原实现继承列表的最新 200 行窗口，最老的行永远扫不到）。待聊候选同时跳过 `user_verdict` 已裁决的假设（标题改写后结算收据会失配，只有判词持久）和超过 30 天未活跃的假设——活跃时间取新增的 `InsightHypothesis.last_seen_at`（洞察合并时刷新，旧数据回落 `created_at`），排序与窗口共用该时间戳。`total` 因此从全量历史积压改为窗口内候选数，五端角标无需前端改动。不删除任何数据，超龄假设仍参与画像。真实实例备份上以真实服务 + 真实 HTTP 做 A/B：对照版 `total` 325→325（0 条 expired），补丁版 14→1（243 条过期，已裁决假设不再出现）。[真实环境验收](verification/2026-11-17-issue352-pending-inbox.md)。
+
 ## v0.3.237：首启免密、安装引导与初始化可靠性（2026-11-10）
 
 - 桌面、后端和浏览器插件统一为 0.3.237。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。

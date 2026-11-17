@@ -830,7 +830,7 @@ $ openbiliclaw ledger --write-point dialogue_preference_overwrite   # 只看某�
 
 ### `openbiliclaw questions`
 
-只读展示对话确认入口当前最多 3 条高优先级待聊对象。命令从配置中的 `[api].port` 连接本机 `127.0.0.1`，只调用 `GET /api/chat/pending-confirmations`，因此假设/疑惑阈值、未结算过滤、排序、上限和 `count` 与 popup、桌面 Web 完全同口径，不在 CLI 复制筛选规则。
+只读展示对话确认入口当前最多 3 条高优先级待聊对象。命令从配置中的 `[api].port` 连接本机 `127.0.0.1`，只调用 `GET /api/chat/pending-confirmations`，因此假设/疑惑阈值、未结算与时效过滤、排序、上限和 `count` 与 popup、桌面 Web 完全同口径，不在 CLI 复制筛选规则。
 
 ```bash
 $ openbiliclaw questions

@@ -21,7 +21,11 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from openbiliclaw import __version__
-from openbiliclaw.api.app import _recommendation_snapshot_rows_and_expiry, create_app
+from openbiliclaw.api.app import (
+    _PENDING_CONFIRMATION_MAX_AGE_DAYS,
+    _recommendation_snapshot_rows_and_expiry,
+    create_app,
+)
 from openbiliclaw.llm.service import LLMResponseContentError
 
 
@@ -13521,20 +13525,31 @@ class TestDialogueConfirmationCards:
         return TestClient(app), memory, engine, dialogue
 
     @staticmethod
-    def _seed_hypothesis(memory: object, hypothesis: str, confidence: float = 0.66) -> str:
+    def _seed_hypothesis(
+        memory: object,
+        hypothesis: str,
+        confidence: float = 0.66,
+        *,
+        created_at: str | None = None,
+        last_seen_at: str = "",
+        user_verdict: str = "",
+    ) -> str:
         from openbiliclaw.soul.identity import insight_hash8
 
         layer = memory.get_layer("insight")
         items = list(layer.data.get("hypotheses", []))
-        items.append(
-            {
-                "hypothesis": hypothesis,
-                "evidence": [f"依据：{hypothesis}"],
-                "confidence": confidence,
-                "validated": False,
-                "created_at": "2026-07-22",
-            }
-        )
+        item: dict[str, object] = {
+            "hypothesis": hypothesis,
+            "evidence": [f"依据：{hypothesis}"],
+            "confidence": confidence,
+            "validated": False,
+            "created_at": created_at or datetime.now(UTC).date().isoformat(),
+        }
+        if last_seen_at:
+            item["last_seen_at"] = last_seen_at
+        if user_verdict:
+            item["user_verdict"] = user_verdict
+        items.append(item)
         layer.data["hypotheses"] = items
         layer.save()
         return insight_hash8(hypothesis)
@@ -14436,8 +14451,23 @@ class TestPendingDialogueConfirmations:
         return TestDialogueConfirmationCards._build(tmp_path)
 
     @staticmethod
-    def _seed_hypothesis(memory: object, title: str, confidence: float = 0.66) -> str:
-        return TestDialogueConfirmationCards._seed_hypothesis(memory, title, confidence)
+    def _seed_hypothesis(
+        memory: object,
+        title: str,
+        confidence: float = 0.66,
+        *,
+        created_at: str | None = None,
+        last_seen_at: str = "",
+        user_verdict: str = "",
+    ) -> str:
+        return TestDialogueConfirmationCards._seed_hypothesis(
+            memory,
+            title,
+            confidence,
+            created_at=created_at,
+            last_seen_at=last_seen_at,
+            user_verdict=user_verdict,
+        )
 
     @staticmethod
     def _post_user_turn(
@@ -14528,6 +14558,86 @@ class TestPendingDialogueConfirmations:
         body = client.get("/api/chat/pending-confirmations?session=popup").json()
         assert body["total"] == 30
         assert len(connections) <= 3, "session filtering must use one batch of active references"
+
+    def test_pending_list_drops_hypotheses_the_user_already_judged(self, tmp_path: Path) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        self._seed_hypothesis(
+            memory,
+            "用户可能只在工作日深夜看长内容",
+            0.88,
+            user_verdict="rejected",
+        )
+
+        body = client.get("/api/chat/pending-confirmations").json()
+
+        assert body["total"] == 0
+        assert body["items"] == []
+
+    def test_pending_list_drops_hypotheses_stale_beyond_the_window(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        stale = (
+            (datetime.now(UTC) - timedelta(days=_PENDING_CONFIRMATION_MAX_AGE_DAYS + 1))
+            .date()
+            .isoformat()
+        )
+        self._seed_hypothesis(memory, "陈旧假设：只在雨天看纪录片", 0.9, created_at=stale)
+        self._seed_hypothesis(memory, "新鲜假设：偏好完整的因果链", 0.7)
+
+        body = client.get("/api/chat/pending-confirmations").json()
+
+        assert body["total"] == 1
+        assert [item["title"] for item in body["items"]] == ["新鲜假设：偏好完整的因果链"]
+
+    def test_pending_list_skips_hypotheses_without_any_timestamp(self, tmp_path: Path) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        layer = memory.get_layer("insight")
+        layer.data["hypotheses"] = [
+            {
+                "hypothesis": "没有时间戳的旧假设",
+                "evidence": ["依据"],
+                "confidence": 0.9,
+                "validated": False,
+            }
+        ]
+        layer.save()
+
+        body = client.get("/api/chat/pending-confirmations").json()
+
+        assert body["total"] == 0
+        assert body["items"] == []
+
+    def test_pending_list_ranks_reinforced_hypotheses_by_last_seen(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        old = (
+            (datetime.now(UTC) - timedelta(days=_PENDING_CONFIRMATION_MAX_AGE_DAYS + 5))
+            .date()
+            .isoformat()
+        )
+        yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+        reinforced = self._seed_hypothesis(
+            memory,
+            "用户可能靠低刺激长内容恢复注意力",
+            0.62,
+            created_at=old,
+            last_seen_at=datetime.now(UTC).date().isoformat(),
+        )
+        merely_new = self._seed_hypothesis(
+            memory,
+            "用户把露营装备当成动手装配的掌控感练习",
+            0.95,
+            created_at=yesterday,
+        )
+
+        body = client.get("/api/chat/pending-confirmations").json()
+
+        assert body["total"] == 2
+        assert [item["ref"] for item in body["items"]] == [reinforced, merely_new]
 
     def test_pending_list_filters_high_priority_caps_at_ten_and_has_count_only(
         self,

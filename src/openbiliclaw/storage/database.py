@@ -4905,9 +4905,14 @@ class Database:
         self,
         *,
         statuses: Sequence[str] | None = None,
-        limit: int = 200,
+        limit: int | None = 200,
     ) -> list[dict[str, Any]]:
-        """Return confusions filtered by ``statuses`` (newest-first)."""
+        """Return confusions filtered by ``statuses`` (newest-first).
+
+        ``limit`` bounds the read for UI paths; ``None`` returns every matching
+        row and is reserved for the TTL sweep, which must see the oldest rows
+        instead of inheriting the newest-200 window (issue #352).
+        """
         self._ensure_fresh_read()
         params: list[Any] = []
         clause = ""
@@ -4916,9 +4921,12 @@ class Database:
             placeholders = ", ".join("?" for _ in status_list)
             clause = f"WHERE status IN ({placeholders})"
             params.extend(status_list)
-        params.append(max(1, int(limit)))
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = " LIMIT ?"
+            params.append(max(1, int(limit)))
         cursor = self.conn.execute(
-            f"SELECT * FROM confusions {clause} ORDER BY id DESC LIMIT ?",
+            f"SELECT * FROM confusions {clause} ORDER BY id DESC{limit_clause}",
             params,
         )
         return [self._decode_confusion_row(dict(row)) for row in cursor.fetchall()]
