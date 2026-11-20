@@ -712,7 +712,7 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 
 #### 后台 LLM 预算：请求级准入 + 跨进程共享（issue #344）
 
-`scheduler.llm_budget_max_calls / llm_budget_window_seconds` 由 `LLMConcurrencyGate` 在**每次后台请求**上执行：`slot()` 取得并发槽后、yield 之前调用 `_admit_background_call()`，额度用尽抛 `LLMBudgetExhaustedError`（`llm/base.py`，继承 `LLMRateLimitError`，消息带 `N/M` 与配置项名），请求根本不会发到 provider；被拒绝的请求不记账，取消/排队中的请求也不消耗额度。交互 caller（`soul.dialogue`、`api.config_probe` 等）不受影响。
+`scheduler.llm_budget_max_calls / llm_budget_window_seconds` 由 `LLMConcurrencyGate` 在**每次后台请求**上执行：`slot()` 取得并发槽后、yield 之前调用 `_admit_background_call()`，额度用尽抛 `LLMBudgetExhaustedError`（`llm/base.py`，继承 `LLMRateLimitError`，消息带 `N/M` 与配置项名），请求根本不会发到 provider；被拒绝的请求不记账，取消/排队中的请求也不消耗额度。`pause` / `warn` 模式下交互 caller（`soul.dialogue`、`api.config_probe` 等）不受次数预算影响；只有 `budget_on_exceed="stop"` 会连交互调用一起拒绝（见下节）。
 
 计数落在 `background_llm_budget` 表（单行，`BackgroundBudgetLedger`，`llm/budget.py`）：`try_acquire()` 是一个 `BEGIN IMMEDIATE` 事务，窗口过期先重置、额度已满返回 False、否则 +1 放行，因此同一数据库上的 daemon / API / 桌面 worker / CLI 进程共享同一份额度。ledger 不可用时降级为进程内计数并打 WARNING（预算保护不因数据库抖动阻塞出网）。`apply_background_budget_config(gate, config)` 由 CLI、API app、runtime context 与 OpenClaw bootstrap 在构造 gate 后调用，把配置与 ledger 一起装上；`status_payload()` 新增 `llm_background_budget_{max_calls,window_seconds,calls,shared}`。
 
@@ -725,6 +725,27 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 | refill.evaluation | 2 | 候选 batch / single 评估 |
 | refill.supply | 3 | durable inventory 低于目标时动态升级的关键词 / 原料生成；包含 `discovery.explore.queries` 与 `sources.*.extract`，防止 supply 等库存、库存又等 supply 的循环 |
 | maintenance | 4 | Soul、评测、purge、`recommendation.director.preplan` 与健康库存下的 discovery；未知 caller 也落此类 |
+
+#### 每日花费上限（issue #353）
+
+次数预算管不住金额：120 次短评估和 120 次长生成的账单可以差十倍。`scheduler.daily_budget_cny` 以**本地日历日**为窗口，在每次 LLM 请求前读取 `llm_usage.estimated_cost_cny` 的当日累计；`scheduler.budget_on_exceed` 决定超限行为：
+
+- `pause`（默认）：只拒绝后台自动调用，聊天 / 设置 / 手动命令继续可用；
+- `stop`：交互调用也拒绝（`LLMDailyBudgetExceededError`，`budget_exceeded` 诊断码，不会被误报成 provider 限流）；
+- `warn`：全部放行，只记日志与事件。
+
+执行点仍是 `LLMConcurrencyGate.slot()`：后台分支在 `_admit_background_call()` **之前**调用 `_admit_daily_budget()`，因此被金额拒绝的请求不会顺带烧掉一次次数额度；交互分支只在 `stop` 模式下检查。`0` 或负数关闭该 guard，且不会创建 spend ledger，不产生任何数据库读。
+
+`DailySpendLedger`（`llm/budget.py`）用 `local_day_window()`（`local_day.py`）把本地零点换算成 UTC 文本区间，查询落在 `idx_llm_usage_timestamp` 上，而不是无法走索引的 `date(timestamp,'localtime')`。读失败一律 fail-open 返回 0（新库、表未建、锁冲突都不能把估算变成全站 LLM 停机）；超限事件 `event_type='budget_exceeded'` 每天最多一条，`BEGIN IMMEDIATE` 内先查后插，跨进程不会重复。`ContinuousRefreshController._llm_budget_allowed()` 同时叠加 `_call_budget_allowed()` 与 `_daily_budget_allowed()`，在环路入口友好暂停并打 WARNING。
+
+金额来自静态价目表，因此有两个配套：
+
+1. 未命中 `PRICING` 的 provider/model 会打一次 WARNING（`_warn_unpriced_once`），不再静默按占位价记账；`openai_compatible` 现在有显式 `default` 行；
+2. `llm.cost_multiplier`（`0.1..20`，默认 `1.0`）在 `UsageRecorder` 写库时整体缩放估算。实测账单是估算的 N 倍时设成 N，`llm_usage`、`openbiliclaw cost` 和每日上限就统一到“账单口径”。校准系数只影响新写入的行，历史行不改写。
+
+超调说明：检查的是**已发生**花费而不是预扣额度，跨线的那一次调用仍会发出，最多超一个单次调用成本（长推理调用可达 ¥0.1–0.5 量级）；并发边界上多个 in-flight 请求也可能同时读到超线前的快照。要做硬预留需要预估 prompt token，收益不足以抵消误判，暂不实现。Embedding 请求不经过该 gate、也不写 `llm_usage`，因此每日上限目前只覆盖聊天 / 评估 / 生成类调用；embedding 费用仍在 `openbiliclaw cost` 之外。
+
+`status_payload()` / `/api/runtime-status` 暴露 `llm_daily_budget_cny`、`llm_daily_budget_on_exceed`、`llm_today_cost_cny`、`llm_daily_budget_state`（`disabled|ok|exceeded`）与 `llm_daily_budget_day`；桌面设置页与插件设置页各有一行“今日已花 / 上限”。
 
 导演前台补齐草稿与后台预排共用 `complete_structured_task`，有独立规划截止时间，不注入 core memory；Jev 是另一个 typed decision provider，不进入本 LLM fallback 链或共享它的配额统计。内容摘要与实际反馈不等于 Soul 全画像，详见[导演](director.md)。
 

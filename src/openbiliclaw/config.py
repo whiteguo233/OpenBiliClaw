@@ -143,6 +143,11 @@ _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
 # enough headroom (a full all-platform refresh wave is typically tens of calls).
 _DEFAULT_LLM_BUDGET_MAX_CALLS = 120
 _DEFAULT_LLM_BUDGET_WINDOW_SECONDS = 3600
+# Money cap (issue #353). Off by default: spend depends entirely on the user's
+# provider and model mix, so any nonzero default would surprise upgrades. The
+# mode default is the safe one — stop automatic work, keep the UI/chat alive.
+_DEFAULT_DAILY_BUDGET_CNY = 0.0
+_DEFAULT_BUDGET_ON_EXCEED = "pause"
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
 # Cognition-cycle context knobs (issue #169). Keep the defaults in sync with
 # the module constants in ``openbiliclaw/soul/cognition_cycle.py``:
@@ -651,6 +656,11 @@ class LLMConfig:
     default_provider: str = "deepseek"
     concurrency: int = DEFAULT_LLM_CONCURRENCY
     timeout: int = _DEFAULT_LLM_TIMEOUT
+    # Calibration factor between the static ``llm.pricing`` table and the
+    # provider invoice (issue #353). 1.0 = trust the table; 2.0 = the real
+    # bill is ~2x the estimate. Applied when writing ``llm_usage`` so the
+    # daily spend cap and ``openbiliclaw cost`` agree with each other.
+    cost_multiplier: float = 1.0
     # Non-empty = chat fallback on. There is no separate enable flag: the
     # legacy ``fallback_enabled`` bool was never consulted by the fallback
     # chain and has been removed (stale keys in old config.toml are ignored).
@@ -1321,6 +1331,15 @@ class SchedulerConfig:
     # the cap / restarts the daemon). ``0`` disables the guard.
     llm_budget_max_calls: int = _DEFAULT_LLM_BUDGET_MAX_CALLS
     llm_budget_window_seconds: int = _DEFAULT_LLM_BUDGET_WINDOW_SECONDS
+    # Money-side cap (issue #353). Call count cannot bound spend: 120 short
+    # evaluations and 120 long generations differ by ~10x. Checked against
+    # today's ``llm_usage.estimated_cost_cny`` before every LLM call.
+    # ``<= 0`` disables the guard. ``budget_on_exceed``:
+    #   pause — refuse background (auto) calls, keep interactive chat working
+    #   stop  — refuse every call, including user-initiated ones
+    #   warn  — allow everything, log + event once per day
+    daily_budget_cny: float = _DEFAULT_DAILY_BUDGET_CNY
+    budget_on_exceed: str = _DEFAULT_BUDGET_ON_EXCEED
     discovery_cron: str = "0 */8 * * *"
     pool_target_count: int = 300
     copy_ready_target_count: int = _DEFAULT_COPY_READY_TARGET_COUNT
@@ -2703,6 +2722,12 @@ def _build_config(
         default_provider=llm_raw.get("default_provider", "deepseek"),
         concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
         timeout=_normalize_llm_timeout(llm_raw.get("timeout")),
+        cost_multiplier=_normalize_scheduler_float(
+            llm_raw.get("cost_multiplier"),
+            default=1.0,
+            min_value=0.1,
+            max_value=20.0,
+        ),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         instance_routing=instance_routing,
         builtin_providers_version=(2 if llm_raw.get("builtin_providers_version") == 2 else 0),
@@ -3248,6 +3273,15 @@ def _build_config(
                         sched_raw.get("llm_budget_window_seconds"),
                         default=_DEFAULT_LLM_BUDGET_WINDOW_SECONDS,
                         min_value=60,
+                    ),
+                    "daily_budget_cny": _normalize_scheduler_float(
+                        sched_raw.get("daily_budget_cny"),
+                        default=_DEFAULT_DAILY_BUDGET_CNY,
+                        min_value=0.0,
+                        max_value=100000.0,
+                    ),
+                    "budget_on_exceed": _normalize_budget_on_exceed(
+                        sched_raw.get("budget_on_exceed")
                     ),
                     "profile_consolidation_enabled": _coerce_bool(
                         sched_raw.get("profile_consolidation_enabled"),
@@ -4948,6 +4982,21 @@ def _normalize_scheduler_float(
     if max_value is not None and normalized > max_value:
         return default
     return normalized
+
+
+# Accepted ``scheduler.budget_on_exceed`` values (issue #353). Kept next to the
+# normalizer so the API save path can reject invalid values with a 400 instead
+# of silently writing a mode the gate does not implement.
+BUDGET_ON_EXCEED_MODES = frozenset({"pause", "stop", "warn"})
+
+
+def _normalize_budget_on_exceed(value: object) -> str:
+    """Normalize the daily-budget breach mode; unknown values fall back to pause."""
+    if isinstance(value, str):
+        mode = value.strip().lower()
+        if mode in BUDGET_ON_EXCEED_MODES:
+            return mode
+    return _DEFAULT_BUDGET_ON_EXCEED
 
 
 def _normalize_auto_update_allowed_remotes(value: object) -> list[str]:
@@ -6900,6 +6949,7 @@ def _render_config_toml(
                 f"default_chain = {_toml_str_list(config.llm.default_chain)}",
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
+                f"cost_multiplier = {config.llm.cost_multiplier}",
                 "",
             ]
         )
@@ -6913,6 +6963,7 @@ def _render_config_toml(
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
                 f"fallback_provider = {_toml_string(config.llm.fallback_provider)}",
+                f"cost_multiplier = {config.llm.cost_multiplier}",
                 "",
             ]
         )
@@ -7210,6 +7261,8 @@ def _render_config_toml(
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             f"llm_budget_max_calls = {config.scheduler.llm_budget_max_calls}",
             f"llm_budget_window_seconds = {config.scheduler.llm_budget_window_seconds}",
+            f"daily_budget_cny = {config.scheduler.daily_budget_cny}",
+            f"budget_on_exceed = {_toml_string(config.scheduler.budget_on_exceed)}",
             "pause_on_extension_disconnect = "
             f"{_toml_bool(config.scheduler.pause_on_extension_disconnect)}",
             "extension_disconnect_grace_seconds = "

@@ -446,6 +446,7 @@ LLM 评估，也不会从“本轮不合适”推导长期不喜欢。审计与�
 | `default_chain` | list[string] | `["deepseek"]` | 全局有序实例链。每一项引用一个 `[llm.instances.<id>]`；请求按从左到右的顺序尝试 |
 | `concurrency` | int | `3` | 单 runtime 的 LLM 总并发上限；后台容量派生为 `max(1, total-1)`（默认 2）。合法范围 `1..16` |
 | `timeout` | int | `1200` | 每个实例请求的超时秒数，默认 20 分钟，合法范围 `10..1200` |
+| `cost_multiplier` | float | `1.0` | `llm_usage.estimated_cost_cny` 的校准系数（issue #353），合法范围 `0.1..20`。静态价目表与实际账单有稳定倍差时（尤其 `openai_compatible` 中转）设成实测倍数；`UsageRecorder` 写库时整体缩放，`openbiliclaw cost`、每日预算与 `budget_exceeded` 事件随之对齐。只影响新写入行 |
 
 `default_chain` 里的元素是**实例 ID**，不是 Provider 类型。一个实例是一套完整、可独立调用的端点配置，因此可以同时存在两个 `provider_type = "openai_compatible"` 的中转渠道、两个 OpenAI 账号，或同一网关上的不同模型：
 
@@ -1351,6 +1352,8 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `enabled` | bool | `true` | daemon 后台调度总开关；插件设置页显示为「停止后台 LLM 请求」。关闭后 runtime 的刷新、补池预计算、账户同步、猜测兴趣、主动推送和八源扩展账号周期回拉都会跳过；手动 CLI / API 请求仍按显式操作执行。若候选池为空，推荐页可能暂时没有内容 |
 | `llm_budget_max_calls` | int | `120` | daemon 后台 LLM 请求在 `llm_budget_window_seconds` 内的自设上限。v0.3.236 起是**请求级硬上限**：`LLMConcurrencyGate` 在每次后台请求发出前扣减额度，超限抛 `LLMBudgetExhaustedError`；计数落在共享 SQLite `background_llm_budget` 表，同一数据库上的多个进程（daemon / API / 桌面 worker / CLI）共用一份额度。`ContinuousRefreshController` 另在环路入口查额度以友好暂停自动循环并打 WARNING。认知循环在两个分片之间停下并保留水位。`0` 表示不启用预算。默认值按保护付费 API 额度的工程安全起点设定，正常单用户发现循环通常远低于该值 |
 | `llm_budget_window_seconds` | int | `3600` | 后台 LLM 预算窗口长度（秒），最小 `60`；与 `llm_budget_max_calls` 配合形成固定窗口配额 |
+| `daily_budget_cny` | float | `0.0` | 每日 LLM 花费上限（元，issue #353）。窗口是**本地日历日**，数据源是 `llm_usage.estimated_cost_cny` 当日累计；`LLMConcurrencyGate.slot()` 在每次调用前检查，`ContinuousRefreshController` 在环路入口暂停。`0` 或负数关闭，且不创建 spend ledger、不产生数据库读。允许 `0..100000` |
+| `budget_on_exceed` | string | `"pause"` | 超限行为。`pause`：只拒绝后台自动调用，聊天 / 设置 / 手动命令仍可用；`stop`：交互调用也拒绝；`warn`：全部放行，只记日志与每日一条 `budget_exceeded` 事件。非法值回退 `pause`，API 保存返回 400 |
 | `pause_on_extension_disconnect` | bool | `false` | 开启后，daemon-owned 后台 LLM / embedding 工作只在浏览器插件有 `/api/runtime-stream` 连接、或刚断开仍处于宽限窗口内时运行；离线期间不会自动补新内容 |
 | `extension_disconnect_grace_seconds` | int | `90` | 插件最后一个 `runtime-stream` 连接断开后的宽限秒数；小于等于 0 或无法解析时回退到 `90` |
 | `discovery_cron` | string | `"0 */8 * * *"` | 兼容旧配置的保留字段；当前 runtime 不消费这个 cron，发现补池由轮询、候选池缺口、行为阈值和下方策略间隔驱动。插件与桌面 Web 设置页均不再暴露该字段，只能通过手改 `config.toml` 保留 |

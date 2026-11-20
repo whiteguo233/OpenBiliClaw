@@ -1648,9 +1648,14 @@ def _build_usage_recorder() -> Any:
     if cached is not None:
         return cached
 
+    from openbiliclaw.config import load_config
     from openbiliclaw.llm.usage_recorder import UsageRecorder
 
-    recorder = UsageRecorder(sink=_get_runtime_database())
+    runtime_config = load_config()
+    recorder = UsageRecorder(
+        sink=_get_runtime_database(),
+        cost_multiplier=float(getattr(runtime_config.llm, "cost_multiplier", 1.0) or 1.0),
+    )
     _RUNTIME_COMPONENTS["usage_recorder"] = recorder
     return recorder
 
@@ -6566,8 +6571,9 @@ def cost(
     """显示本机 LLM 调用花费(按天 + 按 provider/model + 按 caller 模块)。
 
     数据来源:每次成功的 LLM 调用都会写一条到 ``llm_usage`` 表(v0.3.26+)。
-    费用按 ``llm.pricing`` 里的官方单价估算,允许 ±20% 误差。本地 Ollama
-    调用单价 0,只统计调用次数。
+    费用按 ``llm.pricing`` 的静态单价估算;若实测账单与估算有稳定偏差,可用
+    ``llm.cost_multiplier`` 校准(issue #353)。本地 Ollama 调用单价 0,只统计
+    调用次数。
 
     ``--by caller`` 显示按模块(discovery / recommendation / soul / api 等)
     拆分的占比,这是排查"钱花在哪一层"最有用的视图。
@@ -6580,6 +6586,29 @@ def cost(
     by_provider = db.query_llm_usage_by_provider(days=days)
     by_caller = db.query_llm_usage_by_caller(days=days)
     total = db.query_llm_usage_total(days=days)
+
+    today = db.query_llm_usage_today()
+    today_spend = float(today.get("cost_cny") or 0.0)
+    try:
+        from openbiliclaw.config import load_config
+
+        runtime_config = load_config()
+        daily_limit = float(runtime_config.scheduler.daily_budget_cny or 0.0)
+        budget_mode = str(runtime_config.scheduler.budget_on_exceed or "pause")
+        multiplier = float(runtime_config.llm.cost_multiplier or 1.0)
+    except Exception:
+        daily_limit, budget_mode, multiplier = 0.0, "pause", 1.0
+    if daily_limit > 0:
+        state = "[red]已超限[/red]" if today_spend >= daily_limit else "[green]正常[/green]"
+        console.print(
+            f"今日（{today.get('day', '')}）已花 ¥{today_spend:.4f} / "
+            f"上限 ¥{daily_limit:.2f}（{budget_mode}，{state}）"
+        )
+    else:
+        console.print(f"今日（{today.get('day', '')}）已花 ¥{today_spend:.4f}（未设上限）")
+    if abs(multiplier - 1.0) > 1e-9:
+        console.print(f"[dim]估算已按 llm.cost_multiplier={multiplier:g} 校准[/dim]")
+    console.print()
 
     if total["calls"] == 0:
         _print_status_panel(
@@ -18866,6 +18895,14 @@ def config_show() -> None:
             tr("cli.config_show.row.stop_background_llm"),
             tr(
                 "cli.config_show.value.no" if cfg.scheduler.enabled else "cli.config_show.value.yes"
+            ),
+        ),
+        (
+            tr("cli.config_show.row.daily_budget"),
+            (
+                tr("cli.config_show.value.unlimited")
+                if cfg.scheduler.daily_budget_cny <= 0
+                else f"¥{cfg.scheduler.daily_budget_cny:g} ({cfg.scheduler.budget_on_exceed})"
             ),
         ),
         (

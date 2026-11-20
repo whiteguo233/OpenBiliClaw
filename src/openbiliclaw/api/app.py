@@ -24111,6 +24111,7 @@ def create_app(
             _MIN_COPY_READY_TARGET_COUNT,
             _MIN_EVAL_MAX_WAIT_SECONDS,
             _MIN_EVAL_MIN_BATCH_SIZE,
+            BUDGET_ON_EXCEED_MODES,
             ConfigError,
             ConfigIssue,
             _collect_config_issues,
@@ -25644,6 +25645,8 @@ def create_app(
                 "proactive_push_interval_seconds",
                 "llm_budget_max_calls",
                 "llm_budget_window_seconds",
+                "daily_budget_cny",
+                "budget_on_exceed",
                 "speculator_idle_interval_minutes",
                 "speculation_interval_minutes",
                 "speculation_ttl_days",
@@ -25736,6 +25739,26 @@ def create_app(
                                 max_value=_MAX_EVAL_MAX_WAIT_SECONDS,
                             ),
                         )
+                    elif key == "daily_budget_cny":
+                        setattr(
+                            cfg.scheduler,
+                            key,
+                            _normalize_scheduler_float(
+                                sdata[key],
+                                default=0.0,
+                                min_value=0.0,
+                                max_value=100000.0,
+                            ),
+                        )
+                    elif key == "budget_on_exceed":
+                        mode = str(sdata[key] or "").strip().lower()
+                        if mode not in BUDGET_ON_EXCEED_MODES:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="budget_on_exceed must be one of: "
+                                + ", ".join(sorted(BUDGET_ON_EXCEED_MODES)),
+                            )
+                        setattr(cfg.scheduler, key, mode)
                     elif key in scheduler_int_limits:
                         default, min_value, max_value = scheduler_int_limits[key]
                         setattr(

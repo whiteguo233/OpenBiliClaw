@@ -71,8 +71,13 @@ class UsageRecorder:
     appends one row.
     """
 
-    def __init__(self, sink: _UsageSink | None) -> None:
+    def __init__(self, sink: _UsageSink | None, *, cost_multiplier: float = 1.0) -> None:
         self._sink = sink
+        # ``llm.cost_multiplier`` (issue #353): a measured calibration
+        # between the static pricing table and the provider invoice. Applied
+        # at write time so every stored row is already in "invoice currency"
+        # and the daily budget gate needs no second multiplier.
+        self._cost_multiplier = max(0.0, float(cost_multiplier))
 
     @property
     def enabled(self) -> bool:
@@ -111,6 +116,7 @@ class UsageRecorder:
                 prompt_tokens,
                 completion_tokens,
                 cached_tokens=cached_tokens,
+                cost_multiplier=self._cost_multiplier,
             )
         except Exception:
             logger.debug("estimate_cost failed", exc_info=True)

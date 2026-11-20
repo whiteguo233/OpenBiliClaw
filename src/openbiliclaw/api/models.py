@@ -508,6 +508,18 @@ class RuntimeStatusResponse(BaseModel):
     llm_maintenance_waiting: int = 0
     llm_refill_priority_active: bool = False
     inventory_priority_state: str = "healthy"
+    # Background call quota (issue #344) and daily spend cap (issue #353).
+    # These were already in the gate payload but were dropped by this model,
+    # so no client could show them; keep both blocks together from now on.
+    llm_background_budget_max_calls: int = 0
+    llm_background_budget_window_seconds: int = 0
+    llm_background_budget_calls: int = 0
+    llm_background_budget_shared: bool = False
+    llm_daily_budget_cny: float = 0.0
+    llm_daily_budget_on_exceed: str = "pause"
+    llm_today_cost_cny: float = 0.0
+    llm_daily_budget_state: str = "disabled"
+    llm_daily_budget_day: str = ""
     last_discovered_count: int = 0
     last_replenished_count: int = 0
     recent_pool_topics: list[str] = Field(default_factory=list)

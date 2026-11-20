@@ -1467,7 +1467,10 @@ class RuntimeContext:
 
         # 1. LLM layer (with usage ledger so ``openbiliclaw cost`` has data)
         new_registry = build_llm_registry(new_config)
-        new_usage_recorder = UsageRecorder(sink=self.database)
+        new_usage_recorder = UsageRecorder(
+            sink=self.database,
+            cost_multiplier=float(getattr(new_config.llm, "cost_multiplier", 1.0) or 1.0),
+        )
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_gate = self.llm_concurrency_gate or LLMConcurrencyGate(llm_concurrency)

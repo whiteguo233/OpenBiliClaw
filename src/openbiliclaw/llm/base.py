@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 def _classify_llm_error_code(exc: BaseException) -> str:
     """Map a provider failure to a stable diagnostics alert code."""
+    # Daily spend admission is a *budget* stop, not a provider rate limit.
+    # It subclasses LLMBudgetExhaustedError / LLMRateLimitError for the
+    # existing back-off paths, so this branch must run first — otherwise the
+    # desktop "provider rate limited" banner would hide the real cause.
+    if isinstance(exc, LLMDailyBudgetExceededError):
+        return "budget_exceeded"
     if isinstance(exc, LLMRateLimitError):
         return "rate_limited"
     if isinstance(exc, LLMAuthError):
@@ -60,6 +66,17 @@ class LLMBudgetExhaustedError(LLMRateLimitError):
     local `scheduler.llm_budget_max_calls` window instead of the provider.
     Callers that own a multi-call unit of work (e.g. the cognition cycle) catch
     it to stop between chunks instead of consuming the retry.
+    """
+
+
+class LLMDailyBudgetExceededError(LLMBudgetExhaustedError):
+    """Raised when today's estimated LLM spend has reached the daily cap.
+
+    Distinct from :class:`LLMBudgetExhaustedError` (call *count*) so diagnostics
+    can report ``budget_exceeded`` instead of ``rate_limited`` and the UI can
+    offer the money-specific fix (raise ``scheduler.daily_budget_cny`` or wait
+    for local midnight). Subclassing keeps every "stop this multi-call unit"
+    handler working unchanged.
     """
 
 

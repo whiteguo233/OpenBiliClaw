@@ -146,7 +146,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             target=int(config.scheduler.pool_target_count),
         )
 
-    usage_recorder = UsageRecorder(sink=database)
+    usage_recorder = UsageRecorder(
+        sink=database,
+        cost_multiplier=float(getattr(config.llm, "cost_multiplier", 1.0) or 1.0),
+    )
 
     # Defensive read matching the getattr(config.scheduler, ..., default)
     # convention below: test doubles (SimpleNamespace configs) may omit the

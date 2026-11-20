@@ -68,6 +68,7 @@ from openbiliclaw.discovery.temporal import (
     parse_temporal_evaluation,
     schedule_temporal_evaluation,
 )
+from openbiliclaw.local_day import local_day_window
 from openbiliclaw.published_time import normalize_published_time
 from openbiliclaw.saved_sync.identity import (
     canonical_source_platform,
@@ -5791,6 +5792,44 @@ class Database:
             row["top_k_metrics"] = json.loads(str(row.pop("top_k_metrics_json")))
             results.append(row)
         return results
+
+    def query_llm_usage_today(self) -> dict[str, Any]:
+        """Return spend + call volume for the current local calendar day.
+
+        Unlike ``query_llm_usage_by_day(days=1)`` (a rolling 24h window), this
+        uses local midnight boundaries, matching the ``scheduler.daily_budget_cny``
+        reset semantics. The UTC text bounds keep the query on
+        ``idx_llm_usage_timestamp`` instead of scanning with
+        ``date(timestamp, 'localtime')``.
+        """
+
+        day, start_utc, end_utc = local_day_window()
+        cursor = self.conn.execute(
+            """
+            SELECT COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
+            FROM llm_usage
+            WHERE timestamp >= ? AND timestamp < ?
+            """,
+            (start_utc, end_utc),
+        )
+        row = cursor.fetchone()
+        result = (
+            dict(row)
+            if row
+            else {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_cny": 0.0,
+            }
+        )
+        result["day"] = day
+        return result
 
     def query_llm_usage_by_day(
         self,

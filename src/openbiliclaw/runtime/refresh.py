@@ -528,6 +528,7 @@ class ContinuousRefreshController:
     _init_grace_consumed: bool = False
     _last_llm_gate_allowed: bool = field(default=True, init=False)
     _last_llm_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
+    _last_daily_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
     _startup_maintenance_completed: bool = field(default=False, init=False)
     _last_pool_maintenance_succeeded: bool = field(default=False, init=False)
     # Recipe-driven sources can change availability without a config reload.
@@ -569,13 +570,24 @@ class ContinuousRefreshController:
         return allowed
 
     def _llm_budget_allowed(self) -> bool:
-        """Return whether the daemon's per-window background LLM budget remains.
+        """Return whether background LLM work may continue.
 
-        The budget is a self-imposed quota (issue #188): scheduler-owned loops
-        count every background LLM request through ``LLMConcurrencyGate`` and
-        pause once the configured window cap is reached. ``max_calls <= 0``
-        disables the guard; a missing gate also keeps the legacy behaviour.
+        Two self-imposed quotas gate automatic loops:
+
+        - per-window call count (issue #188): ``scheduler.llm_budget_max_calls``
+          per ``llm_budget_window_seconds``;
+        - daily spend (issue #353): ``scheduler.daily_budget_cny`` measured on
+          ``llm_usage.estimated_cost_cny``.
+
+        ``<= 0`` disables either guard; a missing gate or missing spend
+        snapshot keeps the legacy behaviour (allow).
         """
+
+        return self._call_budget_allowed() and self._daily_budget_allowed()
+
+    def _call_budget_allowed(self) -> bool:
+        """Per-window background call-count quota (issue #188)."""
+
         max_calls = int(getattr(self.scheduler_config, "llm_budget_max_calls", 0) or 0)
         window_seconds = int(
             getattr(self.scheduler_config, "llm_budget_window_seconds", 3600) or 3600
@@ -606,6 +618,45 @@ class ContinuousRefreshController:
                 count,
                 window_seconds,
                 max_calls,
+            )
+        return False
+
+    def _daily_budget_allowed(self) -> bool:
+        """Daily spend quota (issue #353); ``warn`` never pauses loops."""
+
+        gate = self.llm_concurrency_gate
+        snapshot_fn = getattr(gate, "daily_budget_snapshot", None)
+        if not callable(snapshot_fn):
+            return True
+        try:
+            snapshot = snapshot_fn()
+        except Exception:
+            logger.debug("Daily budget snapshot unavailable; allowing work", exc_info=True)
+            return True
+        if not isinstance(snapshot, dict):
+            return True
+        if snapshot.get("llm_daily_budget_state") != "exceeded":
+            return True
+        if snapshot.get("llm_daily_budget_on_exceed") == "warn":
+            return True
+        # A controller that stops before attempting a call would otherwise
+        # never reach the gate's event writer, leaving no audit trail.
+        record_exceeded = getattr(gate, "record_daily_budget_exceeded", None)
+        if callable(record_exceeded):
+            with suppress(Exception):
+                record_exceeded()
+        now = time.monotonic()
+        if now - self._last_daily_budget_warned_at >= 600:
+            self._last_daily_budget_warned_at = now
+            logger.warning(
+                "Daily LLM spend ¥%.4f reached the ¥%.2f cap (budget_on_exceed=%s). "
+                "Automatic discovery/LLM loops are paused until local midnight; "
+                "raise scheduler.daily_budget_cny or set it to 0 to disable the cap. "
+                "Today's number is an estimate — calibrate llm.cost_multiplier if "
+                "the provider invoice differs.",
+                float(snapshot.get("llm_today_cost_cny", 0.0) or 0.0),
+                float(snapshot.get("llm_daily_budget_cny", 0.0) or 0.0),
+                str(snapshot.get("llm_daily_budget_on_exceed", "pause")),
             )
         return False
 

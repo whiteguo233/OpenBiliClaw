@@ -617,6 +617,24 @@ rows = db.query_temporal_ranking_shadow_audit(limit=100)
 - 表中没有 BVID、`item_key`、内容 ID、标题、作者、URL、query、理由或画像字段。来源先净化为短枚举 token，年龄只保留 `<=1d / 1-7d / 7-30d / 30-180d / >180d / unknown` 桶，无法从记录反查单条候选。
 - 每次 insert 后清理 30 天前记录，并只保留最新 5,000 行。RecommendationEngine 把它作为 best-effort observer；写库或校验失败只记录 WARNING，排序、MMR、admission 和 serving 均继续使用已经算出的分数。
 
+### LLM 用量与每日花费
+
+`llm_usage` 每行是一次成功 LLM 响应的 token / cache / `estimated_cost_cny` 记录，`UsageRecorder` 在 provider 返回后写入（失败调用不写，因此它是最小偏低的账单下界）。
+
+```python
+db.insert_llm_usage(provider="deepseek", model="deepseek-v4-flash",
+                    prompt_tokens=5000, completion_tokens=3000,
+                    estimated_cost_cny=0.011, caller="discovery.evaluate_batch")
+today = db.query_llm_usage_today()      # 本地日历日：calls / tokens / cost_cny / day
+daily = db.query_llm_usage_by_day(days=7)
+total = db.query_llm_usage_total(days=7)
+```
+
+- `query_llm_usage_today()` 用 `local_day_window()` 把本地零点换算成 UTC 文本区间，`timestamp >= ? AND timestamp < ?` 走 `idx_llm_usage_timestamp`；这是 `scheduler.daily_budget_cny` 的资金口径，和 `query_llm_usage_by_day(days=1)` 的滚动 24h 语义不同。
+- `query_llm_usage_by_day` 保留 `date(timestamp,'localtime')` 分组，只用于报表；不要用它做预算判断（无法走索引，且窗口是滚动的）。
+- `max_llm_usage_id()` / `query_llm_usage_since_id()` 把一次 init / discovery 的 cost summary 限定在该阶段新写入的行。
+- `llm.cost_multiplier` 在写入前缩放估算；历史行不重算，`openbiliclaw cost` 与每日上限读到的都是落库值。
+
 ### Bangumi Producer Ledger
 
 `bangumi_discovery_runs` 按 mode 记录每轮消费 units、发现数、reason 与稳定 error code，用于 UTC 日预算、本地状态和最小调度间隔；`partial` 行表示本轮后续请求失败但此前候选仍被保留，和 `ok/empty` 一样按最终实际保留数扣预算。`bangumi_discovery_state` 保存 `ranked/latest` 按 subject type 的 cursor/total、每个 mode 的持久化类型轮转起点，以及 `cooldown_until`。两张表属于正常 schema 初始化，不由只读状态接口临时建表。`GET /api/sources/status` 只读这些本地行，打开设置页不会访问 Bangumi。

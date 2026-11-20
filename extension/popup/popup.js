@@ -2833,8 +2833,26 @@ async function handleStartInitClick() {
   _startInitProgressPoll();
 }
 
+function renderDailyBudgetStatus(runtimeStatus) {
+  const el = document.getElementById("cfgDailyBudgetStatus");
+  if (!el) return;
+  const limit = Number(runtimeStatus?.llm_daily_budget_cny) || 0;
+  const spent = Number(runtimeStatus?.llm_today_cost_cny) || 0;
+  const exceeded = runtimeStatus?.llm_daily_budget_state === "exceeded";
+  const mode = runtimeStatus?.llm_daily_budget_on_exceed || "pause";
+  if (limit <= 0) {
+    el.textContent = `今日已花 ¥${spent.toFixed(4)}（未设上限；金额为本地估算，偏差大时用 llm.cost_multiplier 校准）`;
+    return;
+  }
+  const modeText = exceeded
+    ? mode === "stop" ? "已停止全部 LLM 调用" : mode === "warn" ? "仅提醒" : "已暂停后台自动调用"
+    : "";
+  el.textContent = `今日已花 ¥${spent.toFixed(4)} / 上限 ¥${limit.toFixed(2)}${modeText ? `：${modeText}` : ""}`;
+}
+
 function renderPoolStatus(runtimeStatus) {
   window.OpenBiliClawSponsoredSettings?.updateStatus(document.getElementById("cfgLlmProviderNotice"), runtimeStatus?.sponsored_status);
+  renderDailyBudgetStatus(runtimeStatus);
   const messageList = elements.messagesList;
   if (messageList) {
     let notice = document.getElementById("sponsoredMessageNotice");
@@ -11326,6 +11344,11 @@ function bindSettings() {
     }
     setVal("cfgExtensionDisconnectGrace", cfg.scheduler?.extension_disconnect_grace_seconds);
     setVal("cfgPoolTarget", cfg.scheduler?.pool_target_count);
+    setVal(
+      "cfgDailyBudgetCny",
+      Number(cfg.scheduler?.daily_budget_cny) > 0 ? cfg.scheduler.daily_budget_cny : ""
+    );
+    setVal("cfgBudgetOnExceed", cfg.scheduler?.budget_on_exceed || "pause");
     setVal("cfgAccountSyncInterval", cfg.scheduler?.account_sync_interval_hours);
     setVal("cfgRefreshCheckInterval", cfg.scheduler?.refresh_check_interval_seconds);
     setVal("cfgSignalEventThreshold", cfg.scheduler?.signal_event_threshold);
@@ -11707,6 +11730,8 @@ function bindSettings() {
         source_incremental_enabled: checked("cfgSourceIncrementalEnabled"),
         extension_disconnect_grace_seconds: getInt("cfgExtensionDisconnectGrace", 90),
         pool_target_count: getInt("cfgPoolTarget", 300),
+        daily_budget_cny: Math.max(0, getFloat("cfgDailyBudgetCny", 0)),
+        budget_on_exceed: getVal("cfgBudgetOnExceed") || "pause",
         account_sync_interval_hours: getInt("cfgAccountSyncInterval", 6),
         refresh_check_interval_seconds: getInt("cfgRefreshCheckInterval", 60),
         signal_event_threshold: getInt("cfgSignalEventThreshold", 6),

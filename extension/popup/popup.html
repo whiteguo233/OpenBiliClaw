@@ -8884,6 +8884,19 @@
           <input id="cfgPoolTarget" type="number" min="1" max="600" placeholder="300">
         </div>
         <div class="settings-field">
+          <label for="cfgDailyBudgetCny">每日 LLM 花费上限（元）</label>
+          <input id="cfgDailyBudgetCny" type="number" min="0" step="0.1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgBudgetOnExceed">超限时</label>
+          <select id="cfgBudgetOnExceed">
+            <option value="pause">暂停后台</option>
+            <option value="warn">仅提醒</option>
+            <option value="stop">全部停止</option>
+          </select>
+        </div>
+        <p class="settings-hint" id="cfgDailyBudgetStatus">今日花费按本地日历日统计；金额为本地估算，偏差大时用 llm.cost_multiplier 校准。0 = 不限。</p>
+        <div class="settings-field">
           <label for="cfgAccountSyncInterval">账户同步间隔小时</label>
           <input id="cfgAccountSyncInterval" type="number" min="1" step="1" placeholder="6">
         </div>

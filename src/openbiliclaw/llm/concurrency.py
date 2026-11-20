@@ -11,8 +11,9 @@ from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from openbiliclaw.llm.base import LLMBudgetExhaustedError
-from openbiliclaw.llm.budget import BackgroundBudgetLedger
+from openbiliclaw.llm.base import LLMBudgetExhaustedError, LLMDailyBudgetExceededError
+from openbiliclaw.llm.budget import BackgroundBudgetLedger, DailySpendLedger
+from openbiliclaw.local_day import local_day_window
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -34,18 +35,28 @@ def apply_background_budget_config(gate: LLMConcurrencyGate, config: object) -> 
     scheduler = getattr(config, "scheduler", None)
     max_calls = int(getattr(scheduler, "llm_budget_max_calls", 0) or 0)
     window_seconds = int(getattr(scheduler, "llm_budget_window_seconds", 3600) or 3600)
+    daily_budget_cny = float(getattr(scheduler, "daily_budget_cny", 0.0) or 0.0)
+    budget_on_exceed = str(getattr(scheduler, "budget_on_exceed", "pause") or "pause")
     data_path = getattr(config, "data_path", None)
     ledger = None
+    daily_ledger = None
     if data_path is not None:
         data_dir = _Path(data_path)
         # The gate may be built before MemoryManager.initialize(); the ledger
         # opens the app database directly, so make sure its directory exists.
         data_dir.mkdir(parents=True, exist_ok=True)
         ledger = BackgroundBudgetLedger(data_dir / "openbiliclaw.db")
+        if daily_budget_cny > 0:
+            daily_ledger = DailySpendLedger(data_dir / "openbiliclaw.db")
     gate.configure_background_budget(
         max_calls=max_calls,
         window_seconds=window_seconds,
         ledger=ledger,
+    )
+    gate.configure_daily_budget(
+        limit_cny=daily_budget_cny,
+        on_exceed=budget_on_exceed,
+        ledger=daily_ledger,
     )
 
 
@@ -451,6 +462,9 @@ class LLMConcurrencyGate:
         background_budget_calls: int = 0,
         background_budget_window_seconds: int = 3600,
         background_budget_ledger: BackgroundBudgetLedger | None = None,
+        daily_budget_cny: float = 0.0,
+        daily_budget_on_exceed: str = "pause",
+        daily_budget_ledger: DailySpendLedger | None = None,
     ) -> None:
         self.total_concurrency = coerce_total_concurrency(total_concurrency)
         self.background_concurrency = background_llm_concurrency(self.total_concurrency)
@@ -462,6 +476,14 @@ class LLMConcurrencyGate:
         self._budget_max_calls = max(0, int(background_budget_calls))
         self._budget_window_seconds = max(0, int(background_budget_window_seconds))
         self._budget_ledger = background_budget_ledger
+        self._daily_budget_cny = max(0.0, float(daily_budget_cny))
+        self._daily_budget_on_exceed = (
+            daily_budget_on_exceed
+            if daily_budget_on_exceed in {"pause", "stop", "warn"}
+            else "pause"
+        )
+        self._daily_spend_ledger = daily_budget_ledger
+        self._daily_budget_warned_day: str | None = None
 
     def configure_background_budget(
         self,
@@ -480,6 +502,34 @@ class LLMConcurrencyGate:
         self._budget_window_seconds = max(0, int(window_seconds))
         if ledger is not None:
             self._budget_ledger = ledger
+
+    def configure_daily_budget(
+        self,
+        *,
+        limit_cny: float,
+        on_exceed: str,
+        ledger: DailySpendLedger | None = None,
+    ) -> None:
+        """Apply `scheduler.daily_budget_cny` / `budget_on_exceed` (issue #353).
+
+        ``limit_cny <= 0`` disables the guard; the spend ledger is only used
+        when the guard is enabled, so a disabled budget costs no database I/O.
+        """
+
+        self._daily_budget_cny = max(0.0, float(limit_cny))
+        self._daily_budget_on_exceed = (
+            on_exceed if on_exceed in {"pause", "stop", "warn"} else "pause"
+        )
+        self._daily_spend_ledger = ledger if self._daily_budget_cny > 0 else None
+        self._daily_budget_warned_day = None
+
+    @property
+    def daily_budget_cny(self) -> float:
+        return self._daily_budget_cny
+
+    @property
+    def daily_budget_on_exceed(self) -> str:
+        return self._daily_budget_on_exceed
 
     @property
     def background_budget_max_calls(self) -> int:
@@ -598,6 +648,138 @@ class LLMConcurrencyGate:
             "quota, or wait for the window to roll over."
         )
 
+    def daily_budget_snapshot(self) -> dict[str, int | float | str | bool]:
+        """Return today's estimated spend vs the configured daily cap.
+
+        Read-only and safe to call from status polling. A missing ledger (no
+        ``data_path``, or a disabled cap) reports ``disabled`` without touching
+        the database.
+        """
+
+        mode = self._daily_budget_on_exceed
+        if self._daily_budget_cny <= 0:
+            return {
+                "llm_daily_budget_cny": 0.0,
+                "llm_daily_budget_on_exceed": mode,
+                "llm_today_cost_cny": 0.0,
+                "llm_daily_budget_state": "disabled",
+                "llm_daily_budget_day": "",
+            }
+        spend = 0.0
+        ledger = self._daily_spend_ledger
+        if ledger is not None:
+            try:
+                spend = ledger.spend_cny()
+            except Exception:
+                logger.warning("Daily spend lookup failed; treating spend as 0", exc_info=True)
+        day = local_day_window()[0]
+        exceeded = spend >= self._daily_budget_cny
+        return {
+            "llm_daily_budget_cny": self._daily_budget_cny,
+            "llm_daily_budget_on_exceed": mode,
+            "llm_today_cost_cny": round(spend, 6),
+            "llm_daily_budget_state": "exceeded" if exceeded else "ok",
+            "llm_daily_budget_day": day,
+        }
+
+    def daily_budget_allowed(self) -> bool:
+        """Return False when the daily cap should park automatic work.
+
+        ``warn`` never blocks. ``pause`` / ``stop`` block background loops; the
+        per-request gate is the hard enforcement point, this method is what
+        keeps controller loops from spinning on repeated rejections.
+        """
+
+        if self._daily_budget_cny <= 0:
+            return True
+        if self._daily_budget_on_exceed == "warn":
+            return True
+        return self.daily_budget_snapshot()["llm_daily_budget_state"] != "exceeded"
+
+    def record_daily_budget_exceeded(self) -> None:
+        """Persist today's exceed state from a loop gate or status path.
+
+        The per-request gate writes the event when it refuses a call, but a
+        paused controller stops before attempting one — without this entry
+        point the audit trail would stay empty on a quiet daemon. Deduplicated
+        in-process by day and in SQLite by the event row, so callers may invoke
+        it on every loop tick.
+        """
+
+        if self._daily_budget_cny <= 0:
+            return
+        snapshot = self.daily_budget_snapshot()
+        if snapshot["llm_daily_budget_state"] != "exceeded":
+            return
+        raw_spend = snapshot["llm_today_cost_cny"]
+        spend = float(raw_spend) if isinstance(raw_spend, int | float) else 0.0
+        self._note_daily_budget_exceeded(
+            spend=spend,
+            day=str(snapshot["llm_daily_budget_day"]),
+        )
+
+    def _admit_daily_budget(self, *, caller: str) -> None:
+        """Refuse a request whose admitted spend already reached today's cap.
+
+        The check uses *accrued* spend, not a reservation: the request that
+        crosses the line still goes out, so the cap can overshoot by one call
+        (the largest single-call cost is bounded by ``EXPENSIVE_CALL_CNY_THRESHOLD``
+        for most workloads). A reservation scheme was rejected because prompt
+        token counts are unknown before the provider responds, and a wrong
+        reservation would either over-block or silently admit.
+        """
+
+        if self._daily_budget_cny <= 0:
+            return
+        snapshot = self.daily_budget_snapshot()
+        if snapshot["llm_daily_budget_state"] != "exceeded":
+            return
+        raw_spend = snapshot["llm_today_cost_cny"]
+        spend = float(raw_spend) if isinstance(raw_spend, int | float) else 0.0
+        day = str(snapshot["llm_daily_budget_day"])
+        self._note_daily_budget_exceeded(spend=spend, day=day)
+        if self._daily_budget_on_exceed == "warn":
+            return
+        raise LLMDailyBudgetExceededError(
+            f"Daily LLM budget exhausted for caller {caller!r}: "
+            f"today ¥{spend:.4f} / ¥{self._daily_budget_cny:.2f} "
+            f"(budget_on_exceed={self._daily_budget_on_exceed}). "
+            "Raise scheduler.daily_budget_cny, set it to 0 to disable the cap, "
+            "or wait for the next local calendar day."
+        )
+
+    def _note_daily_budget_exceeded(
+        self,
+        *,
+        spend: float,
+        day: str,
+    ) -> None:
+        """Log and persist the ``budget_exceeded`` event once per local day."""
+
+        if self._daily_budget_warned_day == day:
+            return
+        self._daily_budget_warned_day = day
+        logger.warning(
+            "Daily LLM spend ¥%.4f reached the ¥%.2f cap (%s); mode=%s. "
+            "llm_usage is an estimate — calibrate llm.cost_multiplier if the "
+            "provider invoice differs.",
+            spend,
+            self._daily_budget_cny,
+            day,
+            self._daily_budget_on_exceed,
+        )
+        ledger = self._daily_spend_ledger
+        if ledger is None:
+            return
+        try:
+            ledger.record_exceeded(
+                spend_cny=spend,
+                limit_cny=self._daily_budget_cny,
+                on_exceed=self._daily_budget_on_exceed,
+            )
+        except Exception:
+            logger.warning("Failed to persist budget_exceeded event", exc_info=True)
+
     def classify(self, caller: str) -> LLMTrafficClass:
         tag = caller.strip()
         if is_interactive_caller(tag):
@@ -644,18 +826,26 @@ class LLMConcurrencyGate:
         uses_background = traffic is not LLMTrafficClass.INTERACTIVE and not bypass_background
         if uses_background:
             async with self._background.slot(traffic, priority), self._total.slot(priority):
-                # Counted and admitted for daemon/background LLM requests; the
-                # reservation happens after slot acquisition so a queued or
-                # cancelled call never consumes the window budget. Interactive
-                # user requests are deliberately excluded.
+                # Money cap first: a request refused by the daily budget must
+                # not also burn a slot in the call-count window. Both checks
+                # run after slot acquisition so a queued or cancelled call
+                # never consumes budget.
+                self._admit_daily_budget(caller=caller)
+                # Counted and admitted for daemon/background LLM requests.
+                # Interactive user requests are deliberately excluded.
                 self._admit_background_call(caller=caller)
                 yield
             return
         async with self._total.slot(priority):
+            # ``stop`` is the only mode that refuses user-initiated calls:
+            # ``pause`` parks automation but keeps chat/settings alive, which
+            # is the whole point of not killing the process (issue #353).
+            if self._daily_budget_on_exceed == "stop":
+                self._admit_daily_budget(caller=caller)
             yield
 
-    def status_payload(self) -> dict[str, int | str | bool]:
-        return {
+    def status_payload(self) -> dict[str, int | float | str | bool]:
+        payload: dict[str, int | float | str | bool] = {
             "llm_total_concurrency": self.total_concurrency,
             "llm_background_concurrency": self.background_concurrency,
             "llm_total_active": self._total.active,
@@ -679,3 +869,5 @@ class LLMConcurrencyGate:
             ),
             "llm_background_budget_shared": self._budget_ledger is not None,
         }
+        payload.update(self.daily_budget_snapshot())
+        return payload

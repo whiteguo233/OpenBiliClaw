@@ -196,6 +196,7 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 | 蓝鱼实验室设置 | 🧪 | 设置页新增「养蓝色大肥鱼」Tab（`assets/js/fish-settings.js`，数据按 Tab 懒加载）：总开关 / 只预览 / 独立小号 Cookie 保存与校验 / 可编辑人设、说话规矩与可选受众（只回哪类人） / 配额 / 预览一轮 / 发一轮 / 最近账本。全部走 `/api/fish/*`，不进全局 `PUT /api/config` 保存流程，鱼的 Cookie 与实验室字段也不混进主配置表单 |
 | 审批拒绝草稿 | ✅ | 与移动 Web / popup 共用 `agent-chat.js` 的拒绝编辑保留助手，轮询和过程重绘保留原因输入与焦点；终态更新不会复活旧操作按钮 |
 | 聊天提示条避让 | ✅ | 聊天页提示条固定在输入区上方且不接收指针事件，避免遮挡卡片或输入区、悬停导致提示长期不消失；其他页面仍可点击关闭与悬停暂停。`scripts/browser/chat-toast-hit-test.js` 验证真实 CSS 下的点击穿透 |
+| 每日 LLM 花费上限 | ✅ | 「设置 → 调度」新增“每日 LLM 花费上限（¥）”数字输入与“超限时”下拉（暂停后台 / 仅提醒 / 全部停止），随 `PUT /api/config` 保存；下方状态行读 `/api/runtime-status` 的 `llm_today_cost_cny` / `llm_daily_budget_cny` / `llm_daily_budget_state`，超限标红并说明当前模式。`normalizeRuntimeStatus()` 与 popup 一样是显式白名单，新增字段必须同时登记，否则状态行恒为 0 |
 
 配置状态接口：`GET /api/config/apply-status` 的 `state/requested_revision/applied_revision/message/error` 为权威快照。仅当前保存待应用时轮询，同一时间最多一个请求；终态和旧修订过滤沿用现有规则。此修复只涉及桌面 Web（含安装版打开的网页），移动 Web、插件 popup 与 CLI 不使用这个保存栏；不改后端应用流程、配置或安装器。
 

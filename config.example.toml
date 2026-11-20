@@ -140,6 +140,10 @@ concurrency = 3
 # Applies to OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter /
 # OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
 timeout = 1200
+# 估算校准系数（issue #353）。llm_usage 的费用来自静态价目表；如果实测账单
+# 稳定地是估算的 N 倍（尤其走 openai_compatible / 中转时），把这里设成 N，
+# 写入的 estimated_cost_cny 与「今日已花」会跟着校准。允许 0.1..20，默认 1.0。
+cost_multiplier = 1.0
 # 新实例请直接在桌面设置页创建。手工配置时复制下面的完整表，
 # 给每个渠道一个稳定且唯一的 ID，再把 ID 加进 default_chain：
 #
@@ -705,6 +709,18 @@ enabled = true
 # 0 disables this guard. Defaults are deliberately conservative for paid APIs.
 llm_budget_max_calls = 120
 llm_budget_window_seconds = 3600
+# Money-side cap (issue #353). Call count cannot bound spend: 120 short
+# evaluations and 120 long generations differ by ~10x. Checked against today's
+# llm_usage.estimated_cost_cny before every LLM call, on local calendar-day
+# boundaries. 0 (or negative) disables the cap.
+# budget_on_exceed:
+#   pause — refuse background automatic calls, keep chat/settings working
+#   stop  — refuse every call, including user-initiated ones
+#   warn  — allow everything, log + write one budget_exceeded event per day
+# The estimate is a static price table; if your invoice differs by a stable
+# factor, set llm.cost_multiplier (see [llm]) instead of shrinking this cap.
+daily_budget_cny = 0.0
+budget_on_exceed = "pause"
 # Optional cost-saving guard for daemon-owned background LLM / embedding work.
 # When true, refresh / pool precompute / account sync / speculation / proactive
 # push only run while the browser extension has an active runtime-stream

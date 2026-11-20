@@ -999,6 +999,11 @@ export function normalizeRuntimeStatus(status) {
     last_update_error: normalizeText(status?.last_update_error),
     backend_update_state: normalizeText(status?.backend_update_state) || "unknown",
     backend_update_reason: normalizeText(status?.backend_update_reason) || "none",
+    llm_daily_budget_cny: Number(status?.llm_daily_budget_cny ?? 0),
+    llm_daily_budget_on_exceed: normalizeText(status?.llm_daily_budget_on_exceed) || "pause",
+    llm_today_cost_cny: Number(status?.llm_today_cost_cny ?? 0),
+    llm_daily_budget_state: normalizeText(status?.llm_daily_budget_state) || "disabled",
+    llm_daily_budget_day: normalizeText(status?.llm_daily_budget_day),
   };
 }
 

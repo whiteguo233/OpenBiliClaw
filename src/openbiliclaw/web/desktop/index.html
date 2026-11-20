@@ -1483,6 +1483,9 @@
           <label class="settings-field"><span>浏览器关闭后</span><select id="pauseDisconnect"><option value="pause">暂停后台</option><option value="keep">继续运行</option></select></label>
           <label class="settings-field"><span>断开宽限秒数</span><input id="extensionDisconnectGrace" inputmode="numeric" placeholder="90"></label>
           <label class="settings-field"><span>候选池目标数</span><input id="poolTarget" value="600" inputmode="numeric"></label>
+          <label class="settings-field"><span>每日 LLM 花费上限（¥）</span><input id="dailyBudgetCny" inputmode="decimal" placeholder="0 = 不限" aria-label="每日 LLM 花费上限，单位元"></label>
+          <label class="settings-field"><span>超限时</span><select id="budgetOnExceed"><option value="pause">暂停后台</option><option value="warn">仅提醒</option><option value="stop">全部停止</option></select></label>
+          <p class="settings-note-inline" id="dailyBudgetStatus" style="grid-column: 1 / -1; margin: 0" aria-live="polite">今日花费按本地日历日统计；金额来自本地估算，偏差大时用 llm.cost_multiplier 校准。0 或留空 = 不限。</p>
           <label class="settings-field"><span>账户同步间隔小时</span><input id="accountSyncInterval" inputmode="numeric" placeholder="6"></label>
           <label class="settings-field"><span>自动更新</span><select id="autoUpdate"><option value="off">关闭</option><option value="on">开启</option></select></label>
           <label class="settings-field"><span>自动更新检查小时</span><input id="autoUpdateInterval" inputmode="numeric" placeholder="6"></label>
