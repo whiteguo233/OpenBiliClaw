@@ -437,3 +437,37 @@ def test_relay_does_not_inherit_a_provider_peak_schedule() -> None:
         )
         is False
     )
+
+
+def test_runtime_catalog_prefers_a_synced_data_dir_snapshot(tmp_path) -> None:
+    import json
+
+    synced = {
+        "providers": {
+            "deepseek": {
+                "models": {
+                    "deepseek-v4-flash": {
+                        "input": 0.15,
+                        "output": 0.6,
+                        "currency": "USD",
+                        "source": "models.dev",
+                    }
+                }
+            }
+        },
+        "fx": {"usd_cny": 7.0},
+    }
+    (tmp_path / "pricing_catalog.json").write_text(json.dumps(synced), encoding="utf-8")
+    config = types.SimpleNamespace(
+        llm=types.SimpleNamespace(
+            pricing=types.SimpleNamespace(
+                catalog_path="",
+                usd_cny_rate=7.2,
+                overrides=[],
+            )
+        ),
+        data_path=tmp_path,
+    )
+    catalog = catalog_for_runtime(config)
+    assert catalog.provider_count == 1
+    assert catalog.usd_cny == pytest.approx(7.2)

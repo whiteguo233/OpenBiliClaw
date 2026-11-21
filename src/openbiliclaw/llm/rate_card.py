@@ -657,9 +657,19 @@ def catalog_for_runtime(config: object) -> RateCatalog:
 
     llm = getattr(config, "llm", None)
     pricing = getattr(llm, "pricing", None)
-    path = str(getattr(pricing, "catalog_path", "") or "").strip() or None
+    catalog_path: str | Path | None = (
+        str(getattr(pricing, "catalog_path", "") or "").strip() or None
+    )
+    if catalog_path is None:
+        # ``openbiliclaw price --sync`` writes here so a refresh needs no
+        # config edit; the bundled snapshot remains the fallback.
+        data_path = getattr(config, "data_path", None)
+        if data_path is not None:
+            candidate = Path(str(data_path)) / "pricing_catalog.json"
+            if candidate.is_file():
+                catalog_path = candidate
     overrides = getattr(pricing, "overrides", ()) or ()
-    catalog = RateCatalog.load(path, overrides=overrides)
+    catalog = RateCatalog.load(catalog_path, overrides=overrides)
     fx = getattr(pricing, "usd_cny_rate", None)
     if fx:
         with suppress(TypeError, ValueError):
@@ -689,6 +699,49 @@ def primary_route(config: object) -> tuple[str, str]:
     provider_config = getattr(llm, provider, None)
     model = str(getattr(provider_config, "model", "") or "").strip()
     return provider, model
+
+
+def build_cost_ranker(
+    registry: object,
+    catalog: RateCatalog,
+    *,
+    now: datetime | None = None,
+) -> Callable[[list[str]], list[str]]:
+    """Build a chain ranker that picks the cheapest same-model instance.
+
+    Different models keep their configured order: swapping a flagship for a
+    cheap model changes output quality, so the ranker only reorders instances
+    that normalize to the same model id. Unknown prices score last (``inf``),
+    and a stable sort preserves the original order on ties.
+    """
+
+    def rank(order: list[str]) -> list[str]:
+        groups: dict[str, list[str]] = {}
+        model_order: list[str] = []
+        for name in order:
+            route = getattr(registry, "instance_route", None)
+            provider_type, model = route(name) if callable(route) else ("", "")
+            key = normalize_model_id(model) or f"instance:{name}"
+            if key not in groups:
+                groups[key] = []
+                model_order.append(key)
+            groups[key].append(name)
+
+        def score(name: str) -> float:
+            route = getattr(registry, "instance_route", None)
+            provider_type, model = route(name) if callable(route) else ("", "")
+            effective = catalog.resolve(provider_type, model, now=now)
+            if effective is None:
+                return float("inf")
+            native = effective.rates.input_per_mtok + effective.rates.output_per_mtok
+            return native * (catalog.usd_cny if effective.currency == "USD" else 1.0)
+
+        ranked: list[str] = []
+        for key in model_order:
+            ranked.extend(sorted(groups[key], key=score))
+        return ranked
+
+    return rank
 
 
 def peak_predicate_for_config(

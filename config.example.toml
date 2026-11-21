@@ -144,6 +144,8 @@ timeout = 1200
 # 稳定地是估算的 N 倍（尤其走 openai_compatible / 中转时），把这里设成 N，
 # 写入的 estimated_cost_cny 与「今日已花」会跟着校准。允许 0.1..20，默认 1.0。
 cost_multiplier = 1.0
+# 同模型多实例时，按当前价格把便宜的中转/官方实例排到链前面；不同模型永不互换。
+cost_aware_routing = false
 # 价格目录（issue #353 后续）。随包 catalog 由 models.dev 价目 + OpenRouter
 # 峰谷窗口生成；catalog_path 留空 = 使用内置快照。USD/CNY 汇率写死在这里，
 # 保证历史 llm_usage 行不会因为汇率变化而重算。
@@ -737,6 +739,9 @@ llm_budget_window_seconds = 3600
 # factor, set llm.cost_multiplier (see [llm]) instead of shrinking this cap.
 daily_budget_cny = 0.0
 budget_on_exceed = "pause"
+# 每次调用先预留的 worst-case 金额，避免并发请求同时读到同一份余额。
+# 实际费用仍以后续 llm_usage 行为准，预留只用于准入。
+daily_budget_reserve_cny = 0.10
 # 峰谷策略（issue #353 后续）。off = 保持旧行为；defer = 只在价格目录标记的
 # 低价窗口跑后台（维护全停，补货低于 peak_refill_floor 时紧急放行）；
 # prefer = 只停维护，补货保持新鲜。窗口来自 [llm.pricing] 的 catalog；

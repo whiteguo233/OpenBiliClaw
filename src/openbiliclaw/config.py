@@ -696,6 +696,10 @@ class LLMConfig:
     # bill is ~2x the estimate. Applied when writing ``llm_usage`` so the
     # daily spend cap and ``openbiliclaw cost`` agree with each other.
     cost_multiplier: float = 1.0
+    # Reorder same-model instances in the chain by their current catalog
+    # price (issue #353 follow-up). Off by default: model order/quality stays
+    # exactly as configured, and different models are never swapped.
+    cost_aware_routing: bool = False
     pricing: PricingConfig = field(default_factory=PricingConfig)
     # Non-empty = chat fallback on. There is no separate enable flag: the
     # legacy ``fallback_enabled`` bool was never consulted by the fallback
@@ -1376,6 +1380,9 @@ class SchedulerConfig:
     #   warn  — allow everything, log + event once per day
     daily_budget_cny: float = _DEFAULT_DAILY_BUDGET_CNY
     budget_on_exceed: str = _DEFAULT_BUDGET_ON_EXCEED
+    # Worst-case slice reserved per in-flight call so concurrent calls do not
+    # all read the same accrued spend and pass the cap together.
+    daily_budget_reserve_cny: float = 0.10
     # Peak-hour policy, driven by the rate catalog's tariff windows (or a
     # manual ``peak_hours`` override). ``off`` keeps the legacy always-run
     # behaviour; ``defer`` pauses maintenance and refill above the floor;
@@ -2839,6 +2846,7 @@ def _build_config(
             max_value=20.0,
         ),
         pricing=_build_pricing_config(llm_raw.get("pricing")),
+        cost_aware_routing=_coerce_bool(llm_raw.get("cost_aware_routing"), default=False),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         instance_routing=instance_routing,
         builtin_providers_version=(2 if llm_raw.get("builtin_providers_version") == 2 else 0),
@@ -3393,6 +3401,12 @@ def _build_config(
                     ),
                     "budget_on_exceed": _normalize_budget_on_exceed(
                         sched_raw.get("budget_on_exceed")
+                    ),
+                    "daily_budget_reserve_cny": _normalize_scheduler_float(
+                        sched_raw.get("daily_budget_reserve_cny"),
+                        default=0.10,
+                        min_value=0.0,
+                        max_value=100.0,
                     ),
                     "peak_policy": _normalize_peak_policy(sched_raw.get("peak_policy")),
                     "peak_hours": _normalize_peak_hours(sched_raw.get("peak_hours")),
@@ -7107,6 +7121,7 @@ def _render_config_toml(
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
                 f"cost_multiplier = {config.llm.cost_multiplier}",
+                f"cost_aware_routing = {_toml_bool(config.llm.cost_aware_routing)}",
                 "",
             ]
         )
@@ -7121,6 +7136,7 @@ def _render_config_toml(
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
                 f"fallback_provider = {_toml_string(config.llm.fallback_provider)}",
                 f"cost_multiplier = {config.llm.cost_multiplier}",
+                f"cost_aware_routing = {_toml_bool(config.llm.cost_aware_routing)}",
                 "",
             ]
         )
@@ -7447,6 +7463,7 @@ def _render_config_toml(
             f"llm_budget_window_seconds = {config.scheduler.llm_budget_window_seconds}",
             f"daily_budget_cny = {config.scheduler.daily_budget_cny}",
             f"budget_on_exceed = {_toml_string(config.scheduler.budget_on_exceed)}",
+            f"daily_budget_reserve_cny = {config.scheduler.daily_budget_reserve_cny}",
             f"peak_policy = {_toml_string(config.scheduler.peak_policy)}",
             f"peak_hours = {_toml_string(config.scheduler.peak_hours)}",
             f"peak_timezone_offset_minutes = {config.scheduler.peak_timezone_offset_minutes}",

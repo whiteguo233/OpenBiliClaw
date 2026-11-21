@@ -93,7 +93,7 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 | `config-export-legacy` | 导出可供旧二进制读取的固定 Provider 配置副本 | ✅ |
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
 | `cost [--days N] [--by all\|day\|provider\|caller]` | 查看 `llm_usage` 的 LLM 花费：今日已花 / 上限、按天、按 provider/model、按 caller（含 cache 命中率） | ✅ |
-| `price [--provider P] [--model M] [--at ISO8601]` | 查看价格目录：基础价、CNY 换算、当前峰谷档位、下一次切换、置信度 | ✅ |
+| `price [--provider P] [--model M] [--at ISO8601] [--sync]` | 查看/同步价格目录：基础价、CNY 换算、当前峰谷档位、下一次切换、置信度 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
 | `auth status` | 查看认证状态 | ✅ |
 | `login codex` | 导入 / 探测 / 查看 / 删除 Codex CLI 的 ChatGPT OAuth 凭据（实验） | ✅ |
@@ -346,6 +346,12 @@ LLM 价格目录 价格来源 / 峰谷档位 / 置信度
 - 置信度：`exact`（精确 provider/model）/ `user`（配置覆盖）/ `derived_relay`（同模型跨 provider 最高价）/ `fallback`（静态表）。
 - `derived_relay` / `fallback` 会额外提示：预算按保守上界处理，已知实际单价时写入 `[llm.pricing.overrides]`。
 - 目录里没有的模型明确提示“未找到”，不会显示 `¥0`。
+- `--sync` 联网拉取 models.dev + OpenRouter，原子写入 `data/pricing_catalog.json`（可用 `--output` 覆盖、`--timeout` 调整超时）。失败时旧文件保持不变。运行中的 daemon 在下一次配置热重载/重启后使用新目录，也可以把路径写进 `[llm.pricing].catalog_path`。
+
+```bash
+$ openbiliclaw price --sync
+已写入 .../data/pricing_catalog.json：16 providers / 2007 models / 4 个峰谷模型 / 54 个档位模型
+```
 
 ### `openbiliclaw auth login`
 

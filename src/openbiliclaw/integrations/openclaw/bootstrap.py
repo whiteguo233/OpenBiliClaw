@@ -118,6 +118,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     """Build the shared service bundle for the OpenClaw adapter."""
     config = load_config()
     llm_registry = build_llm_registry(config)
+    if bool(getattr(config.llm, "cost_aware_routing", False)):
+        from openbiliclaw.llm.rate_card import build_cost_ranker, catalog_for_runtime
+
+        llm_registry.route_ranker = build_cost_ranker(llm_registry, catalog_for_runtime(config))
     module_overrides = module_overrides_from_config(config)
     llm_concurrency = _llm_concurrency_from_config(config)
 

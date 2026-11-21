@@ -343,18 +343,21 @@ def test_daily_budget_and_multiplier_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text(
         '[scheduler]\ndaily_budget_cny = 12.5\nbudget_on_exceed = "stop"\n'
+        "daily_budget_reserve_cny = 0.25\n"
         "[llm]\ncost_multiplier = 1.8\n",
         encoding="utf-8",
     )
     config = load_config(path, consult_environment=False)
     assert config.scheduler.daily_budget_cny == pytest.approx(12.5)
     assert config.scheduler.budget_on_exceed == "stop"
+    assert config.scheduler.daily_budget_reserve_cny == pytest.approx(0.25)
     assert config.llm.cost_multiplier == pytest.approx(1.8)
 
     save_config(config, path)
     reloaded = load_config(path, consult_environment=False)
     assert reloaded.scheduler.daily_budget_cny == pytest.approx(12.5)
     assert reloaded.scheduler.budget_on_exceed == "stop"
+    assert reloaded.scheduler.daily_budget_reserve_cny == pytest.approx(0.25)
     assert reloaded.llm.cost_multiplier == pytest.approx(1.8)
 
 
@@ -372,3 +375,46 @@ def test_invalid_budget_values_fall_back_to_safe_defaults(tmp_path: Path) -> Non
     assert config.scheduler.daily_budget_cny == 0.0
     assert config.scheduler.budget_on_exceed == "pause"
     assert config.llm.cost_multiplier == 1.0
+
+
+async def test_reservations_stop_concurrent_calls_from_sharing_the_cap(
+    usage_db: Database, tmp_path: Path
+) -> None:
+    """Two in-flight calls must not both read the same accrued spend."""
+
+    gate = LLMConcurrencyGate(
+        4,
+        daily_budget_cny=0.15,
+        daily_budget_on_exceed="pause",
+        daily_budget_reserve_cny=0.10,
+        daily_budget_ledger=DailySpendLedger(usage_db._db_path),
+    )
+
+    async with gate.slot(caller="soul.insight"):
+        assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == pytest.approx(0.10)
+        with pytest.raises(LLMDailyBudgetExceededError) as excinfo:
+            async with gate.slot(caller="soul.insight"):
+                pass
+        assert "reserved in flight" in str(excinfo.value)
+
+    # The first call released its reservation; the next one is admitted.
+    async with gate.slot(caller="soul.insight"):
+        pass
+    assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == pytest.approx(0.0)
+
+
+async def test_warn_mode_does_not_reserve(usage_db: Database, tmp_path: Path) -> None:
+    _insert_spend(usage_db, when=_FIXED_NOW, cost=0.02)
+    gate = _gate(tmp_path, limit=0.01, mode="warn", db=usage_db)
+    gate.configure_daily_budget(limit_cny=0.01, on_exceed="warn", reserve_cny=0.10)
+    async with gate.slot(caller="soul.insight"):
+        assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == pytest.approx(0.0)
+
+
+async def test_stop_mode_reserves_interactive_calls_too(usage_db: Database, tmp_path: Path) -> None:
+    gate = _gate(tmp_path, limit=0.15, mode="stop", db=usage_db)
+    gate.configure_daily_budget(limit_cny=0.15, on_exceed="stop", reserve_cny=0.10)
+    async with gate.slot(caller="soul.dialogue"):
+        with pytest.raises(LLMDailyBudgetExceededError):
+            async with gate.slot(caller="soul.dialogue"):
+                pass

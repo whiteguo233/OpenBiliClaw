@@ -235,6 +235,7 @@ def test_scheduler_config_response_exposes_daily_and_peak_fields() -> None:
     out = SchedulerConfigOut()
     assert out.daily_budget_cny == 0.0
     assert out.budget_on_exceed == "pause"
+    assert out.daily_budget_reserve_cny == 0.10
     assert out.peak_policy == "off"
     assert out.peak_hours == ""
     assert out.peak_timezone_offset_minutes == 480

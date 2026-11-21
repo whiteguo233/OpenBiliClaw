@@ -758,6 +758,9 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 - `RateCard.effective(now, prompt_tokens)` 同时应用长上下文档位与 UTC 峰谷窗口；DeepSeek 的窗口来自 OpenRouter 路由（工作日 UTC 01–04、06–10 为 2x，= 北京时间 09–12、14–18），无窗口的 provider 不会被假装有谷时。
 - `UsageRecorder` 有 catalog 时走 catalog 计费，并把 `exact` / `derived_relay` / `user` / `fallback` 写入 `llm_usage.cost_confidence`；`openbiliclaw cost` 会提示低置信花费占比。`openbiliclaw price --provider … --model …` 可查看当前档位、下一次切换与 CNY 换算。
 - 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步。
+- 目录可用 `openbiliclaw price --sync` 刷新到 `data/pricing_catalog.json`（原子写，失败保留旧文件）；`catalog_for_runtime` 在 `catalog_path` 为空时优先读该文件，否则用随包快照。
+- `llm.cost_aware_routing`（默认关）会在同模型多实例之间按当前价格重排调用链；不同模型永不互换，未知价格排最后，排序器异常回退配置顺序。
+- 每日预算准入带 per-call 预留（`scheduler.daily_budget_reserve_cny`）：并发请求各自预留 worst-case 金额，避免同时读到同一份已花余额；实际费用仍在响应后按 `EffectiveRate` 落账。
 - 峰谷调度已接线（PR #191 的调度骨架）：`scheduler.peak_policy=defer|prefer` 时，`ContinuousRefreshController` 用 catalog 的 `is_peak()`（或手动 `peak_hours`）判断当前是否高峰，再交给 `background_llm_work_allowed()` 的补货水位/交互豁免逻辑；默认 `off`。
 
 导演前台补齐草稿与后台预排共用 `complete_structured_task`，有独立规划截止时间，不注入 core memory；Jev 是另一个 typed decision provider，不进入本 LLM fallback 链或共享它的配额统计。内容摘要与实际反馈不等于 Soul 全画像，详见[导演](director.md)。

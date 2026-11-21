@@ -22228,6 +22228,7 @@ def create_app(
                 llm_budget_window_seconds=cfg.scheduler.llm_budget_window_seconds,
                 daily_budget_cny=cfg.scheduler.daily_budget_cny,
                 budget_on_exceed=cfg.scheduler.budget_on_exceed,
+                daily_budget_reserve_cny=cfg.scheduler.daily_budget_reserve_cny,
                 peak_policy=cfg.scheduler.peak_policy,
                 peak_hours=cfg.scheduler.peak_hours,
                 peak_timezone_offset_minutes=cfg.scheduler.peak_timezone_offset_minutes,
@@ -25657,6 +25658,7 @@ def create_app(
                 "llm_budget_window_seconds",
                 "daily_budget_cny",
                 "budget_on_exceed",
+                "daily_budget_reserve_cny",
                 "peak_policy",
                 "peak_hours",
                 "peak_timezone_offset_minutes",
@@ -25773,6 +25775,17 @@ def create_app(
                                 + ", ".join(sorted(BUDGET_ON_EXCEED_MODES)),
                             )
                         setattr(cfg.scheduler, key, mode)
+                    elif key == "daily_budget_reserve_cny":
+                        setattr(
+                            cfg.scheduler,
+                            key,
+                            _normalize_scheduler_float(
+                                sdata[key],
+                                default=0.10,
+                                min_value=0.0,
+                                max_value=100.0,
+                            ),
+                        )
                     elif key == "peak_policy":
                         policy = str(sdata[key] or "").strip().lower()
                         if policy not in PEAK_POLICIES:

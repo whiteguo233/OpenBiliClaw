@@ -855,7 +855,13 @@ def _build_registry() -> Any:
     from openbiliclaw.config import load_config
     from openbiliclaw.llm import build_llm_registry
 
-    return build_llm_registry(load_config())
+    config = load_config()
+    registry = build_llm_registry(config)
+    if bool(getattr(config.llm, "cost_aware_routing", False)):
+        from openbiliclaw.llm.rate_card import build_cost_ranker, catalog_for_runtime
+
+        registry.route_ranker = build_cost_ranker(registry, catalog_for_runtime(config))
+    return registry
 
 
 def _build_llm_concurrency_gate() -> Any:
@@ -6785,17 +6791,55 @@ def price(
     ),
     model: str = typer.Option("", "--model", help="模型 ID，如 deepseek-v4-flash"),
     at: str = typer.Option("", "--at", help="评估时刻(ISO8601)，默认当前 UTC"),
+    sync: bool = typer.Option(
+        False,
+        "--sync",
+        help="联网拉取 models.dev + OpenRouter，原子写入 data/pricing_catalog.json",
+    ),
+    output: str = typer.Option("", "--output", help="--sync 的输出路径（默认 data 目录）"),
+    timeout: float = typer.Option(60.0, "--timeout", help="--sync 的 HTTP 超时秒数"),
 ) -> None:
-    """查看 LLM 价格目录：基础价、置信度、当前峰谷档位与下一次切换。
+    """查看/同步 LLM 价格目录：基础价、置信度、当前峰谷档位与下一次切换。
 
     数据来自随包 catalog（models.dev 价目 + OpenRouter 峰谷窗口），可用
     ``[llm.pricing]`` 覆盖。未配置或价格未知时明确显示低置信，不把 0 当免费。
+    ``--sync`` 会联网刷新到 data 目录，旧文件在失败时保持不变。
     """
+    from pathlib import Path
+
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.rate_card import catalog_for_runtime
 
     _print_page_title("LLM 价格目录", "价格来源 / 峰谷档位 / 置信度")
     config = load_config()
+
+    if sync:
+        from openbiliclaw.llm.price_catalog import sync_price_catalog
+
+        destination = (
+            Path(output).expanduser() if output else Path(config.data_path) / "pricing_catalog.json"
+        )
+        try:
+            sync_summary = sync_price_catalog(destination, timeout=timeout)
+        except Exception as exc:
+            _print_status_panel(
+                "error",
+                "价格目录同步失败",
+                f"{exc}\n旧目录未改动；请检查网络或代理设置后重试。",
+            )
+            raise typer.Exit(code=1) from exc
+        console.print(
+            f"已写入 [bold]{sync_summary['path']}[/bold]："
+            f"{sync_summary['providers']} providers / {sync_summary['offers']} models / "
+            f"{sync_summary['tariffs']} 个峰谷模型 / {sync_summary['tiers']} 个档位模型"
+        )
+        console.print(
+            "[dim]运行中的 daemon 在下一次配置热重载或重启后使用新目录；"
+            "也可以把路径写进 \\[llm.pricing].catalog_path。[/dim]"
+        )
+        return
+
+    from openbiliclaw.llm.rate_card import catalog_for_runtime
+
     catalog = catalog_for_runtime(config)
 
     summary = Table(show_header=False, box=None)

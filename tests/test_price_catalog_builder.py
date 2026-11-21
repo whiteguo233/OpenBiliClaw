@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-_SCRIPT = ROOT / "scripts" / "build_llm_price_catalog.py"
-_spec = importlib.util.spec_from_file_location("build_llm_price_catalog", _SCRIPT)
-assert _spec is not None and _spec.loader is not None
-builder = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(builder)
+from openbiliclaw.llm import price_catalog as builder
 
 
 def _models_dev() -> dict[str, Any]:
@@ -134,3 +127,44 @@ def test_catalog_records_sources_and_aliases() -> None:
     assert catalog["sources"]["models_dev"]["providers"] == 2
     assert catalog["sources"]["openrouter"]["models"] == 2
     assert catalog["aliases"]["deepseek-v4.1-flash"] == "deepseek-v4-flash"
+
+
+def test_sync_price_catalog_writes_an_atomic_snapshot(tmp_path) -> None:
+    import json
+
+    payloads = {
+        builder.DEFAULT_MODELS_DEV_URL: _models_dev(),
+        builder.DEFAULT_OPENROUTER_URL: _openrouter(),
+    }
+    destination = tmp_path / "pricing_catalog.json"
+
+    summary = builder.sync_price_catalog(
+        destination,
+        fetcher=payloads.__getitem__,
+        usd_cny_rate=7.3,
+    )
+
+    assert summary["path"] == str(destination)
+    assert summary["providers"] == 2
+    assert summary["offers"] >= 1
+    assert summary["tariffs"] == 1
+    catalog = json.loads(destination.read_text(encoding="utf-8"))
+    assert catalog["fx"]["usd_cny"] == 7.3
+    assert catalog["providers"]["deepseek"]["models"]["deepseek-v4-flash"]["input"] == 0.15
+
+
+def test_sync_failure_leaves_the_previous_catalog_untouched(tmp_path) -> None:
+    destination = tmp_path / "pricing_catalog.json"
+    destination.write_text("previous", encoding="utf-8")
+
+    def _boom(_url: str):
+        raise RuntimeError("network down")
+
+    try:
+        builder.sync_price_catalog(destination, fetcher=_boom)
+    except RuntimeError:
+        pass
+    else:  # pragma: no cover - defensive
+        raise AssertionError("sync should propagate the fetch failure")
+
+    assert destination.read_text(encoding="utf-8") == "previous"

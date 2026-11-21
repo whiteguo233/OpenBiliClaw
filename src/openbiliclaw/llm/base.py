@@ -817,6 +817,10 @@ class LLMRegistry:
         # fallback chain — for example a legacy/injected Ollama instance
         # registered solely for embedding diagnostics.
         self._chat_disabled: set[str] = set()
+        # Optional cost-aware reordering hook (issue #353 follow-up). It may
+        # only permute the chain; unknown/dropped names are appended back so a
+        # buggy ranker can never disable a fallback.
+        self.route_ranker: Callable[[list[str]], list[str]] | None = None
 
     def register(
         self,
@@ -858,6 +862,28 @@ class LLMRegistry:
             " (default)" if default else "",
             "" if chat_capable else " [embedding-only]",
         )
+
+    def instance_route(self, instance_id: str) -> tuple[str, str]:
+        """Return ``(provider_type, model)`` for one registered instance."""
+
+        name = str(instance_id or "").strip().lower()
+        provider = self._providers.get(name)
+        model = str(getattr(provider, "model", "") or "") if provider is not None else ""
+        return self._provider_types.get(name, ""), model
+
+    def _apply_route_ranker(self, order: list[str]) -> list[str]:
+        """Permute a chain through ``route_ranker`` without dropping names."""
+
+        ranker = self.route_ranker
+        if ranker is None or len(order) <= 1:
+            return order
+        try:
+            ranked = [str(name) for name in ranker(list(order))]
+        except Exception:
+            logger.warning("Cost-aware route ranker failed; keeping chain order", exc_info=True)
+            return order
+        filtered = [name for name in ranked if name in order]
+        return filtered + [name for name in order if name not in filtered]
 
     def configure_chain(self, instance_ids: list[str]) -> None:
         """Set the ordered global route without silently adding providers."""
@@ -952,6 +978,7 @@ class LLMRegistry:
                 continue
             seen.add(instance_id)
             order.append(instance_id)
+        order = self._apply_route_ranker(order)
 
         for position, provider_name in enumerate(order):
             has_next = position + 1 < len(order)
@@ -1127,6 +1154,7 @@ class LLMRegistry:
                 continue
             seen.add(instance_id)
             order.append(instance_id)
+        order = self._apply_route_ranker(order)
 
         supports_any = False
         for position, provider_name in enumerate(order):
@@ -1486,6 +1514,7 @@ class LLMRegistry:
                 continue
             seen.add(instance_id)
             order.append(instance_id)
+        order = self._apply_route_ranker(order)
 
         supports_any = False
         for position, provider_name in enumerate(order):

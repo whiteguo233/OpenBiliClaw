@@ -2766,6 +2766,7 @@ class SchedulerConfigOut(BaseModel):
     llm_budget_window_seconds: int = 3600
     daily_budget_cny: float = 0.0
     budget_on_exceed: str = "pause"
+    daily_budget_reserve_cny: float = 0.10
     peak_policy: str = "off"
     peak_hours: str = ""
     peak_timezone_offset_minutes: int = 480

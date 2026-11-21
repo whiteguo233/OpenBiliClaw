@@ -305,8 +305,8 @@ PR #191（`feat/peak-hour-deferral`，commit `54f0ec03`）已经在 `presence.py
 | P1（已完成） | `rate_card.py` + 生成脚本 + 随包 catalog + `openbiliclaw price`；运行时计费未切换 | 低 |
 | P2（已完成） | `UsageRecorder` 改用 `EffectiveRate`；`llm_usage` 增加 `cost_confidence`；预算安全系数改为“未知中转用最高价” | 中 |
 | P3（已完成） | 合入 PR #191 的调度骨架；`peak_policy` + catalog 窗口；保留 floor | 中 |
-| P4 | `price sync` + 设置页价格来源 / 置信度 / 今日花费明细 | 中 |
-| P5 | 预留式准入 + cost-aware routing（同模型选便宜实例） | 高 |
+| P4（已完成） | `price --sync` 原子刷新 data 目录 catalog；`cost` 显示低置信花费；设置页策略/水位/手动窗口 | 中 |
+| P5（已完成） | `daily_budget_reserve_cny` per-call 预留；`llm.cost_aware_routing` 同模型按当前价格重排 | 高 |
 
 P1/P2 做完，issue #353 的 ×2 偏差就从“手动 multiplier”变成“目录自动校准”；P3 做完才有真正的“只在谷时跑”。
 
