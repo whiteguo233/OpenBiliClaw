@@ -603,10 +603,10 @@ async def test_switching_to_warn_with_an_active_hold_is_not_exceeded(
 ) -> None:
     gate = LLMConcurrencyGate(
         2,
-        daily_budget_cny=0.15,
+        daily_budget_cny=0.10,
         daily_budget_reserve_cny=0.10,
         daily_budget_ledger=DailySpendLedger(usage_db._db_path),
     )
     async with gate.slot(caller="soul.insight"):
-        gate.configure_daily_budget(limit_cny=0.15, on_exceed="warn", reserve_cny=0.10)
+        gate.configure_daily_budget(limit_cny=0.10, on_exceed="warn", reserve_cny=0.10)
         assert gate.daily_budget_snapshot()["llm_daily_budget_state"] == "ok"

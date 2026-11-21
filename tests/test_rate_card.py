@@ -718,6 +718,7 @@ def test_malformed_catalog_fields_degrade_to_empty_lookups() -> None:
     )
     assert catalog.resolve("deepseek", "deepseek-v4-flash") is None
     assert catalog.usd_cny == 7.2
+    assert RateCatalog.from_dict({"fx": {"usd_cny": float("inf")}}).usd_cny == 7.2
 
 
 def test_packaging_spec_bundles_the_pricing_catalog() -> None:
@@ -772,6 +773,33 @@ def test_nested_malformed_catalog_entries_do_not_raise() -> None:
     effective = catalog.resolve("deepseek", "m", prompt_tokens=2000)
     assert effective is not None
     assert effective.rates.cache_read_per_mtok is None
+
+
+def test_overflowing_json_numbers_do_not_raise() -> None:
+    huge = float("1e309")
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "input": 1.0,
+                        "output": 2.0,
+                        "start": huge,
+                        "end": 60,
+                        "days": [huge],
+                    }
+                ]
+            },
+            "tiers": {"m": [{"min_prompt_tokens": huge, "input": 1.0, "output": 2.0}]},
+        }
+    )
+    effective = catalog.resolve("deepseek", "m", prompt_tokens=1000)
+    assert effective is not None
+    assert effective.tariff_label == "base"
+    assert effective.tier_label == ""
 
 
 def test_malformed_override_cache_prices_do_not_raise() -> None:

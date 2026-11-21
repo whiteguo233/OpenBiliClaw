@@ -322,7 +322,7 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
     try:
         start = int(raw["start"])
         end = int(raw["end"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
     if not (0 <= start < 1440 and 0 <= end <= 1440) or start == end:
         return None
@@ -332,10 +332,14 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
         for day in days_raw:
             try:
                 weekday = int(day)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
             if 0 <= weekday <= 6:
                 days.add(weekday)
+        if not days:
+            # A present-but-invalid weekday list must not silently turn a
+            # weekend-only window into an every-day window.
+            return None
     try:
         multiplier = float(raw.get("multiplier") or 1.0)
     except (TypeError, ValueError):
@@ -420,7 +424,7 @@ class RateCatalog:
                     continue
                 try:
                     threshold = int(threshold_raw)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     continue
                 if rates is None or threshold <= 0:
                     continue
@@ -434,9 +438,10 @@ class RateCatalog:
 
         fx = _mapping(data.get("fx"))
         try:
-            self._usd_cny = float(fx.get("usd_cny") or 7.2)
+            usd_cny = float(fx.get("usd_cny") or 7.2)
         except (TypeError, ValueError):
-            self._usd_cny = 7.2
+            usd_cny = 7.2
+        self._usd_cny = usd_cny if math.isfinite(usd_cny) and usd_cny > 0 else 7.2
 
     # -- construction -------------------------------------------------
 
