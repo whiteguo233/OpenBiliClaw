@@ -2595,9 +2595,11 @@ def _optional_non_negative_float(value: object) -> float | None:
         return None
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return number if number >= 0 else None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
 
 
 def _build_pricing_config(raw: object) -> PricingConfig:

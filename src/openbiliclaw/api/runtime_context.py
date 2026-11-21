@@ -1511,7 +1511,6 @@ class RuntimeContext:
         from openbiliclaw.llm.rate_card import (
             build_cost_ranker,
             catalog_for_runtime,
-            peak_predicate_for_config,
         )
 
         new_rate_catalog = catalog_for_runtime(new_config)
@@ -1522,7 +1521,6 @@ class RuntimeContext:
             cost_multiplier=float(getattr(new_config.llm, "cost_multiplier", 1.0) or 1.0),
             catalog=new_rate_catalog,
         )
-        new_peak_predicate = peak_predicate_for_config(new_config, new_rate_catalog)
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_gate = self.llm_concurrency_gate or LLMConcurrencyGate(llm_concurrency)
@@ -2480,7 +2478,9 @@ class RuntimeContext:
             init_active_check=lambda: self.init_coordinator.init_active(),
             task_registry=self.task_registry,
             llm_concurrency_gate=new_llm_gate,
-            peak_tariff_predicate=new_peak_predicate,
+            # Bound method, not the snapshot predicate: a later default-chain
+            # switch must change the controller's peak schedule too.
+            peak_tariff_predicate=lambda: bool(self._peak_active_now()),
         )
 
         from openbiliclaw.runtime.candidate_eval import (

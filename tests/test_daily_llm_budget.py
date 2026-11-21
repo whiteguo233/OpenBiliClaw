@@ -640,3 +640,25 @@ def test_absurd_usage_multiplier_falls_back_to_one() -> None:
     from openbiliclaw.llm.usage_recorder import UsageRecorder
 
     assert UsageRecorder(sink=None, cost_multiplier=1e308)._cost_multiplier == 1.0
+
+
+def test_oversized_pricing_override_is_ignored(tmp_path: Path) -> None:
+    from openbiliclaw.config import load_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[[llm.pricing.overrides]]\n"
+        'provider = "deepseek"\n'
+        'model = "deepseek-v4-flash"\n'
+        f"input = {10**400}\n"
+        "output = 1.0\n",
+        encoding="utf-8",
+    )
+    config = load_config(path, consult_environment=False)
+    assert config.llm.pricing.overrides == []
+
+
+def test_usage_recorder_accepts_huge_integer_multiplier() -> None:
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+
+    assert UsageRecorder(sink=None, cost_multiplier=10**400)._cost_multiplier == 1.0

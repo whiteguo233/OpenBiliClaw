@@ -268,7 +268,7 @@ def build_tiers(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         for override in overrides:
             try:
                 threshold = int(override.get("min_prompt_tokens"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
             if threshold <= 0:
                 continue

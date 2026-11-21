@@ -438,3 +438,25 @@ def test_sync_skips_upstream_integers_that_overflow_float(tmp_path) -> None:
     )
     assert summary["offers"] == 1
     assert "bad" not in destination.read_text(encoding="utf-8")
+
+
+def test_overflowing_openrouter_tier_threshold_is_skipped() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "openai/gpt-tiered",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.000002",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": float("1e309"),
+                            "prompt": "0.000002",
+                            "completion": "0.000004",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+    assert builder.build_tiers(payload) == {}
