@@ -1043,7 +1043,7 @@ particular website trial will succeed.
 ### Windows Ego Lite Beta
 
 1. Install the official [Windows Beta](https://www.egolite.ai/document/en/docs/windows/quick-start).
-   Complete the browser's first-run setup and skip importing personal data for testing.
+   OpenBiliClaw can prepare its own profile directly after installation, before the official browser is first opened.
 2. Open Settings → Sources → Custom sources and select **Prepare Ego Lite**, or run
    the following commands from the branch checkout on a source installation.
 
@@ -1052,8 +1052,9 @@ particular website trial will succeed.
    uv run openbiliclaw sources prepare-ego
    ```
 
-Preparation verifies the installed browser and CLI using Authenticode and the Citro Labs signer,
-then starts a separate, headless named instance with a private profile beside the database.
+Preparation finds the installer-registered application directory and matching CLI version when the
+active-version junction and PATH entry are absent. It verifies both binaries with Authenticode and
+the Citro Labs signer, then starts a headless named instance with a private database-side profile.
 The Windows browser starts with a headless blank tab so its named service stays available.
 Before creating any workflow tab, the native Node process proves its parent PID and executable
 match the browser launched by the backend. Windows process creation time fences PID reuse.

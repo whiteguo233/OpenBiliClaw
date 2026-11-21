@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import re
 import shutil
 from contextlib import suppress
 from ctypes import wintypes
@@ -26,6 +27,17 @@ def installation() -> tuple[Path, Path] | None:
         cli_candidates.append(Path(path_cli))
     cli = _installed_file([Path(cli_override)] if cli_override else cli_candidates)
     if cli is None:
+        if cli_override:
+            return None
+        # Silent installs register their versioned binaries before Ego's UI
+        # creates the active-version junction or adds the CLI to PATH.
+        for directory, version in _registered_versions():
+            app = _installed_file([directory / "ego.exe"])
+            if not app or (app_override and app != _installed_file([Path(app_override)])):
+                continue
+            registered_cli = _installed_file([directory / version / "ego-browser.exe"])
+            if registered_cli and registered_cli != app:
+                return registered_cli, app
         return None
 
     roots = [local]
@@ -59,6 +71,30 @@ def _installed_file(candidates: list[Path]) -> Path | None:
             if path.is_absolute() and path.suffix.lower() == ".exe" and path.is_file():
                 return path.resolve(strict=True)
     return None
+
+
+def _registered_versions() -> list[tuple[Path, str]]:
+    """Read the official installer's application directory and exact version."""
+    if os.name != "nt":
+        return []
+    winreg: Any = import_module("winreg")
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Citro Labs ego lite"
+    registrations = []
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (0, winreg.KEY_WOW64_32KEY):
+            with (
+                suppress(OSError),
+                winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | view) as key,
+            ):
+                directory, _ = winreg.QueryValueEx(key, "InstallLocation")
+                version, _ = winreg.QueryValueEx(key, "DisplayVersion")
+                if (
+                    isinstance(directory, str)
+                    and isinstance(version, str)
+                    and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,5}", version)
+                ):
+                    registrations.append((Path(os.path.expandvars(directory.strip('"'))), version))
+    return registrations
 
 
 def _app_paths() -> list[Path]:

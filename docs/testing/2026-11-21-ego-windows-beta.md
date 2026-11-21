@@ -94,3 +94,16 @@
 Windows 源码引导在官方 Ego 尚未安装时报告 `windows_ego_beta_manual_install`。官方 `0.6.3.17` 安装器的默认系统级首装此前触发了 UAC。上游讨论记录了 `--prefers-user --silent` 的用户级用法。本机已有系统级安装，缺少干净 Windows 环境，静默参数的干净首装未实测。[上游安装讨论](https://github.com/citrolabs/ego-lite/issues/524)
 
 Windows 安装识别与部署准备相关回归 33 项通过。
+
+### 本机清理后静默重装复测
+
+2026-11-22 在 Windows 11 Pro x64 `26300.10075` 上备份用户 profile、CLI 状态和用户级安装注册信息，卸载先前的系统级 Ego。复测前没有可用的浏览器、CLI 或 active-version 路径。测试从交互会话的未提权进程运行，`EnableLUA=1` 且 `PromptOnSecureDesktop=1`。
+
+| 检查 | 结果 |
+| --- | --- |
+| `egoliteSetup.exe --prefers-user --silent` | 签名有效的 `0.6.3.17` 安装器约 21.09 秒退出，退出码 0。103 次采样未发现可见安装窗口，也未检测到 UAC。浏览器和版本目录内的 CLI 安装到当前用户的 `LOCALAPPDATA`。 |
+| 官方首次引导 | 安装后继续观察 20 秒。官方浏览器未自动运行，active-version CLI 链接及 PATH 入口尚未出现。 |
+| 原代码初始化 | `serve-api` 首启显示 `installed=false`，没有创建专用 profile。根因是它在发现浏览器前先要求 CLI 已加入 PATH 或已生成 active-version 链接。 |
+| 修复后初始化 | 根据官方卸载注册项的 `InstallLocation` 和 `DisplayVersion` 选择同版本 CLI。官方浏览器仍未手动打开时，实际 `serve-api` 首启约 7.16 秒完成验签、专用 profile 和原生握手。状态为 `ready` 且 `available=true`，41 次窗口采样未发现可见主窗口。 |
+
+此轮复测在清理 Ego 安装状态后的本机执行，Windows 系统本身沿用原安装。先前系统级卸载需要一次 UAC 确认，静默安装命令在卸载完成后单独运行。

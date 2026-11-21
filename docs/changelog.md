@@ -5,6 +5,7 @@
 ## v0.3.239：Windows 安装路径、画像完整性与界面收紧（2026-11-16）
 
 - 增加本机官方 Ego Lite Windows Beta 实验适配。修复签名模块加载，使用无窗口空白页维持命名宿主，按父进程 PID、程序路径与创建时间验证连接。Windows 11 真机通过原生握手、公开网站试跑与自然调度，以及测试站登录接管和重启恢复。[验证记录](testing/2026-11-21-ego-windows-beta.md)
+- Windows 直接从官方安装注册信息识别尚未首次打开的 Ego Lite，选择登记版本的 CLI。用户级静默重装后，OpenBiliClaw 首启可自动验签并初始化专用 profile。[静默重装验收](testing/2026-11-21-ego-windows-beta.md#本机清理后静默重装复测)
 - 桌面、后端和浏览器插件统一为 0.3.239。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。
 - 固定免费组件目录 `sponsored-runtime-2026-11-16.1`：五平台 manifest 兼容窗口为 0.3.239，Mac 两架构重新完成 Developer ID 签名与 Apple 公证；运行时源码仅更新 `rustix` 1.1.6 修补 RUSTSEC-2026-0486，协议、模型、额度与密钥 epoch 不变。
 - 安装包、容器、运行时与浏览器商店的各渠道回执见 [v0.3.239 发布记录](testing/2026-11-16-release-v0.3.239.md)。Firefox AMO 的 `0.3.239` 已公开，Chrome Web Store 已提交并处于 `PENDING_REVIEW`。首次尝试的 0.3.238 未发布任何资产，空发行页与标签已删除。

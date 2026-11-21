@@ -44,6 +44,30 @@ def test_installed_beta_paths_are_absolute_and_separate(tmp_path, monkeypatch):
     assert ego_windows.installation() is None
 
 
+def test_silent_install_resolves_registered_version_before_onboarding(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENBILICLAW_EGO_WINDOWS_CLI", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_EGO_WINDOWS_APP", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(ego_windows.shutil, "which", lambda _: None)
+    application = tmp_path / "Application"
+    app = application / "ego.exe"
+    cli = application / "0.6.3.17" / "ego-browser.exe"
+    cli.parent.mkdir(parents=True)
+    app.touch()
+    cli.touch()
+    stale_cli = application / "0.6.3.99" / "ego-browser.exe"
+    stale_cli.parent.mkdir()
+    stale_cli.touch()
+    monkeypatch.setattr(ego_windows, "_registered_versions", lambda: [(application, "0.6.3.17")])
+
+    assert ego_windows.installation() == (cli.resolve(), app.resolve())
+    monkeypatch.setenv("OPENBILICLAW_EGO_WINDOWS_CLI", str(application / "absent-cli.exe"))
+    assert ego_windows.installation() is None
+    monkeypatch.delenv("OPENBILICLAW_EGO_WINDOWS_CLI")
+    monkeypatch.setenv("OPENBILICLAW_EGO_WINDOWS_APP", str(application / "absent-app.exe"))
+    assert ego_windows.installation() is None
+
+
 async def test_windows_missing_beta_remains_read_only(windows_setup, monkeypatch):
     monkeypatch.setattr(ego_windows, "installation", lambda: None)
     manager = ego_setup.EgoSetupManager(windows_setup.root.parent)

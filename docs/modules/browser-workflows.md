@@ -56,11 +56,11 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 托管后台运行 | macOS 官方 Ego 应用以自身 `--headless=new` 模式完成首次设置、观察、采集和接管截图；不显示本机浏览器窗口，登录仍在用户主动打开的接管页完成，空闲回收规则不变 |
 | 代理合成 DNS | 本机域名解析全部落入 `198.18.0.0/15` 时，使用有界、TLS 校验的公共 DoH 重新验证；不将合成地址放行，私网／混合答案仍拒绝，网站路由不变 |
 | 用户采集上限 | 明确的中英文条数／页数上限在试采前收紧并保存；日期、频率不当作条数；Feed 同样执行 |
-| Windows Beta 托管执行 | 通过系统 PowerShell 安全模块校验已安装浏览器和 CLI 的 Authenticode 签名。命名宿主以专用 profile 与无窗口空白页启动。校验原生 Node 的父进程和映像，应用与 Node 之间使用一次一密的回环握手。官方 `0.6.3.17` 真机通过原生探测和真实网站试跑。 |
+| Windows Beta 托管执行 | 通过系统 PowerShell 安全模块校验已安装浏览器和 CLI 的 Authenticode 签名。官方 Ego 尚未首次打开时，可从 Windows 的安装注册信息识别浏览器及同版本 CLI。命名宿主以专用 profile 与无窗口空白页启动。校验原生 Node 的父进程和映像，应用与 Node 之间使用一次一密的回环握手。 |
 | 环境边界 | macOS 自动安装准备，Windows Beta 需手动安装，Linux/Docker 暂无原生宿主。 |
 | 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
 
-Windows 上 `EgoSetupManager.status()` 返回 `setup_mode=manual_install`。`await EgoSetupManager.prepare()` 验证签名、命名宿主与 Node 进程身份，握手失败时返回 `available=false` 和失败阶段。`EgoLiteWorkflowExecutor.open_session()` 在每个 Windows 会话创建 Task Space 前重新核验宿主身份。已发布 workflow 使用同一 `ego` 执行器 ID。设置页的域名直连偏好用于 macOS。
+Windows 上 `EgoSetupManager.status()` 返回 `setup_mode=manual_install`，只读识别已安装程序。`await EgoSetupManager.prepare()` 验证签名、命名宿主与 Node 进程身份，握手失败时返回 `available=false` 和失败阶段。`EgoLiteWorkflowExecutor.open_session()` 在每个 Windows 会话创建 Task Space 前重新核验宿主身份。已发布 workflow 使用同一 `ego` 执行器 ID。设置页的域名直连偏好用于 macOS。
 
 ## 公共接口
 
