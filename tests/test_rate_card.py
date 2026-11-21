@@ -825,6 +825,7 @@ def test_fractional_weekdays_are_rejected_not_truncated() -> None:
             "tariffs": {
                 "m": [
                     {
+                        "provider": "deepseek",
                         "input": 2.0,
                         "output": 4.0,
                         "start": 0,
@@ -850,6 +851,7 @@ def test_huge_json_integers_do_not_raise() -> None:
             "tariffs": {
                 "m": [
                     {
+                        "provider": "deepseek",
                         "input": 1.0,
                         "output": 2.0,
                         "start": huge,
@@ -867,3 +869,55 @@ def test_huge_json_integers_do_not_raise() -> None:
     assert effective.tariff_label == "base"
     assert effective.tier_label == ""
     assert catalog.usd_cny == 7.2
+
+
+def test_huge_offer_numbers_are_rejected() -> None:
+    huge = 10**400
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {},
+            "offers": {
+                "huge": {
+                    "count": 1,
+                    "input_max": huge,
+                    "output_max": huge,
+                    "cache_read_max": huge,
+                }
+            },
+        }
+    )
+    assert catalog.resolve("openai_compatible", "huge") is None
+
+
+def test_deeply_nested_catalog_file_falls_back(tmp_path) -> None:
+    nested = "[" * 2000 + "0" + "]" * 2000
+    path = tmp_path / "catalog.json"
+    path.write_text('{"providers": {"x": ' + nested + "}}", encoding="utf-8")
+    catalog = RateCatalog.load(path)
+    assert catalog.usd_cny == 7.2
+    assert catalog.resolve("deepseek", "m") is None
+
+
+def test_non_list_weekdays_are_rejected() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "provider": "deepseek",
+                        "input": 2.0,
+                        "output": 4.0,
+                        "start": 0,
+                        "end": 60,
+                        "days": 0.5,
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 29, 0, 30))
+    assert effective is not None
+    assert effective.tariff_label == "base"

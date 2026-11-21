@@ -342,6 +342,8 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
         return None
     days_raw = raw.get("days")
     days: set[int] = set()
+    if days_raw is not None and not isinstance(days_raw, list):
+        return None
     if isinstance(days_raw, list):
         for day in days_raw:
             weekday = _as_int(day)
@@ -469,12 +471,12 @@ class RateCatalog:
             data = json.loads(catalog_path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("catalog root must be an object")
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             logger.warning("LLM price catalog unavailable at %s", catalog_path, exc_info=True)
             data = {}
         try:
             return cls(data, overrides=overrides, source_path=catalog_path)
-        except (AttributeError, TypeError, ValueError, OverflowError):
+        except (AttributeError, TypeError, ValueError, OverflowError, RecursionError):
             logger.warning(
                 "Malformed LLM price catalog at %s; using static pricing",
                 catalog_path,
@@ -491,7 +493,7 @@ class RateCatalog:
     ) -> RateCatalog:
         try:
             return cls(data, overrides=overrides)
-        except (AttributeError, TypeError, ValueError, OverflowError):
+        except (AttributeError, TypeError, ValueError, OverflowError, RecursionError):
             logger.warning("Malformed LLM price catalog; using static pricing", exc_info=True)
             return cls({}, overrides=overrides)
 
@@ -563,7 +565,7 @@ class RateCatalog:
             cache_read_max = (
                 float(offer["cache_read_max"]) if offer.get("cache_read_max") is not None else None
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         if not math.isfinite(input_max) or not math.isfinite(output_max):
             return None
