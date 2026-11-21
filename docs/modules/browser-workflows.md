@@ -56,8 +56,11 @@ macOS 源码安装和桌面安装后首次启动自动准备专用 Ego Lite，�
 | 托管后台运行 | macOS 官方 Ego 应用以自身 `--headless=new` 模式完成首次设置、观察、采集和接管截图；不显示本机浏览器窗口，登录仍在用户主动打开的接管页完成，空闲回收规则不变 |
 | 代理合成 DNS | 本机域名解析全部落入 `198.18.0.0/15` 时，使用有界、TLS 校验的公共 DoH 重新验证；不将合成地址放行，私网／混合答案仍拒绝，网站路由不变 |
 | 用户采集上限 | 明确的中英文条数／页数上限在试采前收紧并保存；日期、频率不当作条数；Feed 同样执行 |
-| 环境边界 | 当前适配器连接本机 macOS Ego 宿主；未验收 Windows，不提供 Linux/Docker 远程桥接 |
+| Windows Beta 托管执行 | 使用已安装的官方浏览器和 CLI，启动前校验 Authenticode 发布者，通过命名宿主和专用 profile 在无窗口模式运行。Node 宿主的本机连接使用一次一密的握手。Windows 真机验收待跑。 |
+| 环境边界 | macOS 自动安装准备，Windows Beta 需手动安装，Linux/Docker 暂无原生宿主。 |
 | 历史兼容 | 已保存的 Playwright 流程继续使用原完整 Chromium 执行器；新建工具与 CLI 不再提供该选择 |
+
+Windows 的状态接口返回 `setup_mode=manual_install`。现有 prepare 操作验证安装和命名宿主，已发布 workflow 使用同一 `ego` 执行器 ID。设置页的域名直连偏好用于 macOS。
 
 ## 公共接口
 

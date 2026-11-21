@@ -76,6 +76,28 @@ def test_get_reports_setup_without_starting_it_or_overwriting_executor_facts(mon
     assert ego["detail"] == "Actual external/native connection"
 
 
+def test_missing_manual_windows_install_reports_requirement_and_skips_startup(
+    monkeypatch, tmp_path
+):
+    app, calls, _, _ = _fixture(monkeypatch, tmp_path, deployment=True)
+    setup = custom_sources._ego_setup_manager(None)
+    baseline = setup.status()
+    setup.status = lambda: {
+        **baseline,
+        "setup_mode": "manual_install",
+        "detail": "Install the official Windows Beta",
+    }
+    with TestClient(app) as client:
+        executors = client.get("/api/custom-sources").json()["executors"]
+        assert (
+            next(row for row in executors if row["id"] == "ego")["setup_mode"] == "manual_install"
+        )
+        response = client.post("/api/custom-sources/executors/ego/prepare")
+        assert response.status_code == 409
+        assert "Windows Beta" in response.json()["detail"]
+    assert not calls
+
+
 def test_prepare_is_explicit_and_deduplicates_active_requests(monkeypatch, tmp_path):
     app, calls, started, release = _fixture(monkeypatch, tmp_path)
     with TestClient(app) as client:

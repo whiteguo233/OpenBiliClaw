@@ -435,6 +435,23 @@ test("new Ego and existing Playwright workflows retain their real executor ident
   assert.ok(h.button("重新登录"));
 });
 
+test("Windows Beta offers download when missing and preparation after installation", async () => {
+  const beta = {
+    id: "ego", managed: true, platform_supported: true, setup_mode: "manual_install",
+    setup_state: "idle", installed: false, available: false, detail: "安装官方 Windows Beta",
+  };
+  const h = setup(undefined, [beta]);
+  await h.manager.load();
+  assert.match(h.root.textContent, /安装官方 Windows Beta/);
+  assert.ok(descendants(h.root).some(node => node.tagName === "a" && /lite\.ego\.app/.test(node.href)));
+  assert.equal(h.button("准备 Ego Lite"), undefined);
+  h.setExecutors([{ ...beta, installed: true, detail: "可以准备专用浏览器" }]);
+  h.button("刷新 Ego Lite 状态").handlers.click();
+  await settle();
+  assert.ok(h.button("准备 Ego Lite"));
+  h.manager.destroy();
+});
+
 test("managed Ego preparation is explicit, deduplicated, and preserves source edits", async () => {
   let finish;
   const h = setup(() => new Promise(resolve => { finish = resolve; }), [{ id: "ego", managed: true, setup_state: "idle", installed: false, available: false, platform_supported: true }]);

@@ -588,7 +588,7 @@ producer 也不调度它；它不是本模块的 canonical Web source 或安全 
 
 历史 Phase A/B 草稿将 Ego Lite 列为 deferred；该结论仅记录旧版匿名 HTTP 路径的范围。
 动态来源将执行器独立建模，HTTP 路径仍不隐式升级权限或回退到登录浏览器。
-[Ego Lite 官方下载说明](https://lite.ego.app/download)提供 macOS 与 Windows beta；本项目当前原生适配器只支持 macOS，尚未完成 Windows 验收。
+[Ego Lite 官方下载说明](https://lite.ego.app/download)提供 macOS 与 Windows Beta。Windows 安装后使用现有草稿、接管和启用 API，实际运行待 [Windows 验收](../testing/2026-11-21-ego-windows-beta.md)。
 [官方宿主桥接指南](https://lite.ego.app/document/en/docs/custom-agent-harness)要求在应用所在电脑
 执行命令。OpenBiliClaw 的 macOS 托管准备负责安装和初始化该本机宿主，不提供远程桥接，
 也不把 Linux/Docker 变成原生 Ego 环境；具体可用性仍依据运行环境与实际执行证据。

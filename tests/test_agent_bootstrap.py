@@ -1799,7 +1799,7 @@ def mac_ego_deployment(monkeypatch):
     [
         ("docker", "darwin", "", "docker_runtime_unsupported"),
         ("local", "linux", "", "platform_unsupported"),
-        ("local", "win32", "", "platform_unsupported"),
+        ("local", "win32", "", "windows_ego_beta_manual_install"),
         ("local", "darwin", "BROWSER", "external_host"),
         ("local", "darwin", "SERVER_NAME", "external_host"),
         ("local", "darwin", "PROFILE", "external_host"),

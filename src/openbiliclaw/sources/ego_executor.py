@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -146,6 +148,45 @@ def _host_pid(server_name: str) -> int | None:
     return None
 
 
+async def _open_windows_rpc(
+    port: Any, token: str
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise _error("ego_protocol_error")
+    writer = None
+    try:
+        async with asyncio.timeout(3):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port, limit=8 * 1024 * 1024)
+            nonce = secrets.token_hex(32)
+            key = bytes.fromhex(token)
+            writer.write(json.dumps({"hello": nonce}).encode() + b"\n")
+            await writer.drain()
+            expected = hmac.digest(key, f"server:{nonce}".encode(), "sha256").hex()
+            proof = json.loads(await reader.readline())
+            if not isinstance(proof, dict) or not isinstance(proof.get("server"), str):
+                raise _error("ego_protocol_error")
+            if not hmac.compare_digest(proof["server"].encode(), expected.encode()):
+                raise _error("ego_protocol_error")
+            signature = hmac.digest(key, f"client:{nonce}".encode(), "sha256").hex()
+            writer.write(json.dumps({"auth": signature}).encode() + b"\n")
+            await writer.drain()
+            if await reader.readline() != b'{"authenticated":true}\n':
+                raise _error("ego_protocol_error")
+        return reader, writer
+    except ValueError as exc:
+        if writer:
+            writer.close()
+        raise _error("ego_protocol_error") from exc
+    except (OSError, TimeoutError) as exc:
+        if writer:
+            writer.close()
+        raise _error("ego_connection_timeout") from exc
+    except BaseException:
+        if writer:
+            writer.close()
+        raise
+
+
 class EgoRequestPolicy:
     """Exact scopes and fresh public DNS preflight, without claiming socket pinning."""
 
@@ -221,7 +262,10 @@ class EgoLiteWorkflowSession:
 
     async def start(self, state_file: Path, state: dict[str, Any]) -> None:
         self._ensure_lease()
-        self._temporary = tempfile.TemporaryDirectory(prefix="obc-ego-", dir="/tmp")
+        windows = sys.platform == "win32"
+        self._temporary = tempfile.TemporaryDirectory(
+            prefix="obc-ego-", dir=None if windows else "/tmp"
+        )
         directory = Path(self._temporary.name)
         directory.chmod(0o700)
         current_pid = (
@@ -236,8 +280,7 @@ class EgoLiteWorkflowSession:
             and isinstance(previous_pid, int)
             and current_pid != previous_pid
         )
-        config = {
-            "socket": str(directory / "host.sock"),
+        config: dict[str, Any] = {
             "ready": str(directory / "ready.json"),
             "identity": str(directory / "identity.json"),
             "plan": self.plan.to_dict(),
@@ -256,6 +299,17 @@ class EgoLiteWorkflowSession:
             ),
             **{key: state[key] for key in ("task_id", "task_name", "profile")},
         }
+        if windows:
+            config.update(
+                auth_token=secrets.token_hex(32),
+                headless=True,
+                windows_host={
+                    "server": self.executor.server_name,
+                    "profile": str(self.executor._setup.profile_dir),
+                },
+            )
+        else:
+            config["socket"] = str(directory / "host.sock")
         module = Path(__file__).with_name("ego_host.mjs").as_uri()
         config_file = directory / "config.json"
         config_file.write_text(json.dumps(config))
@@ -310,9 +364,12 @@ class EgoLiteWorkflowSession:
         pid = _host_pid(self.executor.server_name)
         if pid:
             _READY[self.executor.host_key] = (pid, str(ready.get("version", "")))
-        reader, self._writer = await asyncio.open_unix_connection(
-            config["socket"], limit=8 * 1024 * 1024
-        )
+        if windows:
+            reader, self._writer = await _open_windows_rpc(ready.get("port"), config["auth_token"])
+        else:
+            reader, self._writer = await asyncio.open_unix_connection(
+                config["socket"], limit=8 * 1024 * 1024
+            )
         self._reader_task = asyncio.create_task(self._read(reader))
         self._started = True
         await self._open_entry()
@@ -672,7 +729,11 @@ class EgoLiteWorkflowExecutor:
         )
         self.profile = managed.get("profile", os.environ.get("OPENBILICLAW_EGO_PROFILE", "Default"))
         self.managed = bool(managed)
-        self.host_key = f"{self.executable}:{self.server_name}"
+        self.host_key = (
+            f"ego-windows:{self.server_name}"
+            if self.managed and sys.platform == "win32"
+            else f"{self.executable}:{self.server_name}"
+        )
         self.policy = EgoRequestPolicy()
 
     def availability(self) -> dict[str, Any]:
@@ -741,7 +802,7 @@ class EgoLiteWorkflowExecutor:
                 "ego_protocol_timeout",
             }:
                 raise
-            if sys.platform == "darwin":
+            if sys.platform in {"darwin", "win32"}:
                 lease = self._setup.try_exclusive_session_lease()
                 if lease is not None:
                     try:
