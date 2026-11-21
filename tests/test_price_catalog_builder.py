@@ -352,3 +352,39 @@ def test_malformed_utc_days_do_not_become_every_day_windows() -> None:
         ]
     }
     assert builder.build_tariffs(payload) == {}
+
+
+def test_null_utc_days_do_not_become_every_day_windows() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "deepseek/deepseek-v4-flash",
+                "pricing": {
+                    "prompt": "0.00000015",
+                    "completion": "0.0000006",
+                    "overrides": [
+                        {
+                            "utc_days": None,
+                            "utc_start": 100,
+                            "utc_end": 200,
+                            "prompt": "0.0000003",
+                            "completion": "0.0000012",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+    assert builder.build_tariffs(payload) == {}
+
+
+def test_absurd_offer_does_not_discard_the_valid_quote() -> None:
+    catalog = builder.build_catalog(
+        {
+            "deepseek": {"models": {"m": {"cost": {"input": 0.15, "output": 0.6}}}},
+            "zai": {"models": {"m": {"cost": {"input": 1e308, "output": 1e308}}}},
+        },
+        {"data": []},
+    )
+    assert catalog["offers"]["m"]["input_max"] == 0.15
+    assert catalog["offers"]["m"]["output_max"] == 0.6

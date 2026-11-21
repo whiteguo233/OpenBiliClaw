@@ -681,7 +681,7 @@ cache_read = 0.03
 currency = "USD"
 ```
 
-`provider/model` 都必填，`input` / `output` 必须是非负数；缺字段或负数的条目会被忽略并打 WARNING。`openbiliclaw price --provider … --model …` 可以查看解析结果、当前峰谷档位和置信度。目录里 `0` / 缺失价格不会被当成免费：未知中转站按同模型跨 provider 的**最高价**做保守上界。
+`provider/model` 都必填，`input` / `output` 必须是有限非负数且不超过 `1e6`/百万 token；缺字段、负数、`nan/inf` 或超限的条目会被忽略并打 WARNING。`llm.cost_multiplier` 同样只接受有限正数，`nan/inf` 回退 `1.0`。`openbiliclaw price --provider … --model …` 可以查看解析结果、当前峰谷档位和置信度。目录里 `0` / 缺失价格不会被当成免费：未知中转站按同模型跨 provider 的**最高价**做保守上界。
 
 ### `[llm.embedding]`
 

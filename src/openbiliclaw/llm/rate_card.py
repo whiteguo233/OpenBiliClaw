@@ -517,8 +517,9 @@ class RateCatalog:
     def set_usd_cny(self, rate: float) -> None:
         """Apply a configured FX rate to this process-local catalog."""
 
-        if rate > 0:
-            self._usd_cny = float(rate)
+        value = float(rate)
+        if math.isfinite(value) and 0 < value <= _MAX_USD_CNY:
+            self._usd_cny = value
 
     @property
     def generated_at(self) -> str:
@@ -589,7 +590,11 @@ class RateCatalog:
             or output_max > _MAX_RATE_PER_MTOK
         ):
             return None
-        if cache_read_max is not None and (not math.isfinite(cache_read_max) or cache_read_max < 0):
+        if cache_read_max is not None and (
+            not math.isfinite(cache_read_max)
+            or cache_read_max < 0
+            or cache_read_max > _MAX_RATE_PER_MTOK
+        ):
             cache_read_max = None
         rates = TokenRates(
             input_per_mtok=input_max,

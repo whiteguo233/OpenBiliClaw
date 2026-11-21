@@ -5036,6 +5036,8 @@ def _normalize_scheduler_int(
     else:
         return default
 
+    if not math.isfinite(normalized):
+        return default
     if normalized < min_value:
         return default
     if max_value is not None and normalized > max_value:
@@ -5115,6 +5117,8 @@ def _normalize_scheduler_float(
     else:
         return default
 
+    if not math.isfinite(normalized):
+        return default
     if normalized < min_value:
         return default
     if max_value is not None and normalized > max_value:

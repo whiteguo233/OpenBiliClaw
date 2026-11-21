@@ -65,6 +65,8 @@ _OPENROUTER_PROVIDER_ALIASES = {
     "deepseek": "deepseek",
 }
 
+_MAX_CATALOG_RATE = 1_000_000.0
+
 TARIFF_ALIASES: dict[str, str] = {
     "deepseek-v4.1-flash": "deepseek-v4-flash",
     "deepseek-v4.1-flash-1017": "deepseek-v4-flash",
@@ -135,12 +137,15 @@ def _openrouter_rates(
     if rates is None:
         return None
     input_rate, output_rate, cache_read, cache_write = rates
-    return (
+    converted = (
         round(input_rate * 1_000_000, 8),
         round(output_rate * 1_000_000, 8),
         None if cache_read is None else round(cache_read * 1_000_000, 8),
         None if cache_write is None else round(cache_write * 1_000_000, 8),
     )
+    if converted[0] > _MAX_CATALOG_RATE or converted[1] > _MAX_CATALOG_RATE:
+        return None
+    return converted
 
 
 def build_provider_cards(models_dev: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -154,12 +159,18 @@ def build_provider_cards(models_dev: dict[str, Any]) -> dict[str, dict[str, Any]
             if not isinstance(model, dict):
                 continue
             rates = _cost_tuple(model.get("cost"))
-            if rates is None:
+            if rates is None or not _plausible_rates(rates):
                 continue
             models[str(model_id).lower()] = _rate_record(rates, source="models.dev")
         if models:
             providers[provider_id] = {"models": models}
     return providers
+
+
+def _plausible_rates(rates: tuple[float, float, float | None, float | None]) -> bool:
+    if rates[0] > _MAX_CATALOG_RATE or rates[1] > _MAX_CATALOG_RATE:
+        return False
+    return all(value is None or value <= _MAX_CATALOG_RATE for value in rates[2:])
 
 
 def build_offers(models_dev: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -186,9 +197,11 @@ def build_offers(models_dev: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 normalized,
                 {"input": [], "output": [], "cache_read": []},
             )
-            bucket["input"].append(rates[0])
-            bucket["output"].append(rates[1])
-            if rates[2] is not None:
+            if rates[0] <= _MAX_CATALOG_RATE:
+                bucket["input"].append(rates[0])
+            if rates[1] <= _MAX_CATALOG_RATE:
+                bucket["output"].append(rates[1])
+            if rates[2] is not None and rates[2] <= _MAX_CATALOG_RATE:
                 bucket["cache_read"].append(rates[2])
 
     offers: dict[str, dict[str, Any]] = {}
@@ -330,19 +343,19 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
             rates = _openrouter_rates(override)
             if rates is None:
                 continue
-            day_names_raw = override.get("utc_days")
-            if day_names_raw is None:
+            if "utc_days" not in override:
                 # OpenRouter omits ``utc_days`` for a daily window; that is
-                # different from a present-but-malformed scalar/list.
+                # different from a present-but-null/malformed value.
                 days = list(range(7))
-            elif isinstance(day_names_raw, list) and day_names_raw:
+            else:
+                day_names_raw = override.get("utc_days")
+                if not isinstance(day_names_raw, list) or not day_names_raw:
+                    continue
                 days = sorted(
                     day_names.index(str(day).lower())
                     for day in day_names_raw
                     if str(day).lower() in day_names
                 )
-            else:
-                continue
             if not days:
                 continue
             multiplier = rates[1] / base[1] if base[1] else 1.0

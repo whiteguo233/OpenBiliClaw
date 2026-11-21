@@ -614,3 +614,14 @@ async def test_switching_to_warn_with_an_active_hold_is_not_exceeded(
         # The hold is still active; warn mode just doesn't count it as spend.
         assert snapshot["llm_daily_budget_reserved_cny"] == pytest.approx(0.10)
         assert snapshot["llm_daily_budget_remaining_cny"] == pytest.approx(0.0)
+
+
+def test_nan_cost_multiplier_falls_back_to_one(tmp_path: Path) -> None:
+    from openbiliclaw.config import load_config
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+
+    path = tmp_path / "config.toml"
+    path.write_text("[llm]\ncost_multiplier = nan\n", encoding="utf-8")
+    config = load_config(path, consult_environment=False)
+    assert config.llm.cost_multiplier == pytest.approx(1.0)
+    assert UsageRecorder(sink=None, cost_multiplier=float("nan"))._cost_multiplier == 1.0

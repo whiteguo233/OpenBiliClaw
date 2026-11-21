@@ -23,6 +23,7 @@ Two side-channels for real-time observability:
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import TYPE_CHECKING, Protocol
 
@@ -85,7 +86,11 @@ class UsageRecorder:
         # between the static pricing table and the provider invoice. Applied
         # at write time so every stored row is already in "invoice currency"
         # and the daily budget gate needs no second multiplier.
-        self._cost_multiplier = max(0.0, float(cost_multiplier))
+        try:
+            multiplier = float(cost_multiplier)
+        except (TypeError, ValueError):
+            multiplier = 1.0
+        self._cost_multiplier = multiplier if math.isfinite(multiplier) and multiplier > 0 else 1.0
         # Price catalog resolved per provider/model/time. ``None`` keeps the
         # legacy static-table path (tests, minimal CLI commands).
         self._catalog = catalog

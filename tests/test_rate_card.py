@@ -962,3 +962,29 @@ def test_absurdly_large_but_finite_rates_are_rejected() -> None:
         }
     )
     assert catalog.resolve("openai_compatible", "huge-finite") is None
+
+
+def test_absurd_relay_cache_rate_is_ignored() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "offers": {
+                "cached": {
+                    "count": 1,
+                    "input_max": 1.0,
+                    "output_max": 2.0,
+                    "cache_read_max": 1e308,
+                }
+            }
+        }
+    )
+    effective = catalog.resolve("openai_compatible", "cached", prompt_tokens=1000)
+    assert effective is not None
+    assert effective.rates.cache_read_per_mtok is None
+
+
+def test_programmatic_fx_setter_rejects_nonfinite() -> None:
+    catalog = RateCatalog.from_dict({"fx": {"usd_cny": 7.2}})
+    catalog.set_usd_cny(float("inf"))
+    assert catalog.usd_cny == 7.2
+    catalog.set_usd_cny(5000.0)
+    assert catalog.usd_cny == 7.2
