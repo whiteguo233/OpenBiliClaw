@@ -345,25 +345,32 @@ class RateCatalog:
     ) -> None:
         self._data = dict(data)
         self._source_path = source_path
+
+        def _mapping(value: Any) -> Mapping[str, Any]:
+            # A malformed catalog field (list/string/null) must degrade to an
+            # empty lookup, not raise during runtime initialization.
+            return value if isinstance(value, Mapping) else {}
+
+        providers_raw = _mapping(data.get("providers"))
         self._providers: dict[str, dict[str, Mapping[str, Any]]] = {}
-        for provider, payload in (data.get("providers") or {}).items():
+        for provider, payload in providers_raw.items():
             if isinstance(payload, dict) and isinstance(payload.get("models"), dict):
                 self._providers[str(provider).lower()] = payload["models"]
         self._offers: dict[str, Mapping[str, Any]] = {
             str(model).lower(): payload
-            for model, payload in (data.get("offers") or {}).items()
+            for model, payload in _mapping(data.get("offers")).items()
             if isinstance(payload, dict)
         }
         self._aliases: dict[str, str] = {
             str(key).lower(): str(value).lower()
-            for key, value in (data.get("aliases") or {}).items()
+            for key, value in _mapping(data.get("aliases")).items()
         }
         # Tariffs/tiers are provider-specific. A model id alone is not enough:
         # a relay or another vendor may resell the same model on a flat price,
         # and a user override must never inherit the catalog's window.
         self._tariffs: dict[tuple[str, str], tuple[TariffWindow, ...]] = {}
         tariff_groups: dict[tuple[str, str], list[TariffWindow]] = {}
-        for model, windows in (data.get("tariffs") or {}).items():
+        for model, windows in _mapping(data.get("tariffs")).items():
             if not isinstance(windows, list):
                 continue
             model_key = str(model).lower()
@@ -380,7 +387,7 @@ class RateCatalog:
 
         self._tiers: dict[tuple[str, str], tuple[RateTier, ...]] = {}
         tier_groups: dict[tuple[str, str], list[RateTier]] = {}
-        for model, tiers in (data.get("tiers") or {}).items():
+        for model, tiers in _mapping(data.get("tiers")).items():
             if not isinstance(tiers, list):
                 continue
             model_key = str(model).lower()
@@ -405,7 +412,7 @@ class RateCatalog:
         self._override_cards: dict[tuple[str, str], RateCard] = {}
         self._install_overrides(overrides)
 
-        fx = data.get("fx") or {}
+        fx = _mapping(data.get("fx"))
         try:
             self._usd_cny = float(fx.get("usd_cny") or 7.2)
         except (TypeError, ValueError):
@@ -691,9 +698,7 @@ def _override_values(
     cache_write = get("cache_write")
     cache_read_rate = float(cache_read) if cache_read is not None else None
     cache_write_rate = float(cache_write) if cache_write is not None else None
-    if cache_read_rate is not None and (
-        not math.isfinite(cache_read_rate) or cache_read_rate < 0
-    ):
+    if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
         cache_read_rate = None
     if cache_write_rate is not None and (
         not math.isfinite(cache_write_rate) or cache_write_rate < 0

@@ -586,3 +586,13 @@ async def test_audit_uses_raw_spend_not_the_rounded_display(usage_db: Database) 
 def test_audit_write_failure_is_retryable(tmp_path: Path) -> None:
     ledger = DailySpendLedger(tmp_path / "no-events.db")
     assert ledger.record_exceeded(spend_cny=1.2, limit_cny=1.0, on_exceed="pause") is None
+
+
+def test_warn_mode_does_not_report_exceeded_before_actual_spend(
+    usage_db: Database, tmp_path: Path
+) -> None:
+    _insert_spend(usage_db, when=_FIXED_NOW, cost=0.95)
+    gate = _gate(tmp_path, limit=1.0, mode="warn", db=usage_db)
+    snapshot = gate.daily_budget_snapshot()
+    assert snapshot["llm_daily_budget_state"] == "ok"
+    assert snapshot["llm_daily_budget_remaining_cny"] == pytest.approx(0.05)

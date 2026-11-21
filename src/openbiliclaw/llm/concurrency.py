@@ -529,7 +529,9 @@ class LLMConcurrencyGate:
             on_exceed if on_exceed in {"pause", "stop", "warn"} else "pause"
         )
         self._daily_budget_reserve_cny = max(0.0, float(reserve_cny))
-        self._daily_budget_reserved_cny = 0.0
+        # Keep any in-flight process-local holds; they are released by their
+        # own slot() finally blocks. Resetting here would let a sibling call
+        # admit against headroom that is still held.
         if ledger is not None:
             self._daily_spend_ledger = ledger
         elif self._daily_budget_cny <= 0:
@@ -707,9 +709,13 @@ class LLMConcurrencyGate:
         day = local_day_window()[0]
         remaining = self._daily_budget_cny - spend - reserved
         # The controller must not keep scheduling when the next admission
-        # could not even reserve its worst-case slice.
-        next_reserve = min(self._daily_budget_reserve_cny, self._daily_budget_cny)
-        exceeded = remaining < next_reserve - 1e-9 if next_reserve > 0 else remaining <= 1e-9
+        # could not even reserve its worst-case slice. Warn mode never
+        # reserves, so only actual spend can make it "exceeded".
+        if mode == "warn":
+            exceeded = remaining <= 1e-9
+        else:
+            next_reserve = min(self._daily_budget_reserve_cny, self._daily_budget_cny)
+            exceeded = remaining < next_reserve - 1e-9 if next_reserve > 0 else remaining <= 1e-9
         return {
             "llm_daily_budget_cny": self._daily_budget_cny,
             "llm_daily_budget_on_exceed": mode,
@@ -828,8 +834,7 @@ class LLMConcurrencyGate:
                 raise self._daily_budget_error(
                     caller=caller,
                     spend=spend,
-                    reserved=ledger.active_reserved_cny()
-                    + self._daily_budget_reserved_cny,
+                    reserved=ledger.active_reserved_cny() + self._daily_budget_reserved_cny,
                 )
             # SQLite failed; fall through to the process-local counter instead
             # of turning an infrastructure hiccup into a false budget stop.

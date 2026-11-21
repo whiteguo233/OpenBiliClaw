@@ -44,7 +44,7 @@ DEFAULT_LLM_CONCURRENCY = DEFAULT_TOTAL_LLM_CONCURRENCY
 MIN_STRUCTURED_MAX_TOKENS = 4096
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator, Mapping
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Mapping
 
     from openbiliclaw.memory.manager import MemoryManager
 
@@ -1595,7 +1595,7 @@ class LLMService:
         max_tokens: int,
         reasoning_effort: str | None,
         bypass_semaphore: bool,
-    ) -> AsyncIterator[LLMStreamChunk]:
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         """Run one streaming native-FC call under the provider slot and routing."""
 
         def _route_user_stream() -> AsyncIterator[LLMStreamChunk]:

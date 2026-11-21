@@ -703,3 +703,27 @@ def test_nonfinite_user_override_cache_prices_are_ignored() -> None:
     assert effective is not None
     assert effective.rates.cache_read_per_mtok is None
     assert effective.rates.cache_write_per_mtok is None
+
+
+def test_malformed_catalog_fields_degrade_to_empty_lookups() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": ["deepseek"],
+            "offers": "nope",
+            "aliases": 7,
+            "tariffs": [],
+            "tiers": "nope",
+            "fx": [],
+        }
+    )
+    assert catalog.resolve("deepseek", "deepseek-v4-flash") is None
+    assert catalog.usd_cny == 7.2
+
+
+def test_packaging_spec_bundles_the_pricing_catalog() -> None:
+    from pathlib import Path
+
+    spec = (Path(__file__).resolve().parents[1] / "packaging" / "openbiliclaw.spec").read_text(
+        encoding="utf-8"
+    )
+    assert "pricing_catalog.json" in spec
