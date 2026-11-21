@@ -74,11 +74,18 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # ``deepseek-reasoner`` rows stay so existing configs keep
         # producing accurate estimates until those models reach the
         # 2026/07/24 deprecation date.
-        "deepseek-v4-flash": (0.001, 0.002),
-        "deepseek-v4-pro": (0.004, 0.012),
+        # 2026-11-21: re-checked against models.dev (`deepseek` provider) and
+        # the OpenRouter `deepseek/deepseek-v4.1-flash-1017` route:
+        # $0.15 / $0.60 per M tokens × 7.2 = ¥1.08 / ¥4.32 per M. The old
+        # output row (¥2/M) under-counted a real bill by ~2.16x, which is the
+        # drift reported in issue #353. Peak windows (UTC 01-04 / 06-10,
+        # Mon-Fri = Beijing 09-12 / 14-18) bill this route at 2x; the table
+        # stores the off-peak base until the rate-card layer lands.
+        "deepseek-v4-flash": (0.00108, 0.00432),  # $0.15/$0.60 per M
+        "deepseek-v4-pro": (0.004752, 0.014256),  # $0.66/$1.98 per M
         "deepseek-chat": (0.0007, 0.0014),
         "deepseek-reasoner": (0.004, 0.016),
-        "default": (0.001, 0.002),
+        "default": (0.00108, 0.00432),
     },
     "openai": {
         # USD × ~7.2 (USD/CNY post-2024). GPT-5 family is current as of
@@ -223,9 +230,9 @@ def estimate_cost(
     provider/model so the fallback is never silent.
 
     >>> estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
-    0.011
+    0.01836
     >>> estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000)
-    0.0074
+    0.014472
     >>> estimate_cost("ollama", "llama3", 10000, 5000)
     0.0
     """

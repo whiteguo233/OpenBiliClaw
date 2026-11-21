@@ -1025,7 +1025,7 @@ OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。
 请选一个 LLM 服务：
 
  #   名称                                  说明
- 1   DeepSeek 官方 ★默认推荐                默认 deepseek-v4-flash (V4)。¥0.001/千 token 几乎免费,国内可直连
+ 1   DeepSeek 官方 ★默认推荐                默认 deepseek-v4-flash (V4)。输入约 ¥0.00108 / 输出约 ¥0.00432 每千 token(高峰 2x),国内可直连
  2   ★ 第二推荐 — 中转站 / OpenAI 协议兼容服务 买了中转站 Key 选这个。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM
  3   OpenAI 官方                           默认 gpt-5-nano (最便宜的 GPT-5)。api.openai.com,需要 sk- 开头的 Key
  4   Gemini 官方                           默认 gemini-2.5-flash (稳定 / 便宜)。Google AI Studio 申请 Key,免费档每天 1500 次够用

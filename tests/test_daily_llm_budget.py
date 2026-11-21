@@ -258,7 +258,7 @@ def test_usage_recorder_persists_calibrated_cost(usage_db: Database) -> None:
     row = usage_db.conn.execute(
         "SELECT estimated_cost_cny FROM llm_usage ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    assert float(row["estimated_cost_cny"]) == pytest.approx(0.022, rel=1e-6)
+    assert float(row["estimated_cost_cny"]) == pytest.approx(0.03672, rel=1e-6)
 
 
 def test_daily_budget_error_is_classified_as_budget_exceeded() -> None:

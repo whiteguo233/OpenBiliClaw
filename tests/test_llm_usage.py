@@ -24,9 +24,14 @@ if TYPE_CHECKING:
 
 
 def test_estimate_cost_known_provider_model() -> None:
-    """deepseek-v4-flash: ¥0.001 input + ¥0.002 output per 1K tokens."""
+    """deepseek-v4-flash: ¥0.00108 input + ¥0.00432 output per 1K tokens.
+
+    Rates re-checked 2026-11-21 against models.dev / OpenRouter
+    ($0.15 / $0.60 per M × 7.2). The old output rate (¥0.002) was 2.16x low
+    and is what issue #353 measured against the real DeepSeek bill.
+    """
     cost = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
-    assert cost == pytest.approx(0.005 + 0.006, rel=1e-9)
+    assert cost == pytest.approx(0.0054 + 0.01296, rel=1e-9)
 
 
 def test_estimate_cost_api_route_default_model() -> None:
@@ -80,17 +85,18 @@ def test_estimate_cost_applies_deepseek_cache_discount() -> None:
     """v0.3.28+: cached portion of input is billed at 10% (DeepSeek).
 
     5K prompt, 3K completion, 4K of those prompt tokens cached.
-    - Non-cached input: 1K × ¥0.001 = ¥0.001
-    - Cached input: 4K × ¥0.001 × 0.1 = ¥0.0004
-    - Output: 3K × ¥0.002 = ¥0.006
-    Total: ¥0.0074 (vs ¥0.011 without cache discount = 33% saved)
+    - Non-cached input: 1K × ¥0.00108 = ¥0.00108
+    - Cached input: 4K × ¥0.00108 × 0.1 = ¥0.000432
+    - Output: 3K × ¥0.00432 = ¥0.01296
+    Total: ¥0.014472 (vs ¥0.01836 without cache discount = 21% saved)
     """
     cost_no_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
     cost_with_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000)
-    assert cost_no_cache == pytest.approx(0.011, rel=1e-9)
-    assert cost_with_cache == pytest.approx(0.0074, rel=1e-9)
-    # Save ratio sanity check
-    assert cost_with_cache < cost_no_cache * 0.7
+    assert cost_no_cache == pytest.approx(0.01836, rel=1e-9)
+    assert cost_with_cache == pytest.approx(0.014472, rel=1e-9)
+    # Save ratio sanity check (output is now the dominant cost, so the
+    # cache-only saving is ~21% here, not the old ~33%).
+    assert cost_with_cache < cost_no_cache * 0.85
 
 
 def test_estimate_cost_applies_openai_cache_discount() -> None:
@@ -109,8 +115,8 @@ def test_estimate_cost_clamps_cached_to_prompt_tokens() -> None:
     Without clamping, the math goes negative on the non-cached portion.
     """
     cost = estimate_cost("deepseek", "deepseek-v4-flash", 1000, 0, cached_tokens=9999)
-    # Should equal: full 1K cached at 10% rate = 1K × ¥0.001 × 0.1 = ¥0.0001
-    assert cost == pytest.approx(0.0001, rel=1e-9)
+    # Full 1K cached at 10% rate = 1K × ¥0.00108 × 0.1 = ¥0.000108
+    assert cost == pytest.approx(0.000108, rel=1e-9)
     assert cost > 0  # not negative
 
 
@@ -265,8 +271,8 @@ def test_usage_recorder_persists_response_tokens(tmp_path: Path) -> None:
     assert today["calls"] == 1
     assert today["prompt_tokens"] == 4500
     assert today["completion_tokens"] == 2000
-    # Cost = 4500/1000 * 0.001 + 2000/1000 * 0.002 = 0.0045 + 0.004 = 0.0085
-    assert today["cost_cny"] == pytest.approx(0.0085, rel=1e-6)
+    # Cost = 4500/1000 * 0.00108 + 2000/1000 * 0.00432 = 0.00486 + 0.00864
+    assert today["cost_cny"] == pytest.approx(0.0135, rel=1e-6)
 
 
 def test_usage_recorder_no_op_when_sink_missing() -> None:
@@ -349,17 +355,17 @@ def test_usage_recorder_persists_cached_input_tokens(tmp_path: Path) -> None:
 
     # Cost should reflect 90% off on the 4000 cached tokens.
     # Manual:
-    #   non-cached input: 1000 × 0.001 = 0.001
-    #   cached input:     4000 × 0.001 × 0.1 = 0.0004
-    #   output:           1000 × 0.002 = 0.002
-    #   total: 0.0034 (vs 0.007 without cache discount)
+    #   non-cached input: 1000 × 0.00108 = 0.00108
+    #   cached input:     4000 × 0.00108 × 0.1 = 0.000432
+    #   output:           1000 × 0.00432 = 0.00432
+    #   total: 0.005832 (vs 0.00972 without cache discount)
     by_caller = db.query_llm_usage_by_caller(days=7)
     assert len(by_caller) == 1
     row = by_caller[0]
     assert row["caller"] == "discovery.evaluate_batch"
     assert row["prompt_tokens"] == 5000
     assert row["cached_input_tokens"] == 4000
-    assert row["cost_cny"] == pytest.approx(0.0034, rel=1e-6)
+    assert row["cost_cny"] == pytest.approx(0.005832, rel=1e-6)
 
 
 def test_query_llm_usage_by_caller_returns_cache_field(tmp_path: Path) -> None:

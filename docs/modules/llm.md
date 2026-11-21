@@ -743,6 +743,8 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 1. 未命中 `PRICING` 的 provider/model 会打一次 WARNING（`_warn_unpriced_once`），不再静默按占位价记账；`openai_compatible` 现在有显式 `default` 行；
 2. `llm.cost_multiplier`（`0.1..20`，默认 `1.0`）在 `UsageRecorder` 写库时整体缩放估算。实测账单是估算的 N 倍时设成 N，`llm_usage`、`openbiliclaw cost` 和每日上限就统一到“账单口径”。校准系数只影响新写入的行，历史行不改写。
 
+**2026-11-21 价目校准**：按 models.dev / OpenRouter 的实测价，`deepseek-v4-flash` 为 `$0.15/$0.60` 每百万 token（¥1.08/¥4.32），旧表输出价 ¥2/M 低估 **2.16 倍**，正是 issue #353 里“自估 0.85 / 实际 1.91”的来源；`deepseek-v4-pro` 同步改为 `$0.66/$1.98`。这仍是静态表的止血，长期方案（models.dev + OpenRouter 峰谷窗口 + 用户覆盖 + 余额校准）见 [LLM 价格目录与峰谷调度设计](../plans/2026-11-21-llm-price-catalog-and-peak-scheduling.md)。
+
 超调说明：检查的是**已发生**花费而不是预扣额度，跨线的那一次调用仍会发出，最多超一个单次调用成本（长推理调用可达 ¥0.1–0.5 量级）；并发边界上多个 in-flight 请求也可能同时读到超线前的快照。要做硬预留需要预估 prompt token，收益不足以抵消误判，暂不实现。Embedding 请求不经过该 gate、也不写 `llm_usage`，因此每日上限目前只覆盖聊天 / 评估 / 生成类调用；embedding 费用仍在 `openbiliclaw cost` 之外。
 
 `status_payload()` / `/api/runtime-status` 暴露 `llm_daily_budget_cny`、`llm_daily_budget_on_exceed`、`llm_today_cost_cny`、`llm_daily_budget_state`（`disabled|ok|exceeded`）与 `llm_daily_budget_day`；桌面设置页与插件设置页各有一行“今日已花 / 上限”。
