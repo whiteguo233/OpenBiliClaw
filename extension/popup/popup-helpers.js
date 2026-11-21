@@ -1002,6 +1002,8 @@ export function normalizeRuntimeStatus(status) {
     llm_daily_budget_cny: Number(status?.llm_daily_budget_cny ?? 0),
     llm_daily_budget_on_exceed: normalizeText(status?.llm_daily_budget_on_exceed) || "pause",
     llm_today_cost_cny: Number(status?.llm_today_cost_cny ?? 0),
+    llm_daily_budget_reserved_cny: Number(status?.llm_daily_budget_reserved_cny ?? 0),
+    llm_daily_budget_remaining_cny: Number(status?.llm_daily_budget_remaining_cny ?? 0),
     llm_daily_budget_state: normalizeText(status?.llm_daily_budget_state) || "disabled",
     llm_daily_budget_day: normalizeText(status?.llm_daily_budget_day),
   };

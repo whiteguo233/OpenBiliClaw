@@ -725,6 +725,11 @@ class LLMService:
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
                 response = await _do_llm_call()
+                # Record before the slot exits: the daily-budget reservation is
+                # released on exit, and a concurrent call must see this spend
+                # row before it can reserve the same headroom.
+                if response.content.strip():
+                    self._record_usage(response, caller=caller)
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -733,15 +738,6 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
-        # Best-effort usage ledger write. The recorder swallows its own
-        # exceptions so a billing-table hiccup never affects the LLM
-        # response that just succeeded.
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(response, caller=caller)
         return response
 
     async def stream_complete_with_core_memory(
@@ -841,10 +837,14 @@ class LLMService:
                 caller=caller,
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
-                async for chunk in _route_stream():
-                    if chunk.response is not None:
-                        terminal = chunk.response
-                    yield chunk
+                try:
+                    async for chunk in _route_stream():
+                        if chunk.response is not None:
+                            terminal = chunk.response
+                        yield chunk
+                finally:
+                    if terminal is not None and terminal.content.strip():
+                        self._record_usage(terminal, caller=caller)
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -853,12 +853,6 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if terminal is None or not terminal.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(terminal, caller=caller)
 
     def _resolve_sponsored_provider(self) -> SponsoredProvider | None:
         """Return the Sponsored provider, or None when disabled.
@@ -1217,6 +1211,8 @@ class LLMService:
         try:
             async with self._provider_slot(caller=caller):
                 response = await _do_llm_call()
+                if response.content.strip():
+                    self._record_usage(response, caller=caller)
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -1225,12 +1221,6 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(response, caller=caller)
         return response
 
     async def complete_with_tools(
@@ -1455,7 +1445,10 @@ class LLMService:
                 caller=caller,
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
-                return await _do_llm_call()
+                response = await _do_llm_call()
+                if response.content.strip() or response.tool_calls:
+                    self._record_usage(response, caller=caller)
+                return response
         except LLMToolCallUnsupportedError:
             raise
         except LLMBudgetExhaustedError:

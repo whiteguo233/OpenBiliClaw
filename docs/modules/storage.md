@@ -630,6 +630,7 @@ daily = db.query_llm_usage_by_day(days=7)
 total = db.query_llm_usage_total(days=7)
 ```
 
+- 每日预算的跨进程预留放在 `background_llm_budget_reservations`（`id` / `amount_cny` / `created_at` / `expires_at`，30 分钟 TTL）。`DailySpendLedger.try_reserve()` 与 `release()` 在 `BEGIN IMMEDIATE` 内完成“已花 + 在途预留 + 本次 ≤ 上限”的检查和插入，daemon / API / CLI 共享同一份在途额度；进程崩溃后过期的预留由下一次访问清理。表由 ledger 懒创建，不参与业务 schema 迁移。
 - `query_llm_usage_today()` 用 `local_day_window()` 把本地零点换算成 UTC 文本区间，`timestamp >= ? AND timestamp < ?` 走 `idx_llm_usage_timestamp`；这是 `scheduler.daily_budget_cny` 的资金口径，和 `query_llm_usage_by_day(days=1)` 的滚动 24h 语义不同。
 - `query_llm_usage_by_day` 保留 `date(timestamp,'localtime')` 分组，只用于报表；不要用它做预算判断（无法走索引，且窗口是滚动的）。
 - `max_llm_usage_id()` / `query_llm_usage_since_id()` 把一次 init / discovery 的 cost summary 限定在该阶段新写入的行。

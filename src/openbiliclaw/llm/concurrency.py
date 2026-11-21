@@ -37,7 +37,8 @@ def apply_background_budget_config(gate: LLMConcurrencyGate, config: object) -> 
     window_seconds = int(getattr(scheduler, "llm_budget_window_seconds", 3600) or 3600)
     daily_budget_cny = float(getattr(scheduler, "daily_budget_cny", 0.0) or 0.0)
     budget_on_exceed = str(getattr(scheduler, "budget_on_exceed", "pause") or "pause")
-    daily_budget_reserve_cny = float(getattr(scheduler, "daily_budget_reserve_cny", 0.10) or 0.10)
+    raw_reserve = getattr(scheduler, "daily_budget_reserve_cny", 0.10)
+    daily_budget_reserve_cny = 0.10 if raw_reserve is None else float(raw_reserve)
     data_path = getattr(config, "data_path", None)
     ledger = None
     daily_ledger = None
@@ -695,7 +696,9 @@ class LLMConcurrencyGate:
             except Exception:
                 logger.warning("Daily spend lookup failed; treating spend as 0", exc_info=True)
             try:
-                reserved = ledger.active_reserved_cny()
+                # DB holds and a process-local fallback can coexist after a
+                # transient SQLite failure; both consume headroom.
+                reserved = ledger.active_reserved_cny() + self._daily_budget_reserved_cny
             except Exception:
                 logger.warning(
                     "Daily reservation lookup failed; using process-local value",
@@ -703,7 +706,10 @@ class LLMConcurrencyGate:
                 )
         day = local_day_window()[0]
         remaining = self._daily_budget_cny - spend - reserved
-        exceeded = remaining <= 1e-9
+        # The controller must not keep scheduling when the next admission
+        # could not even reserve its worst-case slice.
+        next_reserve = min(self._daily_budget_reserve_cny, self._daily_budget_cny)
+        exceeded = remaining < next_reserve - 1e-9 if next_reserve > 0 else remaining <= 1e-9
         return {
             "llm_daily_budget_cny": self._daily_budget_cny,
             "llm_daily_budget_on_exceed": mode,
@@ -745,6 +751,10 @@ class LLMConcurrencyGate:
             return
         raw_spend = snapshot["llm_today_cost_cny"]
         spend = float(raw_spend) if isinstance(raw_spend, int | float) else 0.0
+        if spend < self._daily_budget_cny:
+            # "Exceeded" can mean "the next reservation no longer fits"; only
+            # actual spend gets the once-per-day audit event.
+            return
         self._note_daily_budget_exceeded(
             spend=spend,
             day=str(snapshot["llm_daily_budget_day"]),
@@ -781,6 +791,7 @@ class LLMConcurrencyGate:
 
         ledger = self._daily_spend_ledger
         if ledger is not None:
+            ledger_failed = False
             try:
                 token = ledger.try_reserve(
                     amount_cny=reserve,
@@ -792,18 +803,22 @@ class LLMConcurrencyGate:
                     "the process-local counter",
                     exc_info=True,
                 )
+                ledger_failed = True
                 token = None
             if token is not None:
                 if token:
                     return token
                 return ""
-            if spend >= self._daily_budget_cny:
-                self._note_daily_budget_exceeded(spend=spend, day=day)
-            raise self._daily_budget_error(
-                caller=caller,
-                spend=spend,
-                reserved=ledger.active_reserved_cny(),
-            )
+            if not ledger_failed:
+                if spend >= self._daily_budget_cny:
+                    self._note_daily_budget_exceeded(spend=spend, day=day)
+                raise self._daily_budget_error(
+                    caller=caller,
+                    spend=spend,
+                    reserved=ledger.active_reserved_cny(),
+                )
+            # SQLite failed; fall through to the process-local counter instead
+            # of turning an infrastructure hiccup into a false budget stop.
 
         if spend + self._daily_budget_reserved_cny + reserve > self._daily_budget_cny + 1e-9:
             if spend >= self._daily_budget_cny:
@@ -853,7 +868,6 @@ class LLMConcurrencyGate:
 
         if self._daily_budget_warned_day == day:
             return
-        self._daily_budget_warned_day = day
         logger.warning(
             "Daily LLM spend ¥%.4f reached the ¥%.2f cap (%s); mode=%s. "
             "llm_usage is an estimate — calibrate llm.cost_multiplier if the "
@@ -865,6 +879,7 @@ class LLMConcurrencyGate:
         )
         ledger = self._daily_spend_ledger
         if ledger is None:
+            self._daily_budget_warned_day = day
             return
         try:
             ledger.record_exceeded(
@@ -874,6 +889,10 @@ class LLMConcurrencyGate:
             )
         except Exception:
             logger.warning("Failed to persist budget_exceeded event", exc_info=True)
+            return
+        # Mark the day handled only after persistence succeeds so a transient
+        # write failure retries on the next admission.
+        self._daily_budget_warned_day = day
 
     def classify(self, caller: str) -> LLMTrafficClass:
         tag = caller.strip()

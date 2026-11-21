@@ -290,11 +290,17 @@ def _rates_from_mapping(
         return None
     cache_read = raw.get("cache_read")
     cache_write = raw.get("cache_write")
+    cache_read_rate = float(cache_read) if cache_read is not None else None
+    cache_write_rate = float(cache_write) if cache_write is not None else None
+    if cache_read_rate is not None and cache_read_rate < 0:
+        cache_read_rate = None
+    if cache_write_rate is not None and cache_write_rate < 0:
+        cache_write_rate = None
     return TokenRates(
         input_per_mtok=input_rate,
         output_per_mtok=output_rate,
-        cache_read_per_mtok=float(cache_read) if cache_read is not None else None,
-        cache_write_per_mtok=float(cache_write) if cache_write is not None else None,
+        cache_read_per_mtok=cache_read_rate,
+        cache_write_per_mtok=cache_write_rate,
     )
 
 
@@ -501,12 +507,22 @@ class RateCatalog:
         offer = self._offers.get(model_key)
         if offer is None:
             return None
-        rates = TokenRates(
-            input_per_mtok=float(offer["input_max"]),
-            output_per_mtok=float(offer["output_max"]),
-            cache_read_per_mtok=(
+        try:
+            input_max = float(offer["input_max"])
+            output_max = float(offer["output_max"])
+            cache_read_max = (
                 float(offer["cache_read_max"]) if offer.get("cache_read_max") is not None else None
-            ),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if input_max <= 0 or output_max <= 0:
+            return None
+        if cache_read_max is not None and cache_read_max < 0:
+            cache_read_max = None
+        rates = TokenRates(
+            input_per_mtok=input_max,
+            output_per_mtok=output_max,
+            cache_read_per_mtok=cache_read_max,
         )
         return self._build_card(
             provider=provider_key,
@@ -606,8 +622,8 @@ class RateCatalog:
         tariffs: tuple[TariffWindow, ...] = ()
         tiers: tuple[RateTier, ...] = ()
         if catalog_pricing:
-            tariffs = self._tariffs.get((provider, model), self._tariffs.get(("", model), ()))
-            tiers = self._tiers.get((provider, model), self._tiers.get(("", model), ()))
+            tariffs = self._tariffs.get((provider, model), ())
+            tiers = self._tiers.get((provider, model), ())
         return RateCard(
             provider=provider,
             model=model,

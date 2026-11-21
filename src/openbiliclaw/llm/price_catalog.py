@@ -265,7 +265,23 @@ def build_tiers(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 }
             )
         if model_tiers:
-            tiers[model_id] = sorted(model_tiers, key=lambda item: item["min_prompt_tokens"])
+            # Merge across routes that normalize to the same model id instead
+            # of letting the last row overwrite earlier providers' tiers.
+            tiers.setdefault(model_id, []).extend(model_tiers)
+    for model_id, records in tiers.items():
+        unique: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for record in records:
+            key = (
+                record["provider"],
+                record["min_prompt_tokens"],
+                record["input"],
+                record["output"],
+            )
+            unique[key] = record
+        tiers[model_id] = sorted(
+            unique.values(),
+            key=lambda item: (item["provider"], item["min_prompt_tokens"]),
+        )
     return tiers
 
 
@@ -334,20 +350,29 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
                 }
             )
         if windows:
-            # De-duplicate identical windows emitted for several route variants.
-            unique: dict[tuple[Any, ...], dict[str, Any]] = {}
-            for window in windows:
-                key = (
-                    tuple(window["days"]),
-                    window["start"],
-                    window["end"],
-                    window["label"],
-                )
-                unique[key] = window
-            tariffs[model_id] = sorted(
-                unique.values(),
-                key=lambda item: (item["days"], item["start"], item["end"]),
+            # Merge across routes that normalize to the same model id; the
+            # provider field keeps each route's schedule separate.
+            tariffs.setdefault(model_id, []).extend(windows)
+    for model_id, records in tariffs.items():
+        unique_tariffs: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for window in records:
+            key = (
+                window["provider"],
+                tuple(window["days"]),
+                window["start"],
+                window["end"],
+                window["label"],
             )
+            unique_tariffs[key] = window
+        tariffs[model_id] = sorted(
+            unique_tariffs.values(),
+            key=lambda item: (
+                item["provider"],
+                item["days"],
+                item["start"],
+                item["end"],
+            ),
+        )
     return tariffs
 
 

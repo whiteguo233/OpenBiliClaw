@@ -211,3 +211,83 @@ def test_zero_priced_catalog_card_is_rejected_by_the_loader() -> None:
         }
     )
     assert catalog.resolve("deepseek", "m") is None
+
+
+def test_builder_merges_colliding_tariffs_instead_of_overwriting() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "deepseek/deepseek-v4-flash",
+                "pricing": {
+                    "prompt": "0.00000015",
+                    "completion": "0.0000006",
+                    "overrides": [
+                        {
+                            "utc_days": ["monday"],
+                            "utc_start": 100,
+                            "utc_end": 200,
+                            "prompt": "0.0000003",
+                            "completion": "0.0000012",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "zai/deepseek-v4-flash",
+                "pricing": {
+                    "prompt": "0.0000005",
+                    "completion": "0.000002",
+                    "overrides": [
+                        {
+                            "utc_days": ["tuesday"],
+                            "utc_start": 300,
+                            "utc_end": 400,
+                            "prompt": "0.000001",
+                            "completion": "0.000004",
+                        }
+                    ],
+                },
+            },
+        ]
+    }
+    tariffs = builder.build_tariffs(payload)
+    providers = {window["provider"] for window in tariffs["deepseek-v4-flash"]}
+    assert providers == {"deepseek", "zai"}
+
+
+def test_builder_merges_colliding_tiers_instead_of_overwriting() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "openai/gpt-tiered",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.000002",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": 1000,
+                            "prompt": "0.000002",
+                            "completion": "0.000004",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "azure/gpt-tiered",
+                "pricing": {
+                    "prompt": "0.000003",
+                    "completion": "0.000006",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": 2000,
+                            "prompt": "0.000004",
+                            "completion": "0.000008",
+                        }
+                    ],
+                },
+            },
+        ]
+    }
+    tiers = builder.build_tiers(payload)
+    providers = {tier["provider"] for tier in tiers["gpt-tiered"]}
+    assert providers == {"openai", "azure"}

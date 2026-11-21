@@ -15,6 +15,8 @@ and 120 long generations differ by roughly 10x. These tests lock in:
 
 from __future__ import annotations
 
+import sqlite3
+import types
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -511,3 +513,54 @@ async def test_explicit_zero_reservation_is_honored(usage_db: Database) -> None:
     )
     async with gate.slot(caller="soul.insight"):
         assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == pytest.approx(0.0)
+
+
+async def test_partial_headroom_stops_the_controller_before_admission(usage_db: Database) -> None:
+    gate = LLMConcurrencyGate(
+        4,
+        daily_budget_cny=0.15,
+        daily_budget_reserve_cny=0.10,
+        daily_budget_ledger=DailySpendLedger(usage_db._db_path, now=lambda: _FIXED_NOW),
+    )
+    _insert_spend(usage_db, when=_FIXED_NOW, cost=0.06)
+    snapshot = gate.daily_budget_snapshot()
+    assert snapshot["llm_daily_budget_remaining_cny"] == pytest.approx(0.09)
+    assert snapshot["llm_daily_budget_state"] == "exceeded"
+    assert gate.daily_budget_allowed() is False
+    # No actual spend event is written for a reservation-only stop.
+    gate.record_daily_budget_exceeded()
+    with sqlite3.connect(usage_db._db_path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type = 'budget_exceeded'"
+        ).fetchone()[0]
+    assert count == 0
+
+
+async def test_config_wiring_keeps_an_explicit_zero_reserve(tmp_path: Path) -> None:
+    from openbiliclaw.llm.concurrency import apply_background_budget_config
+
+    config = types.SimpleNamespace(
+        scheduler=types.SimpleNamespace(
+            daily_budget_cny=1.0,
+            budget_on_exceed="pause",
+            daily_budget_reserve_cny=0.0,
+            llm_budget_max_calls=0,
+            llm_budget_window_seconds=3600,
+        ),
+        data_path=tmp_path,
+    )
+    gate = LLMConcurrencyGate(2)
+    apply_background_budget_config(gate, config)
+    async with gate.slot(caller="soul.insight"):
+        assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == pytest.approx(0.0)
+
+
+async def test_missing_sqlite_tables_fall_back_instead_of_stopping(tmp_path: Path) -> None:
+    gate = LLMConcurrencyGate(
+        2,
+        daily_budget_cny=1.0,
+        daily_budget_reserve_cny=0.10,
+        daily_budget_ledger=DailySpendLedger(tmp_path / "fresh.db"),
+    )
+    async with gate.slot(caller="soul.insight"):
+        pass

@@ -1141,11 +1141,22 @@ class RuntimeContext:
         means "no known tariff"; presence/budget gating still applies.
         """
 
+        config = getattr(self, "config", None)
+        if config is None:
+            return None
+        scheduler = getattr(config, "scheduler", None)
+        policy = str(getattr(scheduler, "peak_policy", "off") or "off").strip().lower()
+        if policy not in {"defer", "prefer"}:
+            return None
+        # Manual windows have precedence over the catalog, matching the
+        # controller's ``_peak_active_now``. Without this, account sync could
+        # run while a manual-window peak defers every refresh loop.
+        if str(getattr(scheduler, "peak_hours", "") or "").strip():
+            from openbiliclaw.runtime.presence import manual_peak_active
+
+            return manual_peak_active(scheduler)
         predicate = getattr(self, "_peak_tariff_predicate", None)
         if predicate is None:
-            config = getattr(self, "config", None)
-            if config is None:
-                return None
             from openbiliclaw.llm.rate_card import peak_predicate_for_config
 
             predicate = peak_predicate_for_config(config)

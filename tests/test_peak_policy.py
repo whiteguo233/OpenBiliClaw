@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import types
 from datetime import UTC, datetime
 
 from openbiliclaw.config import SchedulerConfig
@@ -246,3 +247,25 @@ def test_manual_parser_rejects_out_of_range_minutes() -> None:
     assert parse_peak_windows("08:99-10:00", offset_minutes=0) == []
     assert parse_peak_windows("09:00-25:00", offset_minutes=0) == []
     assert parse_peak_windows("09:00-24:00", offset_minutes=0) == [(540, 0)]
+
+
+def test_runtime_context_account_sync_honors_manual_window_precedence() -> None:
+    from openbiliclaw.api.runtime_context import RuntimeContext
+
+    now = datetime.now(UTC)
+    start_hour = (now.hour - 1) % 24
+    end_hour = (now.hour + 2) % 24
+    stub = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            scheduler=SchedulerConfig(
+                peak_policy="defer",
+                peak_hours=f"{start_hour:02d}:00-{end_hour:02d}:00",
+                peak_timezone_offset_minutes=0,
+            )
+        ),
+        _peak_tariff_predicate=lambda: False,
+    )
+    assert RuntimeContext._peak_active_now(stub) is True
+
+    stub.config.scheduler = SchedulerConfig(peak_policy="off")
+    assert RuntimeContext._peak_active_now(stub) is None

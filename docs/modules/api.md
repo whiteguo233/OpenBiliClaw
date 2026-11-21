@@ -78,6 +78,8 @@
 | `GET /api/runtime-status` → `llm_daily_budget_cny` | ✅ | 浮点，`[scheduler].daily_budget_cny` 的生效值；`0` 表示未启用 |
 | `llm_daily_budget_on_exceed` | ✅ | `pause` / `stop` / `warn`，与配置一致 |
 | `llm_today_cost_cny` | ✅ | 本地日历日 `llm_usage.estimated_cost_cny` 累计；只读，不触发模型请求 |
+| `llm_daily_budget_reserved_cny` | ✅ | 当前在途预留合计（共享 SQLite reservation ledger） |
+| `llm_daily_budget_remaining_cny` | ✅ | 上限 - 已花 - 在途预留，clamp 到 0 |
 | `llm_daily_budget_state` | ✅ | `disabled` / `ok` / `exceeded`；桌面与插件据此显示“今日已花 / 上限” |
 | `llm_daily_budget_day` | ✅ | 本地日期 `YYYY-MM-DD`，用于说明何时重置 |
 | `llm_background_budget_*` | ✅ | 已有请求级次数预算字段（#344），此前被响应模型丢弃，现一并返回 |

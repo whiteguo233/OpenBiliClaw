@@ -9375,6 +9375,8 @@ ${cardFeedbackBarHtml()}`;
         llm_daily_budget_cny: Number(merged.llm_daily_budget_cny ?? 0),
         llm_daily_budget_on_exceed: String(merged.llm_daily_budget_on_exceed ?? "pause"),
         llm_today_cost_cny: Number(merged.llm_today_cost_cny ?? 0),
+        llm_daily_budget_reserved_cny: Number(merged.llm_daily_budget_reserved_cny ?? 0),
+        llm_daily_budget_remaining_cny: Number(merged.llm_daily_budget_remaining_cny ?? 0),
         llm_daily_budget_state: String(merged.llm_daily_budget_state ?? "disabled"),
         llm_daily_budget_day: String(merged.llm_daily_budget_day ?? ""),
         live_summary: String(merged.live_summary || merged.message || merged.state || "")

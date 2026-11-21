@@ -192,7 +192,13 @@ class ExpressionCopyCoordinator:
                     self._pending_count(),
                     self.last_error,
                 )
-            elif kind in {"rate_limited", "timeout", "connection", "server_error"}:
+            elif kind in {
+                "rate_limited",
+                "budget_exhausted",
+                "timeout",
+                "connection",
+                "server_error",
+            }:
                 backoff_delay = _TRANSIENT_BACKOFF_SECONDS[
                     min(self._transient_streak, len(_TRANSIENT_BACKOFF_SECONDS) - 1)
                 ]

@@ -614,3 +614,30 @@ def test_tiers_are_provider_scoped() -> None:
     zai_rate = catalog.resolve("zai", "gpt-tiered", prompt_tokens=2000)
     assert openai_rate is not None and openai_rate.rates.input_per_mtok == 9.0
     assert zai_rate is not None and zai_rate.rates.input_per_mtok == 0.5
+
+
+def test_negative_offer_and_cache_prices_are_not_billable() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {
+                    "models": {
+                        "m": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "cache_read": -1.0,
+                            "currency": "USD",
+                            "source": "test",
+                        }
+                    }
+                }
+            },
+            "offers": {
+                "bad": {"count": 1, "input_max": -1.0, "output_max": 2.0},
+            },
+        }
+    )
+    exact = catalog.resolve("deepseek", "m")
+    assert exact is not None
+    assert exact.rates.cache_read_per_mtok is None
+    assert catalog.resolve("openai_compatible", "bad") is None

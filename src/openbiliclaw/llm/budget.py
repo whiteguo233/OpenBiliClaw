@@ -229,7 +229,7 @@ class DailySpendLedger:
         amount = max(0.0, float(amount_cny))
         if amount <= 0:
             return ""
-        day, start_utc, _ = self._window()
+        day, start_utc, end_utc = self._window()
         del day
         now = time.time()
         with closing(self._connect()) as connection:
@@ -317,7 +317,7 @@ class DailySpendLedger:
         both write the event.
         """
 
-        day, start_utc, _ = self._window()
+        day, start_utc, end_utc = self._window()
         metadata = json.dumps(
             {
                 "day": day,
@@ -328,14 +328,18 @@ class DailySpendLedger:
             ensure_ascii=False,
             sort_keys=True,
         )
-        created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        moment = self._now() if self._now is not None else datetime.now(UTC)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        created_at = moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
         try:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     existing = connection.execute(
-                        "SELECT id FROM events WHERE event_type = ? AND created_at >= ? LIMIT 1",
-                        ("budget_exceeded", start_utc),
+                        "SELECT id FROM events WHERE event_type = ? "
+                        "AND created_at >= ? AND created_at < ? LIMIT 1",
+                        ("budget_exceeded", start_utc, end_utc),
                     ).fetchone()
                     if existing is not None:
                         connection.execute("ROLLBACK")
