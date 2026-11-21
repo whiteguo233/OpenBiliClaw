@@ -35,6 +35,10 @@ from openbiliclaw.llm.pricing import CACHE_HIT_DISCOUNT
 logger = logging.getLogger(__name__)
 
 _BUNDLED_PATH = Path(__file__).with_name("pricing_catalog.json")
+# Sanity ceiling for a per-million-token price. Real models are far below
+# this; a value near float max can overflow the spend ledger to infinity.
+_MAX_RATE_PER_MTOK = 1_000_000.0
+_MAX_USD_CNY = 1_000.0
 
 _PROVIDER_ALIASES = {
     "claude": "anthropic",
@@ -301,10 +305,14 @@ def _rates_from_mapping(
         return None
     if input_rate < 0 or output_rate < 0:
         return None
+    if input_rate > _MAX_RATE_PER_MTOK or output_rate > _MAX_RATE_PER_MTOK:
+        return None
     if not allow_zero and (input_rate <= 0 or output_rate <= 0):
         # A catalog card must be a real paid rate. A zero here is a missing
         # or sentinel value (sensenova lists deepseek-v4-flash at 0), and
         # treating it as free would silently disable the spend cap.
+        return None
+    if input_rate > _MAX_RATE_PER_MTOK or output_rate > _MAX_RATE_PER_MTOK:
         return None
     cache_read = raw.get("cache_read")
     cache_write = raw.get("cache_write")
@@ -316,10 +324,16 @@ def _rates_from_mapping(
         cache_write_rate = float(cache_write) if cache_write is not None else None
     except (TypeError, ValueError, OverflowError):
         cache_write_rate = None
-    if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
+    if cache_read_rate is not None and (
+        not math.isfinite(cache_read_rate)
+        or cache_read_rate < 0
+        or cache_read_rate > _MAX_RATE_PER_MTOK
+    ):
         cache_read_rate = None
     if cache_write_rate is not None and (
-        not math.isfinite(cache_write_rate) or cache_write_rate < 0
+        not math.isfinite(cache_write_rate)
+        or cache_write_rate < 0
+        or cache_write_rate > _MAX_RATE_PER_MTOK
     ):
         cache_write_rate = None
     return TokenRates(
@@ -341,18 +355,17 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
     if not (0 <= start < 1440 and 0 <= end <= 1440) or start == end:
         return None
     days_raw = raw.get("days")
-    days: set[int] = set()
-    if days_raw is not None and not isinstance(days_raw, list):
+    if not isinstance(days_raw, list) or not days_raw:
+        # Tariff rows must name their weekdays. ``null``/scalar/empty input is
+        # malformed and must not silently become an every-day peak window.
         return None
-    if isinstance(days_raw, list):
-        for day in days_raw:
-            weekday = _as_int(day)
-            if weekday is not None and 0 <= weekday <= 6:
-                days.add(weekday)
-        if not days:
-            # A present-but-invalid weekday list must not silently turn a
-            # weekend-only window into an every-day window.
-            return None
+    days: set[int] = set()
+    for day in days_raw:
+        weekday = _as_int(day)
+        if weekday is not None and 0 <= weekday <= 6:
+            days.add(weekday)
+    if not days:
+        return None
     try:
         multiplier = float(raw.get("multiplier") or 1.0)
     except (TypeError, ValueError, OverflowError):
@@ -448,7 +461,7 @@ class RateCatalog:
             usd_cny = float(fx.get("usd_cny") or 7.2)
         except (TypeError, ValueError, OverflowError):
             usd_cny = 7.2
-        self._usd_cny = usd_cny if math.isfinite(usd_cny) and usd_cny > 0 else 7.2
+        self._usd_cny = usd_cny if math.isfinite(usd_cny) and 0 < usd_cny <= _MAX_USD_CNY else 7.2
 
     # -- construction -------------------------------------------------
 
@@ -569,7 +582,12 @@ class RateCatalog:
             return None
         if not math.isfinite(input_max) or not math.isfinite(output_max):
             return None
-        if input_max <= 0 or output_max <= 0:
+        if (
+            input_max <= 0
+            or output_max <= 0
+            or input_max > _MAX_RATE_PER_MTOK
+            or output_max > _MAX_RATE_PER_MTOK
+        ):
             return None
         if cache_read_max is not None and (not math.isfinite(cache_read_max) or cache_read_max < 0):
             cache_read_max = None
@@ -738,6 +756,8 @@ def _override_values(
         return None
     if input_rate < 0 or output_rate < 0:
         return None
+    if input_rate > _MAX_RATE_PER_MTOK or output_rate > _MAX_RATE_PER_MTOK:
+        return None
     cache_read = get("cache_read")
     cache_write = get("cache_write")
     try:
@@ -748,10 +768,16 @@ def _override_values(
         cache_write_rate = float(cache_write) if cache_write is not None else None
     except (TypeError, ValueError, OverflowError):
         cache_write_rate = None
-    if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
+    if cache_read_rate is not None and (
+        not math.isfinite(cache_read_rate)
+        or cache_read_rate < 0
+        or cache_read_rate > _MAX_RATE_PER_MTOK
+    ):
         cache_read_rate = None
     if cache_write_rate is not None and (
-        not math.isfinite(cache_write_rate) or cache_write_rate < 0
+        not math.isfinite(cache_write_rate)
+        or cache_write_rate < 0
+        or cache_write_rate > _MAX_RATE_PER_MTOK
     ):
         cache_write_rate = None
     return (

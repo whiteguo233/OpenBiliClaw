@@ -331,14 +331,18 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
             if rates is None:
                 continue
             day_names_raw = override.get("utc_days")
-            if isinstance(day_names_raw, list) and day_names_raw:
+            if day_names_raw is None:
+                # OpenRouter omits ``utc_days`` for a daily window; that is
+                # different from a present-but-malformed scalar/list.
+                days = list(range(7))
+            elif isinstance(day_names_raw, list) and day_names_raw:
                 days = sorted(
                     day_names.index(str(day).lower())
                     for day in day_names_raw
                     if str(day).lower() in day_names
                 )
             else:
-                days = list(range(7))
+                continue
             if not days:
                 continue
             multiplier = rates[1] / base[1] if base[1] else 1.0

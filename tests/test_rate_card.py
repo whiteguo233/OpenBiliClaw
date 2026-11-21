@@ -890,7 +890,7 @@ def test_huge_offer_numbers_are_rejected() -> None:
 
 
 def test_deeply_nested_catalog_file_falls_back(tmp_path) -> None:
-    nested = "[" * 2000 + "0" + "]" * 2000
+    nested = "[" * 20000 + "0" + "]" * 20000
     path = tmp_path / "catalog.json"
     path.write_text('{"providers": {"x": ' + nested + "}}", encoding="utf-8")
     catalog = RateCatalog.load(path)
@@ -921,3 +921,44 @@ def test_non_list_weekdays_are_rejected() -> None:
     effective = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 29, 0, 30))
     assert effective is not None
     assert effective.tariff_label == "base"
+
+
+def test_null_weekdays_are_rejected() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "provider": "deepseek",
+                        "input": 2.0,
+                        "output": 4.0,
+                        "start": 0,
+                        "end": 60,
+                        "days": None,
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 29, 0, 30))
+    assert effective is not None
+    assert effective.tariff_label == "base"
+
+
+def test_absurdly_large_but_finite_rates_are_rejected() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {},
+            "offers": {
+                "huge-finite": {
+                    "count": 1,
+                    "input_max": 1e308,
+                    "output_max": 1e308,
+                }
+            },
+        }
+    )
+    assert catalog.resolve("openai_compatible", "huge-finite") is None

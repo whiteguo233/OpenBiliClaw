@@ -147,6 +147,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| LLM 每日预算预留（issue #353） | ✅ | 共享 SQLite `background_llm_budget_reservations`（id / amount_cny / created_at / expires_at，30 分钟 TTL）；`DailySpendLedger.try_reserve()` 在 `BEGIN IMMEDIATE` 内原子检查“已花 + 在途 + 本次 ≤ 上限”并插入，`release()` 删除；跨进程/热重载可见，过期行由下一次访问清理。`llm_usage.cost_confidence` 记录 exact/user/derived_relay/fallback 置信度。 |
 | 相对惊喜与精确占位 | ✅ | `get_ranked_delight_candidates()` 先过滤后取前 10%，与普通推荐、库存和整理共享具体身份；支持单条冷启动、同分、已读后补位和旧快照回填。 |
 | 动态来源注册与多来源证据 | ✅ | `custom_sources` 管理实例与份额；候选/cache 新增 `source_id/source_name`，`content_source_provenance` 保留同一 canonical 内容的多来源发现证据。相同 URL 仅占一份库存与反馈身份。公开平台库存合并到 canonical `web`，内部实例配额仍独立。 |
 | 待确认列表批量可见性读取 | ✅ | `get_chat_confirmation_refs(session=...)` 用一次连接/查询读取当前 surface 已打开的活动对象，过滤条件与逐 ref 的 `get_chat_confirmation_turn()` 一致；避免数百个待聊对象每次轮询都创建数百个 SQLite 连接 |

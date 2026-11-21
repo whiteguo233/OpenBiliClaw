@@ -328,3 +328,27 @@ def test_batch_routes_are_not_mixed_into_standard_tiers() -> None:
     }
     tiers = builder.build_tiers(payload)["gpt-5.4"]
     assert [(tier["input"], tier["output"]) for tier in tiers] == [(5.0, 22.5)]
+
+
+def test_malformed_utc_days_do_not_become_every_day_windows() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "deepseek/deepseek-v4-flash",
+                "pricing": {
+                    "prompt": "0.00000015",
+                    "completion": "0.0000006",
+                    "overrides": [
+                        {
+                            "utc_days": 0.5,
+                            "utc_start": 100,
+                            "utc_end": 200,
+                            "prompt": "0.0000003",
+                            "completion": "0.0000012",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+    assert builder.build_tariffs(payload) == {}

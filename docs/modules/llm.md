@@ -97,6 +97,7 @@ SDK 允许的 system/user/assistant 角色与末尾 user 约束。结果内容�
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 价格目录 / 每日预算 / 峰谷 / 同模型选价（issue #353） | ✅ | 16 providers / 2,007 models 的 bundled catalog（provider + model 作用域、峰谷窗口、长上下文档位、置信度、USD/CNY）；`openbiliclaw price --sync` 原子刷新 data 目录快照；`scheduler.daily_budget_cny` 用本地日历日 + 共享 SQLite 预留做 per-call 准入，`llm.cost_multiplier` 校准；`peak_policy off/defer/prefer` 只暂停后台维护；`llm.cost_aware_routing` 仅重排相同 model 的实例。恶意/损坏 catalog 降级为空目录 + 静态价目表，不阻断启动。 |
 | 免费凭据与独立向量 | 已实现 | IPC授权失败写入无凭据状态供设置/消息中心读取；本地Ollama向量不经过Rust免费凭据，云端仍默认BGE-M3。 |
 | 免费输出证据边界 | 已实现 | 被动画像限定来源支持的信息偏好；日期只纠错一次且继续严格验证；觉察拒绝批次外引用并从源事件确定日期，详见[补测](../testing/2026-11-05-sponsored-followup.md) |
 | 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
