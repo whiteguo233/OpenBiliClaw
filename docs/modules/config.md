@@ -1381,6 +1381,10 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `llm_budget_window_seconds` | int | `3600` | 后台 LLM 预算窗口长度（秒），最小 `60`；与 `llm_budget_max_calls` 配合形成固定窗口配额 |
 | `daily_budget_cny` | float | `0.0` | 每日 LLM 花费上限（元，issue #353）。窗口是**本地日历日**，数据源是 `llm_usage.estimated_cost_cny` 当日累计；`LLMConcurrencyGate.slot()` 在每次调用前检查，`ContinuousRefreshController` 在环路入口暂停。`0` 或负数关闭，且不创建 spend ledger、不产生数据库读。允许 `0..100000` |
 | `budget_on_exceed` | string | `"pause"` | 超限行为。`pause`：只拒绝后台自动调用，聊天 / 设置 / 手动命令仍可用；`stop`：交互调用也拒绝；`warn`：全部放行，只记日志与每日一条 `budget_exceeded` 事件。非法值回退 `pause`，API 保存返回 400 |
+| `peak_policy` | string | `"off"` | 峰谷策略。`off` 保持旧行为；`defer` 在价格目录标记的高峰窗口暂停后台维护，补货只在池子低于 `peak_refill_floor` 时紧急放行；`prefer` 只暂停维护，补货保持新鲜。窗口来自 `[llm.pricing]` catalog；目录没有窗口的 provider 不会假装有谷时。非法值回退 `off`，API 保存返回 400 |
+| `peak_hours` | string | `""` | 手动峰谷窗口覆盖，格式 `"HH:MM-HH:MM,HH:MM-HH:MM"`，按 `peak_timezone_offset_minutes` 解释，**每天生效**（没有工作日维度）；空 = 使用 catalog（catalog 窗口自带工作日）。仅用于目录覆盖不到的 provider；非法值回退空并 WARNING |
+| `peak_timezone_offset_minutes` | int | `480` | 手动 `peak_hours` 的时区偏移（北京 +480）；catalog 窗口本身是 UTC，不受此字段影响。范围 `-720..840` |
+| `peak_refill_floor` | int | `30` | 可服务池数量 ≥ 该值时高峰暂停补货；低于该值时放行以免断供。`0` = 高峰完全停补货（不推荐） |
 | `pause_on_extension_disconnect` | bool | `false` | 开启后，daemon-owned 后台 LLM / embedding 工作只在浏览器插件有 `/api/runtime-stream` 连接、或刚断开仍处于宽限窗口内时运行；离线期间不会自动补新内容 |
 | `extension_disconnect_grace_seconds` | int | `90` | 插件最后一个 `runtime-stream` 连接断开后的宽限秒数；小于等于 0 或无法解析时回退到 `90` |
 | `discovery_cron` | string | `"0 */8 * * *"` | 兼容旧配置的保留字段；当前 runtime 不消费这个 cron，发现补池由轮询、候选池缺口、行为阈值和下方策略间隔驱动。插件与桌面 Web 设置页均不再暴露该字段，只能通过手改 `config.toml` 保留 |

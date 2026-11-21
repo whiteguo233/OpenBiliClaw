@@ -148,6 +148,12 @@ _DEFAULT_LLM_BUDGET_WINDOW_SECONDS = 3600
 # mode default is the safe one — stop automatic work, keep the UI/chat alive.
 _DEFAULT_DAILY_BUDGET_CNY = 0.0
 _DEFAULT_BUDGET_ON_EXCEED = "pause"
+# Peak-hour deferral (issue #353 follow-up). Off by default: it changes when
+# background work runs, so it must be an explicit opt-in. Manual ``peak_hours``
+# is only for providers the catalog cannot price; catalog windows are UTC.
+_DEFAULT_PEAK_POLICY = "off"
+_DEFAULT_PEAK_REFILL_FLOOR = 30
+_DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES = 480
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
 # Cognition-cycle context knobs (issue #169). Keep the defaults in sync with
 # the module constants in ``openbiliclaw/soul/cognition_cycle.py``:
@@ -1370,6 +1376,18 @@ class SchedulerConfig:
     #   warn  — allow everything, log + event once per day
     daily_budget_cny: float = _DEFAULT_DAILY_BUDGET_CNY
     budget_on_exceed: str = _DEFAULT_BUDGET_ON_EXCEED
+    # Peak-hour policy, driven by the rate catalog's tariff windows (or a
+    # manual ``peak_hours`` override). ``off`` keeps the legacy always-run
+    # behaviour; ``defer`` pauses maintenance and refill above the floor;
+    # ``prefer`` pauses maintenance but always keeps refill fresh.
+    peak_policy: str = _DEFAULT_PEAK_POLICY
+    # Manual override "HH:MM-HH:MM,HH:MM-HH:MM" in
+    # ``peak_timezone_offset_minutes`` local time. Empty = use the catalog.
+    peak_hours: str = ""
+    peak_timezone_offset_minutes: int = _DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES
+    # Servable pool count at/above which refill is deferred during peak.
+    # 0 defers refill regardless of inventory (not recommended).
+    peak_refill_floor: int = _DEFAULT_PEAK_REFILL_FLOOR
     discovery_cron: str = "0 */8 * * *"
     pool_target_count: int = 300
     copy_ready_target_count: int = _DEFAULT_COPY_READY_TARGET_COUNT
@@ -3376,6 +3394,19 @@ def _build_config(
                     "budget_on_exceed": _normalize_budget_on_exceed(
                         sched_raw.get("budget_on_exceed")
                     ),
+                    "peak_policy": _normalize_peak_policy(sched_raw.get("peak_policy")),
+                    "peak_hours": _normalize_peak_hours(sched_raw.get("peak_hours")),
+                    "peak_timezone_offset_minutes": _normalize_scheduler_int(
+                        sched_raw.get("peak_timezone_offset_minutes"),
+                        default=_DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES,
+                        min_value=-720,
+                        max_value=840,
+                    ),
+                    "peak_refill_floor": _normalize_scheduler_int(
+                        sched_raw.get("peak_refill_floor"),
+                        default=_DEFAULT_PEAK_REFILL_FLOOR,
+                        min_value=0,
+                    ),
                     "profile_consolidation_enabled": _coerce_bool(
                         sched_raw.get("profile_consolidation_enabled"),
                         default=True,
@@ -5090,6 +5121,39 @@ def _normalize_budget_on_exceed(value: object) -> str:
         if mode in BUDGET_ON_EXCEED_MODES:
             return mode
     return _DEFAULT_BUDGET_ON_EXCEED
+
+
+PEAK_POLICIES = frozenset({"off", "defer", "prefer"})
+
+
+def _normalize_peak_policy(value: object) -> str:
+    """Normalize ``scheduler.peak_policy``; unknown values disable deferral."""
+
+    if isinstance(value, str):
+        policy = value.strip().lower()
+        if policy in PEAK_POLICIES:
+            return policy
+    return _DEFAULT_PEAK_POLICY
+
+
+def _normalize_peak_hours(value: object) -> str:
+    """Validate the optional manual peak-window override.
+
+    Empty is valid (use the catalog). Malformed values fall back to empty
+    instead of silently deferring at arbitrary times.
+    """
+
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    from openbiliclaw.runtime.presence import parse_peak_windows
+
+    if not parse_peak_windows(text, offset_minutes=0):
+        logger.warning("config: [scheduler].peak_hours 非法，已回退为 catalog 窗口: %s", text)
+        return ""
+    return text
 
 
 def _normalize_auto_update_allowed_remotes(value: object) -> list[str]:
@@ -7383,6 +7447,10 @@ def _render_config_toml(
             f"llm_budget_window_seconds = {config.scheduler.llm_budget_window_seconds}",
             f"daily_budget_cny = {config.scheduler.daily_budget_cny}",
             f"budget_on_exceed = {_toml_string(config.scheduler.budget_on_exceed)}",
+            f"peak_policy = {_toml_string(config.scheduler.peak_policy)}",
+            f"peak_hours = {_toml_string(config.scheduler.peak_hours)}",
+            f"peak_timezone_offset_minutes = {config.scheduler.peak_timezone_offset_minutes}",
+            f"peak_refill_floor = {config.scheduler.peak_refill_floor}",
             "pause_on_extension_disconnect = "
             f"{_toml_bool(config.scheduler.pause_on_extension_disconnect)}",
             "extension_disconnect_grace_seconds = "

@@ -11617,6 +11617,10 @@ ${cardFeedbackBarHtml()}`;
         Number(scheduler.daily_budget_cny) > 0 ? scheduler.daily_budget_cny : ""
       );
       setSelect("budgetOnExceed", scheduler.budget_on_exceed || "pause");
+      setSelect("peakPolicy", scheduler.peak_policy || "off");
+      setInput("peakRefillFloor", scheduler.peak_refill_floor);
+      setInput("peakHours", scheduler.peak_hours || "");
+      setInput("peakTimezoneOffset", scheduler.peak_timezone_offset_minutes ?? 480);
       setInput("accountSyncInterval", scheduler.account_sync_interval_hours);
       setInput("refreshCheckInterval", scheduler.refresh_check_interval_seconds);
       setInput("signalEventThreshold", scheduler.signal_event_threshold);
@@ -13394,6 +13398,10 @@ ${cardFeedbackBarHtml()}`;
           pool_target_count: getIntInput("poolTarget", 300),
           daily_budget_cny: Math.max(0, getFloatInput("dailyBudgetCny", 0)),
           budget_on_exceed: $("#budgetOnExceed")?.value || "pause",
+          peak_policy: $("#peakPolicy")?.value || "off",
+          peak_refill_floor: getIntInput("peakRefillFloor", 30),
+          peak_hours: $("#peakHours")?.value?.trim() || "",
+          peak_timezone_offset_minutes: getIntInput("peakTimezoneOffset", 480),
           account_sync_interval_hours: getIntInput("accountSyncInterval", 6),
           refresh_check_interval_seconds: getIntInput("refreshCheckInterval", 60),
           signal_event_threshold: getIntInput("signalEventThreshold", 6),

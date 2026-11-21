@@ -11349,6 +11349,10 @@ function bindSettings() {
       Number(cfg.scheduler?.daily_budget_cny) > 0 ? cfg.scheduler.daily_budget_cny : ""
     );
     setVal("cfgBudgetOnExceed", cfg.scheduler?.budget_on_exceed || "pause");
+    setVal("cfgPeakPolicy", cfg.scheduler?.peak_policy || "off");
+    setVal("cfgPeakRefillFloor", cfg.scheduler?.peak_refill_floor);
+    setVal("cfgPeakHours", cfg.scheduler?.peak_hours || "");
+    setVal("cfgPeakTimezoneOffset", cfg.scheduler?.peak_timezone_offset_minutes ?? 480);
     setVal("cfgAccountSyncInterval", cfg.scheduler?.account_sync_interval_hours);
     setVal("cfgRefreshCheckInterval", cfg.scheduler?.refresh_check_interval_seconds);
     setVal("cfgSignalEventThreshold", cfg.scheduler?.signal_event_threshold);
@@ -11732,6 +11736,10 @@ function bindSettings() {
         pool_target_count: getInt("cfgPoolTarget", 300),
         daily_budget_cny: Math.max(0, getFloat("cfgDailyBudgetCny", 0)),
         budget_on_exceed: getVal("cfgBudgetOnExceed") || "pause",
+        peak_policy: getVal("cfgPeakPolicy") || "off",
+        peak_refill_floor: getInt("cfgPeakRefillFloor", 30),
+        peak_hours: getVal("cfgPeakHours") || "",
+        peak_timezone_offset_minutes: getInt("cfgPeakTimezoneOffset", 480),
         account_sync_interval_hours: getInt("cfgAccountSyncInterval", 6),
         refresh_check_interval_seconds: getInt("cfgRefreshCheckInterval", 60),
         signal_event_threshold: getInt("cfgSignalEventThreshold", 6),

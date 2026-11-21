@@ -543,6 +543,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             result = await result
         return max(0, int(result or 0))
 
+    from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
     runtime_controller = ContinuousRefreshController(
         memory_manager=memory_manager,
         database=database,
@@ -571,6 +573,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,
+        peak_tariff_predicate=peak_predicate_for_config(config),
         one_shot_expression_copy_callback=_drain_one_shot_expression_copy,
         one_shot_inline_eval_limit=4,
     )

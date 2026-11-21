@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -568,6 +568,14 @@ class RateCatalog:
         confidence: str,
         verified_at: str,
     ) -> RateCard:
+        # Time-of-day tariffs are provider-specific: a relay reselling a
+        # DeepSeek model is not obliged to follow DeepSeek's peak schedule, so
+        # attaching the catalog window to ``openai_compatible`` would defer
+        # work on a guess. Direct providers (and OpenRouter itself, the source
+        # of the window) keep them; relays can set manual ``peak_hours``.
+        tariffs = self._tariffs.get(model, ())
+        if provider in _RELAY_PROVIDERS and provider != "openrouter":
+            tariffs = ()
         return RateCard(
             provider=provider,
             model=model,
@@ -576,7 +584,7 @@ class RateCatalog:
             source=source,
             confidence=confidence,
             tiers=self._tiers.get(model, ()),
-            tariffs=self._tariffs.get(model, ()),
+            tariffs=tariffs,
             verified_at=verified_at,
         )
 
@@ -657,3 +665,45 @@ def catalog_for_runtime(config: object) -> RateCatalog:
         with suppress(TypeError, ValueError):
             catalog.set_usd_cny(float(fx))
     return catalog
+
+
+def primary_route(config: object) -> tuple[str, str]:
+    """Return the first configured chat route as ``(provider_type, model)``.
+
+    v2 routing uses ``default_chain[0]`` + ``instances``; legacy configs fall
+    back to ``default_provider`` + the matching provider table. Returns
+    ``("", "")`` when the route cannot be determined.
+    """
+
+    llm = getattr(config, "llm", None)
+    chain = getattr(llm, "default_chain", None) or []
+    instances = getattr(llm, "instances", None) or {}
+    if isinstance(chain, list) and chain:
+        instance = instances.get(str(chain[0])) if isinstance(instances, dict) else None
+        if instance is not None:
+            provider = str(getattr(instance, "provider_type", "") or "").strip()
+            model = str(getattr(instance, "model", "") or "").strip()
+            if provider and model:
+                return provider, model
+    provider = str(getattr(llm, "default_provider", "") or "").strip()
+    provider_config = getattr(llm, provider, None)
+    model = str(getattr(provider_config, "model", "") or "").strip()
+    return provider, model
+
+
+def peak_predicate_for_config(
+    config: object,
+    catalog: RateCatalog | None = None,
+) -> Callable[[], bool] | None:
+    """Build the ``is the primary route in a peak window?`` callable.
+
+    Returns ``None`` when the route or its tariff is unknown: the scheduler
+    then falls back to manual ``peak_hours`` or runs normally. Catalog windows
+    are evaluated in UTC, so the predicate needs no timezone database.
+    """
+
+    active_catalog = catalog if catalog is not None else catalog_for_runtime(config)
+    provider, model = primary_route(config)
+    if not provider or not model or active_catalog.card(provider, model) is None:
+        return None
+    return lambda: active_catalog.is_peak(provider, model)

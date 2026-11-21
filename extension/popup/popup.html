@@ -8897,6 +8897,27 @@
         </div>
         <p class="settings-hint" id="cfgDailyBudgetStatus">今日花费按本地日历日统计；金额为本地估算，偏差大时用 llm.cost_multiplier 校准。0 = 不限。</p>
         <div class="settings-field">
+          <label for="cfgPeakPolicy">峰谷策略</label>
+          <select id="cfgPeakPolicy">
+            <option value="off">关闭</option>
+            <option value="defer">谷时才跑</option>
+            <option value="prefer">优先谷时</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgPeakRefillFloor">峰值补货水位</label>
+          <input id="cfgPeakRefillFloor" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPeakHours">手动峰谷窗口</label>
+          <input id="cfgPeakHours" type="text" autocomplete="off" placeholder="留空 = 用价格目录；如 09:00-12:00,14:00-18:00">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPeakTimezoneOffset">窗口时区偏移（分钟）</label>
+          <input id="cfgPeakTimezoneOffset" type="number" min="-720" max="840" step="1" placeholder="480">
+        </div>
+        <p class="settings-hint">「谷时才跑」在价格目录标记的高峰窗口暂停后台维护，补货低于水位时紧急放行；「优先谷时」只暂停维护。</p>
+        <div class="settings-field">
           <label for="cfgAccountSyncInterval">账户同步间隔小时</label>
           <input id="cfgAccountSyncInterval" type="number" min="1" step="1" placeholder="6">
         </div>

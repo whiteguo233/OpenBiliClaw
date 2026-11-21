@@ -757,7 +757,8 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 - 解析优先级：用户 `[llm.pricing.overrides]` > provider+model 精确卡 > 同模型跨 provider 的**最高价**（未知中转站的保守上界）> 静态 `pricing.py` 回退。`0` / 缺失价不会当免费；`ollama` / `sponsored` 这类显式免费 provider 单独处理。
 - `RateCard.effective(now, prompt_tokens)` 同时应用长上下文档位与 UTC 峰谷窗口；DeepSeek 的窗口来自 OpenRouter 路由（工作日 UTC 01–04、06–10 为 2x，= 北京时间 09–12、14–18），无窗口的 provider 不会被假装有谷时。
 - `UsageRecorder` 有 catalog 时走 catalog 计费，并把 `exact` / `derived_relay` / `user` / `fallback` 写入 `llm_usage.cost_confidence`；`openbiliclaw cost` 会提示低置信花费占比。`openbiliclaw price --provider … --model …` 可查看当前档位、下一次切换与 CNY 换算。
-- 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步；峰谷调度（PR #191 合并 + `peak_policy`）尚未接线，见设计稿。
+- 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步。
+- 峰谷调度已接线（PR #191 的调度骨架）：`scheduler.peak_policy=defer|prefer` 时，`ContinuousRefreshController` 用 catalog 的 `is_peak()`（或手动 `peak_hours`）判断当前是否高峰，再交给 `background_llm_work_allowed()` 的补货水位/交互豁免逻辑；默认 `off`。
 
 导演前台补齐草稿与后台预排共用 `complete_structured_task`，有独立规划截止时间，不注入 core memory；Jev 是另一个 typed decision provider，不进入本 LLM fallback 链或共享它的配额统计。内容摘要与实际反馈不等于 Soul 全画像，详见[导演](director.md)。
 

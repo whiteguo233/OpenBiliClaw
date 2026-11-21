@@ -35,6 +35,13 @@ def test_desktop_settings_render_and_save_daily_budget_controls() -> None:
     assert "llm_today_cost_cny: Number(merged.llm_today_cost_cny ?? 0)" in DESKTOP_JS
     assert "renderDailyBudgetStatus" in DESKTOP_JS
     assert "budgetExceededSummary" in DESKTOP_JS
+    assert 'id="peakPolicy"' in DESKTOP_HTML
+    assert 'id="peakRefillFloor"' in DESKTOP_HTML
+    assert 'setSelect("peakPolicy", scheduler.peak_policy || "off")' in DESKTOP_JS
+    assert 'peak_refill_floor: getIntInput("peakRefillFloor", 30)' in DESKTOP_JS
+    assert 'id="peakHours"' in DESKTOP_HTML
+    assert 'id="peakTimezoneOffset"' in DESKTOP_HTML
+    assert 'peak_hours: $("#peakHours")?.value?.trim() || ""' in DESKTOP_JS
 
 
 def test_extension_settings_render_and_save_daily_budget_controls() -> None:
@@ -54,3 +61,10 @@ def test_extension_settings_render_and_save_daily_budget_controls() -> None:
     # to zero on every runtime event.
     assert "llm_today_cost_cny: Number(status?.llm_today_cost_cny ?? 0)" in POPUP_HELPERS
     assert "llm_daily_budget_state: normalizeText(status?.llm_daily_budget_state)" in POPUP_HELPERS
+    assert 'id="cfgPeakPolicy"' in POPUP_HTML
+    assert 'id="cfgPeakRefillFloor"' in POPUP_HTML
+    assert 'setVal("cfgPeakPolicy", cfg.scheduler?.peak_policy || "off")' in POPUP_JS
+    assert 'peak_refill_floor: getInt("cfgPeakRefillFloor", 30)' in POPUP_JS
+    assert 'id="cfgPeakHours"' in POPUP_HTML
+    assert 'id="cfgPeakTimezoneOffset"' in POPUP_HTML
+    assert 'peak_hours: getVal("cfgPeakHours") || ""' in POPUP_JS

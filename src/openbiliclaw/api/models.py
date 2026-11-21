@@ -2764,6 +2764,12 @@ class SchedulerConfigOut(BaseModel):
     enabled: bool = True
     llm_budget_max_calls: int = 120
     llm_budget_window_seconds: int = 3600
+    daily_budget_cny: float = 0.0
+    budget_on_exceed: str = "pause"
+    peak_policy: str = "off"
+    peak_hours: str = ""
+    peak_timezone_offset_minutes: int = 480
+    peak_refill_floor: int = 30
     pause_on_extension_disconnect: bool = False
     extension_disconnect_grace_seconds: int = 90
     discovery_cron: str = "0 */8 * * *"

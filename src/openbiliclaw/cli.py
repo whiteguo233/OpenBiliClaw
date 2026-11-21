@@ -3572,6 +3572,9 @@ async def _run_init_discovery_backfill_async(
         from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 
         config = load_config()
+        from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
+        peak_predicate = peak_predicate_for_config(config)
         soul_engine = _build_soul_engine()
         pipeline = _build_discovery_candidate_pipeline(
             config=config, database=database, discovery_engine=discovery_engine
@@ -3601,6 +3604,7 @@ async def _run_init_discovery_backfill_async(
             pool_target_count=target,
             pool_source_shares=effective_pool_source_shares(config),
             llm_concurrency_gate=gate,
+            peak_tariff_predicate=peak_predicate,
         )
         async with AsyncExitStack() as resources:
             if "github" in selected_sources:
@@ -6883,6 +6887,21 @@ def price(
         rate_table.add_row("上下文档位", effective.tier_label)
     if effective.next_change_at is not None:
         rate_table.add_row("下一次切换", effective.next_change_at.strftime("%Y-%m-%d %H:%M UTC"))
+    scheduler = config.scheduler
+    rate_table.add_row(
+        "峰谷策略",
+        f"{scheduler.peak_policy}（补货水位 {scheduler.peak_refill_floor}）",
+    )
+    manual_spec = str(getattr(scheduler, "peak_hours", "") or "").strip()
+    if manual_spec:
+        from openbiliclaw.runtime.presence import manual_peak_active
+
+        manual_now = manual_peak_active(scheduler, now_utc=moment)
+        rate_table.add_row(
+            "手动窗口",
+            f"{manual_spec}（当前{'高峰' if manual_now else '非高峰'}，"
+            f"偏移 {scheduler.peak_timezone_offset_minutes} 分钟）",
+        )
     next_off_peak = catalog.next_off_peak(provider, model, now=moment)
     if next_off_peak is not None:
         rate_table.add_row("谷时开始", next_off_peak.strftime("%Y-%m-%d %H:%M UTC"))

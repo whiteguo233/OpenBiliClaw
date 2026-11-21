@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,13 @@ _DEFAULT_EXTENSION_DISCONNECT_GRACE_SECONDS = 90
 # Recalibrate together with the stream heartbeat interval in api/app.py.
 PRESENCE_HEARTBEAT_INTERVAL_SECONDS = 20.0
 _SHARED_HEARTBEAT_TTL_SECONDS = 3 * PRESENCE_HEARTBEAT_INTERVAL_SECONDS
+
+# Peak-hour deferral defaults. ``peak_hours`` is a manual override for
+# providers the rate catalog cannot price; it is interpreted in the user's
+# provider timezone offset (default Beijing, UTC+8). The catalog path uses UTC
+# windows directly and does not need this.
+_DEFAULT_PEAK_REFILL_FLOOR = 30
+_DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES = 480
 
 
 class PresenceTracker:
@@ -162,9 +170,158 @@ class PresenceTracker:
         }
 
 
-def background_llm_work_allowed(scheduler: object, presence: PresenceTracker) -> bool:
-    """Return whether daemon-owned background LLM / embedding work may run."""
+def parse_peak_windows(
+    spec: str,
+    *,
+    offset_minutes: int = _DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES,
+) -> list[tuple[int, int]]:
+    """Parse ``"HH:MM-HH:MM,HH:MM-HH:MM"`` into UTC minute windows.
+
+    The spec is written in the provider's local time (``offset_minutes``,
+    default Beijing +480). Returns ``(start, end)`` pairs in UTC minutes,
+    start inclusive / end exclusive; ``start > end`` means the window wraps
+    midnight. Malformed or empty specs return ``[]`` — callers treat that as
+    "no manual windows, never defer".
+    """
+
+    windows: list[tuple[int, int]] = []
+    offset = int(offset_minutes)
+    for chunk in str(spec or "").split(","):
+        chunk = chunk.strip()
+        if not chunk or "-" not in chunk:
+            continue
+        start_s, _, end_s = chunk.partition("-")
+        try:
+            start_h, start_m = (int(part) for part in start_s.strip().split(":", 1))
+            end_h, end_m = (int(part) for part in end_s.strip().split(":", 1))
+        except (TypeError, ValueError):
+            continue
+        local_start = start_h * 60 + start_m
+        local_end = end_h * 60 + end_m
+        if not (0 <= local_start < 1440 and 0 <= local_end <= 1440):
+            continue
+        if local_start == local_end:
+            continue
+        start = (local_start - offset) % 1440
+        end = (local_end - offset) % 1440
+        if start == end:
+            # A full-day window; treat it as invalid rather than blocking all
+            # background work forever.
+            continue
+        windows.append((start, end))
+    return windows
+
+
+def now_in_peak_windows(
+    now_utc: datetime,
+    windows: list[tuple[int, int]],
+) -> bool:
+    """Return whether ``now_utc`` is inside any UTC minute window."""
+
+    if not windows:
+        return False
+    minute = now_utc.hour * 60 + now_utc.minute
+    for start, end in windows:
+        if start < end:
+            if start <= minute < end:
+                return True
+        elif minute >= start or minute < end:
+            return True
+    return False
+
+
+def manual_peak_active(
+    scheduler: object,
+    *,
+    now_utc: datetime | None = None,
+) -> bool:
+    """Evaluate the manual ``scheduler.peak_hours`` override, if configured."""
+
+    spec = str(getattr(scheduler, "peak_hours", "") or "").strip()
+    if not spec:
+        return False
+    try:
+        offset = int(
+            getattr(
+                scheduler,
+                "peak_timezone_offset_minutes",
+                _DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES,
+            )
+        )
+    except (TypeError, ValueError):
+        offset = _DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES
+    windows = parse_peak_windows(spec, offset_minutes=offset)
+    if not windows:
+        return False
+    moment = now_utc or datetime.now(UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return now_in_peak_windows(moment.astimezone(UTC), windows)
+
+
+def peak_deferral_active(
+    scheduler: object,
+    *,
+    pool_available: int | None = None,
+    peak_active: bool | None = None,
+    now_utc: datetime | None = None,
+) -> bool:
+    """Return whether peak-hour policy blocks this background call.
+
+    ``peak_active`` is supplied by the controller from the rate catalog (the
+    precise, per-provider source). ``None`` falls back to the manual
+    ``peak_hours`` spec. ``pool_available`` distinguishes refill traffic (the
+    servable pool count) from maintenance (``None``):
+
+    - ``defer``: maintenance is fully deferred; refill may pass only below
+      ``peak_refill_floor`` so the feed never starves during a long peak.
+    - ``prefer``: maintenance is deferred; refill always runs (freshness wins
+      over savings).
+    """
+
+    policy = str(getattr(scheduler, "peak_policy", "off") or "off").strip().lower()
+    if policy not in {"defer", "prefer"}:
+        return False
+    is_peak = manual_peak_active(scheduler, now_utc=now_utc) if peak_active is None else peak_active
+    if not is_peak:
+        return False
+    if pool_available is None:
+        return True
+    if policy == "prefer":
+        return False
+    try:
+        floor = int(getattr(scheduler, "peak_refill_floor", _DEFAULT_PEAK_REFILL_FLOOR) or 0)
+    except (TypeError, ValueError):
+        floor = _DEFAULT_PEAK_REFILL_FLOOR
+    if floor <= 0:
+        return True
+    return int(pool_available) >= floor
+
+
+def background_llm_work_allowed(
+    scheduler: object,
+    presence: PresenceTracker,
+    *,
+    pool_available: int | None = None,
+    peak_active: bool | None = None,
+    now_utc: datetime | None = None,
+) -> bool:
+    """Return whether daemon-owned background LLM / embedding work may run.
+
+    ``pool_available`` marks refill traffic and carries the servable-pool
+    count; ``None`` means maintenance / push traffic. ``peak_active`` is the
+    rate catalog's verdict for the current provider; ``None`` falls back to
+    the manual ``peak_hours`` override.
+    """
+
     if not bool(getattr(scheduler, "enabled", True)):
+        return False
+    if peak_deferral_active(
+        scheduler,
+        pool_available=pool_available,
+        peak_active=peak_active,
+        now_utc=now_utc,
+    ):
         return False
     if not bool(getattr(scheduler, "pause_on_extension_disconnect", False)):
         return True
@@ -184,4 +341,11 @@ def background_llm_work_allowed(scheduler: object, presence: PresenceTracker) ->
     return presence.is_present(grace_seconds=grace)
 
 
-__all__ = ["PresenceTracker", "background_llm_work_allowed"]
+__all__ = [
+    "PresenceTracker",
+    "background_llm_work_allowed",
+    "manual_peak_active",
+    "now_in_peak_windows",
+    "parse_peak_windows",
+    "peak_deferral_active",
+]

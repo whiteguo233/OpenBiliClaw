@@ -304,7 +304,7 @@ PR #191（`feat/peak-hour-deferral`，commit `54f0ec03`）已经在 `presence.py
 | P0（本分支已做） | 修正 DeepSeek 现价；`llm.cost_multiplier` 保留为手动校准 | 低 |
 | P1（已完成） | `rate_card.py` + 生成脚本 + 随包 catalog + `openbiliclaw price`；运行时计费未切换 | 低 |
 | P2（已完成） | `UsageRecorder` 改用 `EffectiveRate`；`llm_usage` 增加 `cost_confidence`；预算安全系数改为“未知中转用最高价” | 中 |
-| P3 | 合入 PR #191；`peak_policy` + catalog 窗口；保留 floor | 中 |
+| P3（已完成） | 合入 PR #191 的调度骨架；`peak_policy` + catalog 窗口；保留 floor | 中 |
 | P4 | `price sync` + 设置页价格来源 / 置信度 / 今日花费明细 | 中 |
 | P5 | 预留式准入 + cost-aware routing（同模型选便宜实例） | 高 |
 

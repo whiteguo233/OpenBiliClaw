@@ -737,6 +737,17 @@ llm_budget_window_seconds = 3600
 # factor, set llm.cost_multiplier (see [llm]) instead of shrinking this cap.
 daily_budget_cny = 0.0
 budget_on_exceed = "pause"
+# 峰谷策略（issue #353 后续）。off = 保持旧行为；defer = 只在价格目录标记的
+# 低价窗口跑后台（维护全停，补货低于 peak_refill_floor 时紧急放行）；
+# prefer = 只停维护，补货保持新鲜。窗口来自 [llm.pricing] 的 catalog；
+# 目录没有窗口的 provider 不会假装有谷时。
+peak_policy = "off"
+# 手动覆盖，格式 "HH:MM-HH:MM,HH:MM-HH:MM"，按 peak_timezone_offset_minutes
+# 解释；留空 = 使用 catalog。仅用于目录覆盖不到的 provider。
+peak_hours = ""
+peak_timezone_offset_minutes = 480
+# 补货水位：池子 >= 该值时高峰暂停补货；0 = 高峰完全停补货（不推荐）。
+peak_refill_floor = 30
 # Optional cost-saving guard for daemon-owned background LLM / embedding work.
 # When true, refresh / pool precompute / account sync / speculation / proactive
 # push only run while the browser extension has an active runtime-stream

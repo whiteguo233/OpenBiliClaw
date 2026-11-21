@@ -353,3 +353,87 @@ def test_bundled_catalog_loads_and_covers_deepseek() -> None:
     assert effective.confidence == "exact"
     assert effective.rates.input_per_mtok == pytest.approx(0.15)
     assert effective.rates.output_per_mtok == pytest.approx(0.6)
+
+
+def test_primary_route_reads_v2_chain_and_legacy_provider() -> None:
+    from openbiliclaw.llm.rate_card import primary_route
+
+    v2 = types.SimpleNamespace(
+        llm=types.SimpleNamespace(
+            default_chain=["relay"],
+            instances={
+                "relay": types.SimpleNamespace(
+                    provider_type="openai_compatible", model="glm-5.3-flash"
+                )
+            },
+            default_provider="deepseek",
+            deepseek=types.SimpleNamespace(model="deepseek-v4-flash"),
+        )
+    )
+    assert primary_route(v2) == ("openai_compatible", "glm-5.3-flash")
+
+    legacy = types.SimpleNamespace(
+        llm=types.SimpleNamespace(
+            default_chain=[],
+            instances={},
+            default_provider="deepseek",
+            deepseek=types.SimpleNamespace(model="deepseek-v4-flash"),
+        )
+    )
+    assert primary_route(legacy) == ("deepseek", "deepseek-v4-flash")
+
+
+def test_peak_predicate_exists_for_a_known_route_and_not_for_unknown() -> None:
+    from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
+    known = types.SimpleNamespace(
+        llm=types.SimpleNamespace(
+            default_chain=["ds"],
+            instances={
+                "ds": types.SimpleNamespace(provider_type="deepseek", model="deepseek-v4-flash")
+            },
+            default_provider="",
+            instances_data={},
+        )
+    )
+    predicate = peak_predicate_for_config(known, _catalog())
+    assert predicate is not None
+    assert isinstance(predicate(), bool)
+
+    unknown = types.SimpleNamespace(
+        llm=types.SimpleNamespace(
+            default_chain=[],
+            instances={},
+            default_provider="mystery",
+            mystery=types.SimpleNamespace(model="no-such-model"),
+        )
+    )
+    assert peak_predicate_for_config(unknown, _catalog()) is None
+
+
+def test_relay_does_not_inherit_a_provider_peak_schedule() -> None:
+    """A relay reselling deepseek-v4-flash is not assumed to follow DeepSeek's
+    peak windows; only direct providers (or OpenRouter itself) keep tariffs."""
+
+    catalog = _catalog()
+    relay = catalog.resolve(
+        "openai_compatible",
+        "deepseek-v4-flash",
+        now=_utc(2026, 11, 23, 2, 0),
+    )
+    direct = catalog.resolve(
+        "deepseek",
+        "deepseek-v4-flash",
+        now=_utc(2026, 11, 23, 2, 0),
+    )
+    assert relay is not None and direct is not None
+    assert relay.tariff_label == "base"
+    assert direct.tariff_label == "peak"
+    assert (
+        catalog.is_peak(
+            "openai_compatible",
+            "deepseek-v4-flash",
+            now=_utc(2026, 11, 23, 2, 0),
+        )
+        is False
+    )
