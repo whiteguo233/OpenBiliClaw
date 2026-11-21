@@ -814,3 +814,56 @@ def test_malformed_override_cache_prices_do_not_raise() -> None:
     )
     catalog = RateCatalog.from_dict({}, overrides=[override])
     assert catalog.resolve("deepseek", "m") is not None
+
+
+def test_fractional_weekdays_are_rejected_not_truncated() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "input": 2.0,
+                        "output": 4.0,
+                        "start": 0,
+                        "end": 60,
+                        "days": [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5],
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 29, 0, 30))
+    assert effective is not None
+    assert effective.tariff_label == "base"
+
+
+def test_huge_json_integers_do_not_raise() -> None:
+    huge = 10**400
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "input": 1.0,
+                        "output": 2.0,
+                        "start": huge,
+                        "end": 60,
+                        "days": [1],
+                    }
+                ]
+            },
+            "tiers": {"m": [{"min_prompt_tokens": huge, "input": 1.0, "output": 2.0}]},
+            "fx": {"usd_cny": huge},
+        }
+    )
+    effective = catalog.resolve("deepseek", "m", prompt_tokens=1000)
+    assert effective is not None
+    assert effective.tariff_label == "base"
+    assert effective.tier_label == ""
+    assert catalog.usd_cny == 7.2

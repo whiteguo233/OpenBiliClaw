@@ -609,4 +609,8 @@ async def test_switching_to_warn_with_an_active_hold_is_not_exceeded(
     )
     async with gate.slot(caller="soul.insight"):
         gate.configure_daily_budget(limit_cny=0.10, on_exceed="warn", reserve_cny=0.10)
-        assert gate.daily_budget_snapshot()["llm_daily_budget_state"] == "ok"
+        snapshot = gate.daily_budget_snapshot()
+        assert snapshot["llm_daily_budget_state"] == "ok"
+        # The hold is still active; warn mode just doesn't count it as spend.
+        assert snapshot["llm_daily_budget_reserved_cny"] == pytest.approx(0.10)
+        assert snapshot["llm_daily_budget_remaining_cny"] == pytest.approx(0.0)

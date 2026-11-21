@@ -272,6 +272,21 @@ def _as_utc(moment: datetime | None) -> datetime:
     return moment.astimezone(UTC)
 
 
+def _as_int(value: Any) -> int | None:
+    """Parse a JSON integer without truncating fractions or overflowing."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _rates_from_mapping(
     raw: Mapping[str, Any],
     *,
@@ -280,7 +295,7 @@ def _rates_from_mapping(
     try:
         input_rate = float(raw["input"])
         output_rate = float(raw["output"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(input_rate) or not math.isfinite(output_rate):
         return None
@@ -295,11 +310,11 @@ def _rates_from_mapping(
     cache_write = raw.get("cache_write")
     try:
         cache_read_rate = float(cache_read) if cache_read is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         cache_read_rate = None
     try:
         cache_write_rate = float(cache_write) if cache_write is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         cache_write_rate = None
     if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
         cache_read_rate = None
@@ -319,10 +334,9 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
     rates = _rates_from_mapping(raw)
     if rates is None:
         return None
-    try:
-        start = int(raw["start"])
-        end = int(raw["end"])
-    except (KeyError, TypeError, ValueError, OverflowError):
+    start = _as_int(raw.get("start"))
+    end = _as_int(raw.get("end"))
+    if start is None or end is None:
         return None
     if not (0 <= start < 1440 and 0 <= end <= 1440) or start == end:
         return None
@@ -330,11 +344,8 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
     days: set[int] = set()
     if isinstance(days_raw, list):
         for day in days_raw:
-            try:
-                weekday = int(day)
-            except (TypeError, ValueError, OverflowError):
-                continue
-            if 0 <= weekday <= 6:
+            weekday = _as_int(day)
+            if weekday is not None and 0 <= weekday <= 6:
                 days.add(weekday)
         if not days:
             # A present-but-invalid weekday list must not silently turn a
@@ -342,7 +353,7 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
             return None
     try:
         multiplier = float(raw.get("multiplier") or 1.0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         multiplier = 1.0
     if not math.isfinite(multiplier) or multiplier <= 0:
         multiplier = 1.0
@@ -419,14 +430,8 @@ class RateCatalog:
                 if not isinstance(raw, dict):
                     continue
                 rates = _rates_from_mapping(raw)
-                threshold_raw = raw.get("min_prompt_tokens")
-                if not isinstance(threshold_raw, int | float | str):
-                    continue
-                try:
-                    threshold = int(threshold_raw)
-                except (TypeError, ValueError, OverflowError):
-                    continue
-                if rates is None or threshold <= 0:
+                threshold = _as_int(raw.get("min_prompt_tokens"))
+                if rates is None or threshold is None or threshold <= 0:
                     continue
                 provider = str(raw.get("provider") or "").strip().lower()
                 tier = RateTier(min_prompt_tokens=threshold, rates=rates)
@@ -439,7 +444,7 @@ class RateCatalog:
         fx = _mapping(data.get("fx"))
         try:
             usd_cny = float(fx.get("usd_cny") or 7.2)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             usd_cny = 7.2
         self._usd_cny = usd_cny if math.isfinite(usd_cny) and usd_cny > 0 else 7.2
 
@@ -469,7 +474,7 @@ class RateCatalog:
             data = {}
         try:
             return cls(data, overrides=overrides, source_path=catalog_path)
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError, OverflowError):
             logger.warning(
                 "Malformed LLM price catalog at %s; using static pricing",
                 catalog_path,
@@ -486,7 +491,7 @@ class RateCatalog:
     ) -> RateCatalog:
         try:
             return cls(data, overrides=overrides)
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError, OverflowError):
             logger.warning("Malformed LLM price catalog; using static pricing", exc_info=True)
             return cls({}, overrides=overrides)
 
@@ -725,7 +730,7 @@ def _override_values(
     try:
         input_rate = float(get("input"))
         output_rate = float(get("output"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(input_rate) or not math.isfinite(output_rate):
         return None
@@ -735,11 +740,11 @@ def _override_values(
     cache_write = get("cache_write")
     try:
         cache_read_rate = float(cache_read) if cache_read is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         cache_read_rate = None
     try:
         cache_write_rate = float(cache_write) if cache_write is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         cache_write_rate = None
     if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
         cache_read_rate = None
