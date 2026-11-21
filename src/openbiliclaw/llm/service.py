@@ -1532,20 +1532,26 @@ class LLMService:
         emitted_delta = False
         if native:
             try:
-                async for chunk in self._stream_native_tool_call(
-                    messages=messages,
-                    tools=tools,
-                    caller=caller,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning_effort=effective_reasoning_effort,
-                    bypass_semaphore=bypass_semaphore,
-                ):
-                    if chunk.delta:
-                        emitted_delta = True
-                    if chunk.response is not None:
-                        terminal = chunk.response
-                    yield chunk
+                # ``aclosing`` forces the inner generator's finally block (which
+                # settles usage before releasing the daily-budget reservation)
+                # to finish before the public stream's aclose() returns.
+                async with aclosing(
+                    self._stream_native_tool_call(
+                        messages=messages,
+                        tools=tools,
+                        caller=caller,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning_effort=effective_reasoning_effort,
+                        bypass_semaphore=bypass_semaphore,
+                    )
+                ) as stream:
+                    async for chunk in stream:
+                        if chunk.delta:
+                            emitted_delta = True
+                        if chunk.response is not None:
+                            terminal = chunk.response
+                        yield chunk
             except LLMToolCallUnsupportedError:
                 if emitted_delta or terminal is not None:
                     raise

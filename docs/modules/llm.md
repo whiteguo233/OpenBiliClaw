@@ -734,7 +734,7 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 - `stop`：交互调用也拒绝（`LLMDailyBudgetExceededError`，`budget_exceeded` 诊断码，不会被误报成 provider 限流）；
 - `warn`：全部放行，只记日志与事件。
 
-执行点仍是 `LLMConcurrencyGate.slot()`：后台分支在 `_admit_background_call()` **之前**调用 `_admit_daily_budget()`，因此被金额拒绝的请求不会顺带烧掉一次次数额度；交互分支只在 `stop` 模式下检查。`0` 或负数关闭该 guard，且不会创建 spend ledger，不产生任何数据库读。
+执行点仍是 `LLMConcurrencyGate.slot()`：后台分支在 `_admit_background_call()` **之前**调用 `_reserve_daily_budget()`，因此被金额拒绝的请求不会顺带烧掉一次次数额度；交互分支只在 `stop` 模式下检查。预留写入共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL），跨进程/热重载可见；`0` 或负数关闭 cap，`daily_budget_reserve_cny=0` 关闭预留但仍按已花金额拦截。
 
 `DailySpendLedger`（`llm/budget.py`）用 `local_day_window()`（`local_day.py`）把本地零点换算成 UTC 文本区间，查询落在 `idx_llm_usage_timestamp` 上，而不是无法走索引的 `date(timestamp,'localtime')`。读失败一律 fail-open 返回 0（新库、表未建、锁冲突都不能把估算变成全站 LLM 停机）；超限事件 `event_type='budget_exceeded'` 每天最多一条，`BEGIN IMMEDIATE` 内先查后插，跨进程不会重复。`ContinuousRefreshController._llm_budget_allowed()` 同时叠加 `_call_budget_allowed()` 与 `_daily_budget_allowed()`，在环路入口友好暂停并打 WARNING。
 
@@ -745,7 +745,7 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 
 **2026-11-21 价目校准**：按 models.dev / OpenRouter 的实测价，`deepseek-v4-flash` 为 `$0.15/$0.60` 每百万 token（¥1.08/¥4.32），旧表输出价 ¥2/M 低估 **2.16 倍**，正是 issue #353 里“自估 0.85 / 实际 1.91”的来源；`deepseek-v4-pro` 同步改为 `$0.66/$1.98`。这仍是静态表的止血，长期方案（models.dev + OpenRouter 峰谷窗口 + 用户覆盖 + 余额校准）见 [LLM 价格目录与峰谷调度设计](../plans/2026-11-21-llm-price-catalog-and-peak-scheduling.md)。
 
-超调说明：准入检查的是**已发生花费 + 在途预留**；`scheduler.daily_budget_reserve_cny` 的 per-call 预留放在共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL），并发/跨进程请求不再同时读到同一份余额。但预留是固定 worst-case，不是按本次 prompt 估算：超出预留的那一次仍会发出，最多超一个单次调用成本（长推理可达 ¥0.1–0.5 量级）。要做精确预扣需要预估 prompt token，收益不足以抵消误判，仍不实现。Embedding 请求不经过该 gate、也不写 `llm_usage`，因此每日上限目前只覆盖聊天 / 评估 / 生成类调用；embedding 费用仍在 `openbiliclaw cost` 之外。
+超调说明：准入检查的是**已发生花费 + 在途预留**；`scheduler.daily_budget_reserve_cny` 的 per-call 预留放在共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL），并发/跨进程请求不再同时读到同一份余额。但预留是固定 worst-case，不是按本次 prompt 估算：并发 N 个请求各自可能超出自己的预留，极端情况下总超调可超过一个单次调用成本（长推理单次可达 ¥0.1–0.5 量级）。要做精确预扣需要预估 prompt token，收益不足以抵消误判，仍不实现。Embedding 请求不经过该 gate、也不写 `llm_usage`，因此每日上限目前只覆盖聊天 / 评估 / 生成类调用；embedding 费用仍在 `openbiliclaw cost` 之外。
 
 `status_payload()` / `/api/runtime-status` 暴露 `llm_daily_budget_cny`、`llm_daily_budget_on_exceed`、`llm_today_cost_cny`、`llm_daily_budget_state`（`disabled|ok|exceeded`）与 `llm_daily_budget_day`；桌面设置页与插件设置页各有一行“今日已花 / 上限”。
 

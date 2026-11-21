@@ -686,3 +686,20 @@ def test_openrouter_card_does_not_inherit_another_providers_tiers() -> None:
     assert effective is not None
     assert effective.tier_label == ""
     assert effective.rates.input_per_mtok == 5.0
+
+
+def test_nonfinite_user_override_cache_prices_are_ignored() -> None:
+    override = types.SimpleNamespace(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        input=1.0,
+        output=2.0,
+        cache_read=float("inf"),
+        cache_write=float("-inf"),
+        currency="USD",
+    )
+    catalog = RateCatalog.from_dict({}, overrides=[override])
+    effective = catalog.resolve("deepseek", "deepseek-v4-flash", prompt_tokens=1000)
+    assert effective is not None
+    assert effective.rates.cache_read_per_mtok is None
+    assert effective.rates.cache_write_per_mtok is None

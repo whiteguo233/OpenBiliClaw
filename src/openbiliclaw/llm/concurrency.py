@@ -781,6 +781,12 @@ class LLMConcurrencyGate:
         snapshot = self.daily_budget_snapshot()
         raw_spend = snapshot["llm_today_cost_cny"]
         spend = float(raw_spend) if isinstance(raw_spend, int | float) else 0.0
+        ledger = self._daily_spend_ledger
+        if ledger is not None:
+            try:
+                spend = ledger.spend_cny()
+            except Exception:
+                logger.warning("Daily spend lookup failed; using snapshot", exc_info=True)
         day = str(snapshot["llm_daily_budget_day"])
         if self._daily_budget_on_exceed == "warn":
             if spend >= self._daily_budget_cny:
@@ -795,7 +801,6 @@ class LLMConcurrencyGate:
                 raise self._daily_budget_error(caller=caller, spend=spend, reserved=0.0)
             return 0.0
 
-        ledger = self._daily_spend_ledger
         if ledger is not None:
             ledger_failed = False
             try:
@@ -823,7 +828,8 @@ class LLMConcurrencyGate:
                 raise self._daily_budget_error(
                     caller=caller,
                     spend=spend,
-                    reserved=ledger.active_reserved_cny(),
+                    reserved=ledger.active_reserved_cny()
+                    + self._daily_budget_reserved_cny,
                 )
             # SQLite failed; fall through to the process-local counter instead
             # of turning an infrastructure hiccup into a false budget stop.

@@ -689,14 +689,24 @@ def _override_values(
         return None
     cache_read = get("cache_read")
     cache_write = get("cache_write")
+    cache_read_rate = float(cache_read) if cache_read is not None else None
+    cache_write_rate = float(cache_write) if cache_write is not None else None
+    if cache_read_rate is not None and (
+        not math.isfinite(cache_read_rate) or cache_read_rate < 0
+    ):
+        cache_read_rate = None
+    if cache_write_rate is not None and (
+        not math.isfinite(cache_write_rate) or cache_write_rate < 0
+    ):
+        cache_write_rate = None
     return (
         provider,
         model,
         TokenRates(
             input_per_mtok=input_rate,
             output_per_mtok=output_rate,
-            cache_read_per_mtok=float(cache_read) if cache_read is not None else None,
-            cache_write_per_mtok=float(cache_write) if cache_write is not None else None,
+            cache_read_per_mtok=cache_read_rate,
+            cache_write_per_mtok=cache_write_rate,
         ),
         str(get("currency") or "USD").upper(),
     )
