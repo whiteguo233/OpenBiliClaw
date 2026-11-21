@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
@@ -281,6 +282,8 @@ def _rates_from_mapping(
         output_rate = float(raw["output"])
     except (KeyError, TypeError, ValueError):
         return None
+    if not math.isfinite(input_rate) or not math.isfinite(output_rate):
+        return None
     if input_rate < 0 or output_rate < 0:
         return None
     if not allow_zero and (input_rate <= 0 or output_rate <= 0):
@@ -292,9 +295,11 @@ def _rates_from_mapping(
     cache_write = raw.get("cache_write")
     cache_read_rate = float(cache_read) if cache_read is not None else None
     cache_write_rate = float(cache_write) if cache_write is not None else None
-    if cache_read_rate is not None and cache_read_rate < 0:
+    if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
         cache_read_rate = None
-    if cache_write_rate is not None and cache_write_rate < 0:
+    if cache_write_rate is not None and (
+        not math.isfinite(cache_write_rate) or cache_write_rate < 0
+    ):
         cache_write_rate = None
     return TokenRates(
         input_per_mtok=input_rate,
@@ -370,8 +375,6 @@ class RateCatalog:
                     continue
                 provider = str(raw.get("provider") or "").strip().lower()
                 tariff_groups.setdefault((provider, model_key), []).append(window)
-                if provider and provider != "openrouter":
-                    tariff_groups.setdefault(("openrouter", model_key), []).append(window)
         for key, windows in tariff_groups.items():
             self._tariffs[key] = tuple(windows)
 
@@ -397,8 +400,6 @@ class RateCatalog:
                 provider = str(raw.get("provider") or "").strip().lower()
                 tier = RateTier(min_prompt_tokens=threshold, rates=rates)
                 tier_groups.setdefault((provider, model_key), []).append(tier)
-                if provider and provider != "openrouter":
-                    tier_groups.setdefault(("openrouter", model_key), []).append(tier)
         for key, parsed_tiers in tier_groups.items():
             self._tiers[key] = tuple(sorted(parsed_tiers, key=lambda tier: tier.min_prompt_tokens))
         self._override_cards: dict[tuple[str, str], RateCard] = {}
@@ -515,9 +516,11 @@ class RateCatalog:
             )
         except (KeyError, TypeError, ValueError):
             return None
+        if not math.isfinite(input_max) or not math.isfinite(output_max):
+            return None
         if input_max <= 0 or output_max <= 0:
             return None
-        if cache_read_max is not None and cache_read_max < 0:
+        if cache_read_max is not None and (not math.isfinite(cache_read_max) or cache_read_max < 0):
             cache_read_max = None
         rates = TokenRates(
             input_per_mtok=input_max,
@@ -679,6 +682,8 @@ def _override_values(
         input_rate = float(get("input"))
         output_rate = float(get("output"))
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(input_rate) or not math.isfinite(output_rate):
         return None
     if input_rate < 0 or output_rate < 0:
         return None

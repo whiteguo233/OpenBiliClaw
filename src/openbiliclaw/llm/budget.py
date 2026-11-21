@@ -242,7 +242,7 @@ class DailySpendLedger:
                 spend_row = connection.execute(
                     "SELECT COALESCE(SUM(estimated_cost_cny), 0.0) FROM llm_usage "
                     "WHERE timestamp >= ? AND timestamp < ?",
-                    (start_utc, self._window()[2]),
+                    (start_utc, end_utc),
                 ).fetchone()
                 spend = float(spend_row[0] or 0.0) if spend_row else 0.0
                 reserved_row = connection.execute(
@@ -309,12 +309,14 @@ class DailySpendLedger:
         spend_cny: float,
         limit_cny: float,
         on_exceed: str,
-    ) -> bool:
+    ) -> bool | None:
         """Insert one ``budget_exceeded`` event per local day.
 
-        Returns True only when this call wrote the row. The check and insert
-        share one ``BEGIN IMMEDIATE`` transaction so sibling processes cannot
-        both write the event.
+        Returns True when this call wrote the row, False when another process
+        already wrote it, and None when SQLite failed (so the caller can retry
+        instead of marking the day handled). The check and insert share one
+        ``BEGIN IMMEDIATE`` transaction so sibling processes cannot both write
+        the event.
         """
 
         day, start_utc, end_utc = self._window()
@@ -355,4 +357,4 @@ class DailySpendLedger:
                     raise
         except sqlite3.Error:
             logger.warning("Failed to record budget_exceeded event", exc_info=True)
-            return False
+            return None

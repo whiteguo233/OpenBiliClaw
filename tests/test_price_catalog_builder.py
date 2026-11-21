@@ -291,3 +291,40 @@ def test_builder_merges_colliding_tiers_instead_of_overwriting() -> None:
     tiers = builder.build_tiers(payload)
     providers = {tier["provider"] for tier in tiers["gpt-tiered"]}
     assert providers == {"openai", "azure"}
+
+
+def test_batch_routes_are_not_mixed_into_standard_tiers() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "openai/gpt-5.4",
+                "pricing": {
+                    "prompt": "0.000005",
+                    "completion": "0.0000225",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": 272000,
+                            "prompt": "0.000005",
+                            "completion": "0.0000225",
+                        }
+                    ],
+                },
+            },
+            {
+                "id": "openai/gpt-5.4:batch",
+                "pricing": {
+                    "prompt": "0.0000025",
+                    "completion": "0.00001125",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": 272000,
+                            "prompt": "0.0000025",
+                            "completion": "0.00001125",
+                        }
+                    ],
+                },
+            },
+        ]
+    }
+    tiers = builder.build_tiers(payload)["gpt-5.4"]
+    assert [(tier["input"], tier["output"]) for tier in tiers] == [(5.0, 22.5)]

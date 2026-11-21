@@ -15,6 +15,7 @@ Zero or missing prices are never emitted as free. Explicitly free providers
 from __future__ import annotations
 
 import json
+import math
 import os
 import statistics
 import tempfile
@@ -76,7 +77,7 @@ def _positive(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    if number <= 0 or number != number:  # NaN
+    if not math.isfinite(number) or number <= 0:
         return None
     # Keep the raw per-token precision: rounding at 8 decimals would turn
     # OpenRouter's $0.003/M cache rate (3e-9 per token) into zero before the
@@ -237,6 +238,11 @@ def build_tiers(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         if not isinstance(overrides, list):
             continue
         route_id = str(row.get("id") or "")
+        if ":batch" in route_id.lower():
+            # Batch routes share the normalized model id but are roughly half
+            # price; mixing them into the standard tier misprices ordinary
+            # prompts (OpenRouter exposes them as ``model:batch``).
+            continue
         author = route_id.split("/", 1)[0].strip().lower()
         provider = _OPENROUTER_PROVIDER_ALIASES.get(author, author)
         model_id = normalize_model_id(route_id)
@@ -304,6 +310,11 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
         if base is None:
             continue
         route_id = str(row.get("id") or "")
+        if ":batch" in route_id.lower():
+            # Batch routes share the normalized model id but are roughly half
+            # price; mixing them into the standard tier misprices ordinary
+            # prompts (OpenRouter exposes them as ``model:batch``).
+            continue
         author = route_id.split("/", 1)[0].strip().lower()
         provider = _OPENROUTER_PROVIDER_ALIASES.get(author, author)
         model_id = normalize_model_id(route_id)

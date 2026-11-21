@@ -564,3 +564,25 @@ async def test_missing_sqlite_tables_fall_back_instead_of_stopping(tmp_path: Pat
     )
     async with gate.slot(caller="soul.insight"):
         pass
+
+
+async def test_audit_uses_raw_spend_not_the_rounded_display(usage_db: Database) -> None:
+    ledger = DailySpendLedger(usage_db._db_path, now=lambda: _FIXED_NOW)
+    _insert_spend(usage_db, when=_FIXED_NOW, cost=0.9999996)
+    gate = LLMConcurrencyGate(
+        2,
+        daily_budget_cny=1.0,
+        daily_budget_reserve_cny=0.0,
+        daily_budget_ledger=ledger,
+    )
+    gate.record_daily_budget_exceeded()
+    with sqlite3.connect(usage_db._db_path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type = 'budget_exceeded'"
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_audit_write_failure_is_retryable(tmp_path: Path) -> None:
+    ledger = DailySpendLedger(tmp_path / "no-events.db")
+    assert ledger.record_exceeded(spend_cny=1.2, limit_cny=1.0, on_exceed="pause") is None

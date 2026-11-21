@@ -1355,12 +1355,6 @@ class LLMService:
             )
         if not response.content.strip() and not response.tool_calls:
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(response, caller=caller)
         return response
 
     def _route_supports_native_tools(self, caller: str) -> bool:
@@ -1584,12 +1578,6 @@ class LLMService:
                 yield chunk
         if terminal is None or (not terminal.content.strip() and not terminal.tool_calls):
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(terminal, caller=caller)
 
     async def _stream_native_tool_call(
         self,
@@ -1658,13 +1646,20 @@ class LLMService:
             ):
                 yield chunk
 
+        terminal: LLMResponse | None = None
         try:
             async with self._provider_slot(
                 caller=caller,
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
-                async for chunk in _route_stream():
-                    yield chunk
+                try:
+                    async for chunk in _route_stream():
+                        if chunk.response is not None:
+                            terminal = chunk.response
+                        yield chunk
+                finally:
+                    if terminal is not None and (terminal.content.strip() or terminal.tool_calls):
+                        self._record_usage(terminal, caller=caller)
         except LLMToolCallUnsupportedError:
             raise
         except LLMBudgetExhaustedError:

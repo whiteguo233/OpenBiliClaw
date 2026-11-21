@@ -751,7 +751,13 @@ class LLMConcurrencyGate:
             return
         raw_spend = snapshot["llm_today_cost_cny"]
         spend = float(raw_spend) if isinstance(raw_spend, int | float) else 0.0
-        if spend < self._daily_budget_cny:
+        ledger = self._daily_spend_ledger
+        if ledger is not None:
+            try:
+                spend = ledger.spend_cny()
+            except Exception:
+                logger.warning("Daily spend lookup failed; using snapshot", exc_info=True)
+        if spend + 1e-9 < self._daily_budget_cny:
             # "Exceeded" can mean "the next reservation no longer fits"; only
             # actual spend gets the once-per-day audit event.
             return
@@ -793,9 +799,11 @@ class LLMConcurrencyGate:
         if ledger is not None:
             ledger_failed = False
             try:
+                # Process-local fallback holds still consume headroom after
+                # SQLite recovers; subtract them from the DB-enforced limit.
                 token = ledger.try_reserve(
                     amount_cny=reserve,
-                    limit_cny=self._daily_budget_cny,
+                    limit_cny=self._daily_budget_cny - self._daily_budget_reserved_cny,
                 )
             except Exception:
                 logger.warning(
@@ -882,7 +890,7 @@ class LLMConcurrencyGate:
             self._daily_budget_warned_day = day
             return
         try:
-            ledger.record_exceeded(
+            persisted = ledger.record_exceeded(
                 spend_cny=spend,
                 limit_cny=self._daily_budget_cny,
                 on_exceed=self._daily_budget_on_exceed,
@@ -890,8 +898,10 @@ class LLMConcurrencyGate:
         except Exception:
             logger.warning("Failed to persist budget_exceeded event", exc_info=True)
             return
-        # Mark the day handled only after persistence succeeds so a transient
-        # write failure retries on the next admission.
+        if persisted is None:
+            # SQLite failure: leave the day unmarked so the next admission
+            # retries the audit write.
+            return
         self._daily_budget_warned_day = day
 
     def classify(self, caller: str) -> LLMTrafficClass:

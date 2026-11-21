@@ -43,6 +43,8 @@
 
 - 价格/预算验收修复：峰谷窗口与长上下文档位改为 **provider + model** 作用域，用户覆盖与中转不再继承官方窗口；每日预留改为共享 SQLite `background_llm_budget_reservations`（跨进程、30 分钟 TTL、原子 reserve/release），热重载不再丢失在途预留；本地日边界按每个午夜各自的 DST 偏移计算；预算耗尽不再被公开错误分类/文案伪装成 provider 429；account sync 同样接入 peak predicate；cost-aware routing 读取各 adapter 的 `_model` 且跨模型位置保持不变；手动窗口拒绝 `08:99` 这类越界分钟。
 
+- 第三轮验收修复：OpenRouter `:batch` 路由不再混入标准长上下文档位；OpenRouter 卡片不再继承其他 provider 的 tariff/tier；非有限（NaN/Inf）报价与缓存价拒绝落账；SQLite 恢复后共享准入仍扣减进程内 fallback 预留；审计事件使用未四舍五入花费、失败可重试；原生工具调用只记一次 usage，流式在槽内结算后才释放预留；popup 状态白名单补齐 `llm_daily_budget_reserved_cny` / `llm_daily_budget_remaining_cny`。
+
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
 
 - PR #351（感谢 @jjjj31）：修复桌面页聊天流缺 CSRF 头导致 `/api/chat/agent/stream` 与 `/api/chat/stream`（含 agent loop 关闭时的旧回退、探针聊天、对话结算）固定 403、气泡卡在“正在思考”且 `chat_turns` 永远 pending；`streamAgentChatTurn()` 与 `streamChatTurn()` 补 `credentials: "same-origin"` 与 `X-OBC-Auth: 1` 头，并加静态回归测试。

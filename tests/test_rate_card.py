@@ -641,3 +641,48 @@ def test_negative_offer_and_cache_prices_are_not_billable() -> None:
     assert exact is not None
     assert exact.rates.cache_read_per_mtok is None
     assert catalog.resolve("openai_compatible", "bad") is None
+
+
+def test_nonfinite_offer_prices_are_rejected() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {},
+            "offers": {
+                "nan-model": {"count": 1, "input_max": float("nan"), "output_max": 2.0},
+            },
+        }
+    )
+    assert catalog.resolve("openai_compatible", "nan-model") is None
+
+
+def test_openrouter_card_does_not_inherit_another_providers_tiers() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {
+                        "gpt-5.4": {
+                            "input": 5.0,
+                            "output": 22.5,
+                            "currency": "USD",
+                            "source": "models.dev",
+                        }
+                    }
+                }
+            },
+            "tiers": {
+                "gpt-5.4": [
+                    {
+                        "provider": "openai",
+                        "min_prompt_tokens": 272000,
+                        "input": 2.5,
+                        "output": 11.25,
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("openrouter", "gpt-5.4", prompt_tokens=300000)
+    assert effective is not None
+    assert effective.tier_label == ""
+    assert effective.rates.input_per_mtok == 5.0
