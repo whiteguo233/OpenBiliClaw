@@ -470,7 +470,8 @@ Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial �
                      Interactive owned iframe → document/login guard before resume → shared request/byte budget; popups/workers blocked
                      desktop / popup / mobile → peer source settings cards + source_name labels
                      macOS deployment → automatic Ego setup → native handshake → on-demand startup
-                     Windows Beta install → Authenticode → headless Ego → authenticated loopback
+                     Windows Beta install → Authenticode → headless Ego → native Node parent PID + image check
+                       → authenticated loopback → shared workflow and takeover
                      Explicit host routing → private network.json → system manual proxy rules + exact direct hosts on cold start
                      Committed parsed DOM stable 8s / complete DOM stable 1.5s → unchanged extraction/scope verification
                      Preparation complete / last session closed → shared 120s idle grace → stop only without session leases; CLI exit cleanup

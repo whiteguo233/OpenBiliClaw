@@ -786,7 +786,9 @@ class EgoSetupManager:
             json.dumps([str(self.app), str(self.executable)]).encode()
         ).decode()
         script = (
-            "$ErrorActionPreference='Stop';"
+            "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
+            "Import-Module (Join-Path $PSHOME "
+            "'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1');"
             f"$paths=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{paths}'))"
             " | ConvertFrom-Json;"
             "foreach ($path in $paths) {"
@@ -818,12 +820,13 @@ class EgoSetupManager:
             f"--ego-server-name={self.server_name}",
             f"--user-data-dir={self.profile_dir}",
             "--headless=new",
-            "--no-startup-window",
             "--no-first-run",
             "--enable-automation",
             "--disable-background-networking",
             "--disable-component-update",
             "--disable-sync",
+            # This Windows build closes the native service without an initial tab.
+            "about:blank",
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
             **no_window_kwargs(),
@@ -844,7 +847,7 @@ class EgoSetupManager:
             pid = self._pid()
             if pid and self._state().get("ready_pid") == pid:
                 with suppress(OSError, TimeoutError, EgoSetupError):
-                    await _command(*self._windows_shutdown_command(), timeout=3)
+                    await _command(*self._windows_shutdown_command(pid), timeout=3)
                 deadline = time.monotonic() + min(max(exit_budget, 0), 3)
                 while self._pid() == pid and time.monotonic() < deadline:
                     await asyncio.sleep(0.05)
@@ -905,7 +908,7 @@ class EgoSetupManager:
             if pid and self._state().get("ready_pid") == pid:
                 with suppress(OSError, TimeoutExpired):
                     run(
-                        self._windows_shutdown_command(),
+                        self._windows_shutdown_command(pid),
                         capture_output=True,
                         timeout=3,
                         **no_window_kwargs(),
@@ -943,21 +946,21 @@ class EgoSetupManager:
                 time.sleep(0.05)
         self._write(pid=None, process_created=None, ready_pid=None, debug_port=0)
 
-    def _windows_shutdown_command(self) -> list[str]:
+    def _windows_shutdown_command(self, pid: int) -> list[str]:
         return [
             str(self.executable),
             f"--ego-server-name={self.server_name}",
             "nodejs",
             "-e",
-            self._windows_host_verification(shutdown=True),
+            self._windows_host_verification(pid)
+            + "ego.sendCDPMessage(JSON.stringify({id:1,method:'Browser.close'}));",
         ]
 
-    def _windows_host_verification(self, *, shutdown: bool = False) -> str:
+    def _windows_host_verification(self, pid: int) -> str:
         module = Path(__file__).with_name("ego_host.mjs").as_uri()
         return (
             f"const m=await import({json.dumps(module)});"
-            f"await m.verifyWindowsHost({json.dumps(self.server_name)},"
-            f"{json.dumps(str(self.profile_dir))},{json.dumps(shutdown)});"
+            f"m.verifyWindowsHost({pid},{json.dumps(str(self.app))});"
         )
 
     async def _handshake(self) -> None:
@@ -971,7 +974,7 @@ class EgoSetupManager:
             "version:v.currentVersion,profile:p.profiles.some(x=>x.id==='Default')}));"
         )
         if self.windows:
-            expression = self._windows_host_verification() + expression
+            expression = self._windows_host_verification(pid) + expression
         output = await _command(
             str(self.executable),
             f"--ego-server-name={self.server_name}",

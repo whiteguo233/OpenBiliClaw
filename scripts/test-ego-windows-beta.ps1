@@ -121,6 +121,14 @@ export async function run(config) {
       return { version };
     });
 
+    if (config.browserPid) {
+      await step('cold_host_identity', () => {
+        assert(process.ppid === config.browserPid, 'wrong_named_browser');
+        const normalize = value => value.replaceAll('/', '\\');
+        assert(same(normalize(process.execPath), normalize(config.browserExe)), 'wrong_browser_image');
+      });
+    }
+
     await step('task_space', async () => {
       task = native(await bounded(() => ego.createTaskSpace(config.task, 'Default')));
       assert(Number.isSafeInteger(task?.id), 'task_space_id_invalid');
@@ -142,24 +150,6 @@ export async function run(config) {
         }
       };
     });
-
-    await step('raw_cdp', async () => {
-      const result = await send('Browser.getVersion');
-      assert(/^\d+(?:\.\d+){1,3}$/.test(result?.protocolVersion), 'cdp_version_invalid');
-      return { protocolVersion: result.protocolVersion };
-    });
-
-    if (config.profile) {
-      await step('cold_host_identity', async () => {
-        const { arguments: args } = await send('Browser.getBrowserCommandLine');
-        assert(Array.isArray(args), 'browser_arguments_unavailable');
-        assert(args.some(arg => same(arg, '--ego-server-name=' + config.server)), 'wrong_named_browser');
-        const profile = '--user-data-dir=' + config.profile.replaceAll('/', '\\');
-        assert(args.some(arg => typeof arg === 'string' && same(arg.replaceAll('/', '\\'), profile)), 'wrong_browser_profile');
-        assert(args.includes('--headless=new'), 'headless_argument_missing');
-        assert(args.includes('--no-startup-window'), 'no_startup_window_argument_missing');
-      });
-    }
 
     await step('tab_and_target', async () => {
       const { targetId } = native(await bounded(() => ego.createTab('about:blank')));
@@ -271,11 +261,13 @@ function Find-EgoBrowser([string]$CliPath) {
         $cliDirectory.Parent.FullName
         $(if ($junction) { $junction.Value })
         (Join-Path $env:LOCALAPPDATA 'Citro Labs\ego\Application')
+        (Join-Path $env:LOCALAPPDATA 'Citro Labs\ego lite\Application')
         (Join-Path $env:LOCALAPPDATA 'Ego Lite')
         (Join-Path $env:LOCALAPPDATA 'Ego Lite\Application')
         (Join-Path $env:LOCALAPPDATA 'EgoLite\Application')
         (Join-Path $env:LOCALAPPDATA 'Ego\Application')
         $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Citro Labs\ego\Application' })
+        $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Citro Labs\ego lite\Application' })
         $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'ego\Application' })
     ) | Where-Object { $_ } | Select-Object -Unique
     foreach ($directory in $directories) {
@@ -382,8 +374,9 @@ function Invoke-NativeProbe(
         } else {
             $report.cliExit = $cli.ExitCode
         }
-        if ($stdout.Wait(2000)) {
-            foreach ($line in ($stdout.Result -split '\r?\n')) {
+        foreach ($stream in @($stdout, $stderr)) {
+            if (-not $stream.Wait(2000)) { continue }
+            foreach ($line in ($stream.Result -split '\r?\n')) {
                 if ($line.StartsWith('OBC_EGO_PROBE ')) {
                     try {
                         $report.checks += ConvertFrom-Json -InputObject $line.Substring(14)
@@ -398,6 +391,7 @@ function Invoke-NativeProbe(
             $report.code = switch -Regex ($rawError) {
                 'cannot find the app' { 'app_installation_not_resolved'; break }
                 'bootstrap|failed to connect' { 'native_bootstrap_connection_failed'; break }
+                'closed the connection' { 'native_connection_closed'; break }
                 'onboarding|first.run' { 'app_onboarding_required'; break }
                 'unknown (flag|option)|unrecognized (flag|option)' { 'native_cli_option_rejected'; break }
                 default { 'no_probe_output' }
@@ -494,14 +488,15 @@ namespace EgoWindowsBetaProbe {
                 Write-Host '[1/2] Testing a new headless Ego instance with a temporary profile...'
                 $profile = Join-Path $scratch 'profile'
                 $serverName = "obc-win-probe-$probeId"
-                $arguments = ('--ego-server-name={0} "--user-data-dir={1}" --headless=new --no-startup-window ' +
+                $arguments = ('--ego-server-name={0} "--user-data-dir={1}" --headless=new ' +
                     '--enable-automation --no-first-run --disable-background-networking --disable-component-update ' +
-                    '--disable-sync --no-proxy-server') -f $serverName, $profile
+                    '--disable-sync --no-proxy-server about:blank') -f $serverName, $profile
                 $hostProcess = Start-ProbeProcess $browserPath $arguments $false
                 $report.headless = Invoke-NativeProbe $cliPath $modulePath @{
                     task = "OBC probe headless $probeId"
                     server = $serverName
-                    profile = $profile
+                    browserPid = $hostProcess.Id
+                    browserExe = $browserPath
                 } $hostProcess
             }
         } catch {

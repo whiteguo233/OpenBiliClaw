@@ -300,12 +300,14 @@ class EgoLiteWorkflowSession:
             **{key: state[key] for key in ("task_id", "task_name", "profile")},
         }
         if windows:
+            if current_pid is None or not self.executor.managed:
+                raise _error("ego_windows_host_identity")
             config.update(
                 auth_token=secrets.token_hex(32),
                 headless=True,
                 windows_host={
-                    "server": self.executor.server_name,
-                    "profile": str(self.executor._setup.profile_dir),
+                    "pid": current_pid,
+                    "executable": str(self.executor._setup.app),
                 },
             )
         else:
@@ -356,11 +358,13 @@ class EgoLiteWorkflowSession:
                 )
             await asyncio.sleep(0.05)
         ready = json.loads(ready_file.read_text())
+        if ready.get("error"):
+            raise _error(str(ready["error"]))
+        if windows and self.executor._setup._pid() != current_pid:
+            raise _error("ego_windows_host_identity")
         if ready.get("task_id") is not None:
             state.update(task_id=ready["task_id"], host_pid=current_pid)
             _save_session_state(state_file, state)
-        if ready.get("error"):
-            raise _error(str(ready["error"]))
         pid = _host_pid(self.executor.server_name)
         if pid:
             _READY[self.executor.host_key] = (pid, str(ready.get("version", "")))

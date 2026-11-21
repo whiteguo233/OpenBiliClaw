@@ -1,6 +1,6 @@
 # 动态 Web Discover 来源验收
 
-2026-11-21 [官方 Ego Lite Windows Beta 适配](testing/2026-11-21-ego-windows-beta.md)进入真机试测。构建、底层连接、无窗口与接管按该记录单列。
+2026-11-21 [官方 Ego Lite Windows Beta 真机验收](testing/2026-11-21-ego-windows-beta.md#修复后的真机验收)通过原生握手、无窗口探测、公开网站试跑、5 分钟自然调度及本机测试站登录接管和重启恢复。
 
 2026-11-07 [原生动态来源与异常记录真实验收](testing/2026-11-07-real-native-source-e2e.md)
 补充全新官方 Ego 安装、冷启动竞争对照修复、真实连接失败／恢复与原生事件展示。

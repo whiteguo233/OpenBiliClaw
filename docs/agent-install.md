@@ -1054,7 +1054,9 @@ particular website trial will succeed.
 
 Preparation verifies the installed browser and CLI using Authenticode and the Citro Labs signer,
 then starts a separate, headless named instance with a private profile beside the database.
-The native handshake checks the instance flags before the backend creates a workflow tab.
+The Windows browser starts with a headless blank tab so its named service stays available.
+Before creating any workflow tab, the native Node process proves its parent PID and executable
+match the browser launched by the backend. Windows process creation time fences PID reuse.
 Source installs accept optional absolute `OPENBILICLAW_EGO_WINDOWS_APP` and
 `OPENBILICLAW_EGO_WINDOWS_CLI` paths for installs in other locations. See the
 [Windows test steps](testing/2026-11-21-ego-windows-beta.md) for real-machine checks and report collection.

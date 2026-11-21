@@ -175,10 +175,9 @@ Settings → names / shares / cadence / enabled state / run history
 macOS installation and deployed server/desktop startup automatically prepare an isolated
 official Ego Lite host through `EgoSetupManager` (install → onboarding → native handshake).
 The API owns a background preparation task; prepared installations are reused and start on demand.
-Positively parsed RSS/Atom/JSON Feed uses HTTP. Setup failures never trigger Playwright fallback. Persisted legacy
-workflows retain their executor. The native adapter currently targets a local macOS host;
-real onboarding and end-to-end acceptance remain pending in the
-[Ego ledger](testing/2026-10-22-ego-lite-discovery-e2e.md).
+Windows uses the separately installed official Beta. The backend verifies Authenticode and starts a named headless browser with a private profile. It checks the native Node process's parent PID and image against the browser it launched, then uses authenticated loopback. [Windows acceptance](testing/2026-11-21-ego-windows-beta.md)
+
+Positively parsed RSS/Atom/JSON Feed uses HTTP. Persisted legacy workflows retain their executor.
 
 ### TikTok public discovery
 

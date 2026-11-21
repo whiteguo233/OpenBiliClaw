@@ -74,14 +74,15 @@ async def test_windows_connects_signed_beta_without_touching_macos_paths(
     args = launch.await_args.args
     assert args[0] == str(manager.app)
     assert f"--user-data-dir={manager.profile_dir}" in args
-    assert "--headless=new" in args and "--no-startup-window" in args
+    assert "--headless=new" in args and "--no-startup-window" not in args
+    assert args[-1] == "about:blank"
     assert not any("--remote-debugging" in arg for arg in args)
     assert command.await_args_list[0].args[1:4] == (
         "-NoProfile",
         "-NonInteractive",
         "-EncodedCommand",
     )
-    assert "verifyWindowsHost" in command.await_args.args[-1]
+    assert "verifyWindowsHost(921," in command.await_args.args[-1]
     assert command.await_args.args[1] == f"--ego-server-name={manager.server_name}"
 
 
@@ -158,8 +159,8 @@ async def test_windows_rpc_authenticates_server_before_disclosing_client_proof()
         await asyncio.wait_for(finished.wait(), 3)
 
 
-@pytest.mark.parametrize("wrong_instance", [False, True])
-async def test_windows_rpc_integrates_with_fixed_node_host(tmp_path, wrong_instance):
+@pytest.mark.parametrize("identity", ["owned", "wrong_parent", "wrong_image"])
+async def test_windows_rpc_integrates_with_fixed_node_host(tmp_path, identity):
     node = shutil.which("node")
     if not node:
         pytest.skip("Node is required for the native host fixture")
@@ -174,14 +175,14 @@ async def test_windows_rpc_integrates_with_fixed_node_host(tmp_path, wrong_insta
         str(host),
         str(ready),
         token,
-        str(wrong_instance).lower(),
+        identity,
     )
     try:
         async with asyncio.timeout(5):
             while not ready.exists():
                 await asyncio.sleep(0.02)
             result = json.loads(ready.read_text())
-            if wrong_instance:
+            if identity != "owned":
                 assert result == {"error": "ego_windows_host_identity"}
                 assert await process.wait() == 0
                 return

@@ -28,60 +28,13 @@ export async function startFile(path) {
   return start(JSON.parse(fs.readFileSync(path,'utf8')));
 }
 
-function validateWindowsArguments(args, server, profile) {
+export function verifyWindowsHost(pid, executable) {
+  // The embedded Windows Node process is a child of the browser that serves
+  // the command. Python pins that browser's image and kernel creation time.
   const normalize = value => value.replaceAll('/', '\\').toLowerCase();
-  if (!Array.isArray(args) || !args.includes('--ego-server-name=' + server) ||
-      !args.some(arg => typeof arg === 'string' &&
-        normalize(arg) === normalize('--user-data-dir=' + profile)) ||
-      !args.includes('--headless=new') || !args.includes('--no-startup-window')) {
+  if (!Number.isSafeInteger(pid) || pid < 2 || process.ppid !== pid ||
+      typeof executable !== 'string' || normalize(process.execPath) !== normalize(executable)) {
     throw Error('ego_windows_host_identity');
-  }
-}
-
-export async function verifyWindowsHost(server, profile, shutdown = false) {
-  // A Windows CLI may fall back to the daily instance. Verify the native
-  // connection using a disposable Space before making any website request.
-  const ego = globalThis.ego;
-  const native = value => {
-    if (value?.error_code || value?.error) throw Error('ego_windows_host_identity');
-    return value;
-  };
-  const task = native(await ego.createTaskSpace('OpenBiliClaw-probe-' + randomUUID(), 'Default'));
-  if (!Number.isSafeInteger(task?.id)) throw Error('ego_windows_host_identity');
-  let stopping = false;
-  try {
-    ego.useTaskSpace(task.id);
-    let timer;
-    let args;
-    try {
-      args = await new Promise((resolve, reject) => {
-        const fail = () => reject(Error('ego_windows_host_identity'));
-        timer = setTimeout(fail, 15000);
-        ego.onSendCDPMessageError = fail;
-        ego.onCDPMessage = raw => {
-          let response;
-          try { response = JSON.parse(raw); } catch { return; }
-          if (response.id !== 1) return;
-          if (Array.isArray(response.result?.arguments)) resolve(response.result.arguments);
-          else fail();
-        };
-        ego.sendCDPMessage(JSON.stringify({ id: 1, method: 'Browser.getBrowserCommandLine' }));
-      });
-    } finally {
-      clearTimeout(timer);
-      ego.onCDPMessage = null;
-      ego.onSendCDPMessageError = null;
-    }
-    validateWindowsArguments(args, server, profile);
-    if (shutdown) {
-      ego.sendCDPMessage(JSON.stringify({ id: 2, method: 'Browser.close' }));
-      stopping = true;
-    }
-  } finally {
-    if (!stopping) {
-      ego.useTaskSpace(task.id);
-      native(await ego.closeTaskSpace());
-    }
   }
 }
 
@@ -94,8 +47,8 @@ export async function start(config) {
   const ego = globalThis.ego;
   if (!ego || typeof ego.sendCDPMessage !== 'function') throw Error('ego_native_unavailable');
   if (config.windows_host) {
-    const {server,profile}=config.windows_host;
-    try { await verifyWindowsHost(server,profile); }
+    const {pid,executable}=config.windows_host;
+    try { verifyWindowsHost(pid,executable); }
     catch { publishReady(config.ready,{error:'ego_windows_host_identity'}); return; }
   }
   let serial = 0, session, target, mainFrame, socket, closing = false;
