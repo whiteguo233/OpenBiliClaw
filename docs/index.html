@@ -83,9 +83,9 @@
         "license": "https://github.com/whiteguo233/OpenBiliClaw/blob/main/LICENSE",
         "image": "https://whiteguo233.github.io/OpenBiliClaw/images/social-preview-zh.png",
         "screenshot": [
-          "https://whiteguo233.github.io/OpenBiliClaw/images/chrome-web-store/source/desktop-recommend.png",
+          "https://whiteguo233.github.io/OpenBiliClaw/images/desktop-home.png",
           "https://whiteguo233.github.io/OpenBiliClaw/images/desktop-profile.png",
-          "https://whiteguo233.github.io/OpenBiliClaw/images/chrome-web-store/source/mobile-recommend.png",
+          "https://whiteguo233.github.io/OpenBiliClaw/images/mobile-recommend.png",
           "https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-recommend-feedback.png",
           "https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-chat.png"
         ],
@@ -731,7 +731,9 @@
 
     .phone-frame img {
       width: 100%;
-      height: auto;
+      aspect-ratio: 9 / 17.5;
+      object-fit: cover;
+      object-position: top center;
     }
 
     /* ---- Install Section (Tabbed) ---- */
@@ -1614,10 +1616,10 @@
                 <span class="browser-dot g"></span>
                 <span class="browser-url">http://127.0.0.1:8420/web</span>
               </div>
-              <img src="images/chrome-web-store/source/desktop-recommend.png" alt="OpenBiliClaw 桌面 Web 多平台混排推荐首页" data-i18n-attr="alt:heroVisualAlt" fetchpriority="high" decoding="async" />
+              <img src="images/desktop-home.png" alt="OpenBiliClaw 桌面 Web 推荐首页（真实使用截图）" data-i18n-attr="alt:heroVisualAlt" fetchpriority="high" decoding="async" />
             </div>
             <div class="phone-frame">
-              <img src="images/chrome-web-store/source/mobile-recommend.png" alt="OpenBiliClaw 移动端推荐流" data-i18n-attr="alt:heroMobileAlt" decoding="async" />
+              <img src="images/mobile-recommend.png" alt="OpenBiliClaw 移动端推荐流（真实使用截图）" data-i18n-attr="alt:heroMobileAlt" decoding="async" />
             </div>
           </div>
         </div>
@@ -1953,10 +1955,10 @@ docker compose -f docker-compose.prebuilt.yml up -d
 
         <div class="screens-featured" aria-label="桌面端与移动端核心界面" data-i18n-attr="aria-label:screensAria">
           <article class="screen-shot reveal">
-            <img src="images/chrome-web-store/source/desktop-recommend.png" alt="桌面 Web 多平台混排推荐首页" data-i18n-attr="alt:screenDesktopHomeAlt" loading="lazy" decoding="async" />
+            <img src="images/desktop-home.png" alt="桌面 Web 推荐首页（真实使用截图）" data-i18n-attr="alt:screenDesktopHomeAlt" loading="lazy" decoding="async" />
             <div>
-              <h3 data-i18n="screenDesktopHomeTitle">桌面大屏：多平台混排 + 实时池看板</h3>
-              <p data-i18n="screenDesktopHomeText">顶部惊喜推荐、按来源筛选的混排卡片流、左侧实时候选池与后台动态一目了然。</p>
+              <h3 data-i18n="screenDesktopHomeTitle">桌面大屏：惊喜推荐 + 为你推荐网格</h3>
+              <p data-i18n="screenDesktopHomeText">顶部惊喜推荐 Hero、按来源筛选的推荐网格与朋友式推荐理由一目了然。</p>
             </div>
           </article>
           <article class="screen-shot reveal">
@@ -1970,10 +1972,10 @@ docker compose -f docker-compose.prebuilt.yml up -d
 
         <div class="screens-sub">
           <article class="screen-shot reveal">
-            <img src="images/chrome-web-store/source/mobile-recommend.png" alt="移动端 4-Tab 跨平台推荐流" data-i18n-attr="alt:screenMobileAlt" loading="lazy" decoding="async" />
+            <img src="images/mobile-recommend.png" alt="移动端推荐流（真实使用截图）" data-i18n-attr="alt:screenMobileAlt" loading="lazy" decoding="async" />
             <div>
               <h3 data-i18n="screenMobileTitle">移动端随时刷</h3>
-              <p data-i18n="screenMobileText">局域网扫码或 Tailnet 直连回家，推荐、内容库、画像、对话 4 个 Tab 顺手切换。</p>
+              <p data-i18n="screenMobileText">局域网扫码或 Tailnet 直连回家，随时看惊喜推荐、池子状态与推荐理由。</p>
             </div>
           </article>
           <article class="screen-shot reveal">
@@ -2147,8 +2149,8 @@ docker compose -f docker-compose.prebuilt.yml up -d
         metricProactiveTitle: "可调教",
         metricProactiveText: "喜欢、不感兴趣和聊天反馈都会改变后续推荐",
         heroVisualAria: "OpenBiliClaw 多端推荐界面预览",
-        heroVisualAlt: "OpenBiliClaw 桌面 Web 多平台混排推荐首页",
-        heroMobileAlt: "OpenBiliClaw 移动端推荐流",
+        heroVisualAlt: "OpenBiliClaw 桌面 Web 推荐首页（真实使用截图）",
+        heroMobileAlt: "OpenBiliClaw 移动端推荐流（真实使用截图）",
         installEyebrow: "Start",
         installTitle: "四步上手：装插件、启动本地后端，即可开刷。",
         installLead: "Latest Release 的 openbiliclaw-v* 聚合页只列出同一版本的后端源码、浏览器插件包和可用桌面安装包；某个 channel 尚未发布时会显示未发布，不会回填上一版资产。普通用户直接装桌面安装包即可，开发者或想要定制源码可交给 AI 编程助手部署。",
@@ -2270,15 +2272,15 @@ docker compose -f docker-compose.prebuilt.yml up -d
         surfaceFlutter: "Flutter 原生端（iOS/Android/桌面）",
         surfaceDsh: "DSH 客户端插件 + 22 工具",
         screensAria: "桌面端与移动端核心界面",
-        screenDesktopHomeAlt: "桌面 Web 多平台混排推荐首页",
-        screenDesktopHomeTitle: "桌面大屏：多平台混排 + 实时池看板",
-        screenDesktopHomeText: "顶部惊喜推荐、按来源筛选的混排卡片流、左侧实时候选池与后台动态一目了然。",
+        screenDesktopHomeAlt: "桌面 Web 推荐首页（真实使用截图）",
+        screenDesktopHomeTitle: "桌面大屏：惊喜推荐 + 为你推荐网格",
+        screenDesktopHomeText: "顶部惊喜推荐 Hero、按来源筛选的推荐网格与朋友式推荐理由一目了然。",
         screenDesktopProfileAlt: "桌面 Web 灵魂画像界面",
         screenDesktopProfileTitle: "灵魂画像：人格素描与深层驱动力",
         screenDesktopProfileText: "画像不是黑盒标签，而是随时可检查、可编辑、可质疑的自然语言人格描述与 MBTI 结构化认知。",
-        screenMobileAlt: "移动端 4-Tab 跨平台推荐流",
+        screenMobileAlt: "移动端推荐流（真实使用截图）",
         screenMobileTitle: "移动端随时刷",
-        screenMobileText: "局域网扫码或 Tailnet 直连回家，推荐、内容库、画像、对话 4 个 Tab 顺手切换。",
+        screenMobileText: "局域网扫码或 Tailnet 直连回家，随时看惊喜推荐、池子状态与推荐理由。",
         screenRecommendAlt: "推荐卡片和反馈按钮截图",
         screenRecommendTitle: "推荐与即时反馈",
         screenRecommendText: "换一批、继续看、喜欢、不感兴趣、写一句原因，每次反馈都会回流进学习闭环。",
@@ -2362,8 +2364,8 @@ docker compose -f docker-compose.prebuilt.yml up -d
         metricProactiveTitle: "Tunable",
         metricProactiveText: "Likes, dislikes, and chat feedback change future recommendations",
         heroVisualAria: "OpenBiliClaw multi-surface UI preview",
-        heroVisualAlt: "OpenBiliClaw Desktop Web cross-platform recommendation feed",
-        heroMobileAlt: "OpenBiliClaw Mobile Web recommendation feed",
+        heroVisualAlt: "OpenBiliClaw Desktop Web recommendation home (real usage screenshot)",
+        heroMobileAlt: "OpenBiliClaw Mobile Web recommendation feed (real usage screenshot)",
         installEyebrow: "Start",
         installTitle: "Four steps: install the extension, start the backend, and browse.",
         installLead: "The openbiliclaw-v* aggregate Latest Release lists same-version backend source, extension packages, and desktop installers; unpublished channels stay marked as unpublished instead of backfilling older versions. Most users can grab the desktop installer; developers can let an AI coding agent deploy from source.",
@@ -2485,15 +2487,15 @@ docker compose -f docker-compose.prebuilt.yml up -d
         surfaceFlutter: "Flutter Native App (iOS/Android/Desktop)",
         surfaceDsh: "DSH Plugin + 22 Agent Tools",
         screensAria: "Core Desktop and Mobile interfaces",
-        screenDesktopHomeAlt: "OpenBiliClaw Desktop Web cross-platform home",
-        screenDesktopHomeTitle: "Desktop Home: Cross-platform mix + Live Pool Board",
-        screenDesktopHomeText: "Surprise pick hero, source-filterable recommendation grid, and real-time candidate pool & activity sidebar.",
+        screenDesktopHomeAlt: "OpenBiliClaw Desktop Web home (real usage screenshot)",
+        screenDesktopHomeTitle: "Desktop Home: Surprise Pick + Recommendation Grid",
+        screenDesktopHomeText: "Surprise pick hero, source-filterable recommendation grid, and friend-like reasoning at a glance.",
         screenDesktopProfileAlt: "OpenBiliClaw Desktop Soul Profile",
         screenDesktopProfileTitle: "Soul Profile: Personality Sketch & Deep Drivers",
         screenDesktopProfileText: "Not opaque tags — inspect, edit, and challenge natural-language personality sketches, core traits, and MBTI confidence.",
-        screenMobileAlt: "Mobile Web 4-Tab cross-platform feed",
+        screenMobileAlt: "Mobile Web recommendation feed (real usage screenshot)",
         screenMobileTitle: "Mobile Web on the go",
-        screenMobileText: "Scan the QR code on LAN or connect via Tailnet; switch smoothly across Recommendations, Library, Profile, and Chat.",
+        screenMobileText: "Scan the QR code on LAN or connect via Tailnet for surprise picks, pool status, and friend-like explanations anywhere.",
         screenRecommendAlt: "Recommendation card and feedback button screenshot",
         screenRecommendTitle: "Recommendations & instant feedback",
         screenRecommendText: "Reshuffle, continue watching, like, reject, or write why — every signal flows back into the learning loop.",

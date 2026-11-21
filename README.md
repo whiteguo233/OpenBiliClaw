@@ -109,9 +109,9 @@
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/images/chrome-web-store/source/desktop-recommend.png" width="480" alt="桌面 Web 多平台混排推荐首页" /><br/>
-      <b>桌面推荐首页 · 多平台混排</b><br/>
-      <sub>顶部惊喜推荐 · 来源分栏筛选 · 实时候选池看板 · 朋友式推荐理由</sub>
+      <img src="docs/images/desktop-home.png" width="480" alt="桌面 Web 推荐首页（真实使用截图）" /><br/>
+      <b>桌面推荐首页</b><br/>
+      <sub>惊喜推荐 Hero · 为你推荐网格 · 朋友式推荐理由</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/images/desktop-profile.png" width="480" alt="桌面 Web 灵魂画像页" /><br/>
@@ -124,9 +124,9 @@
 <table>
   <tr>
     <td align="center" width="25%">
-      <img src="docs/images/chrome-web-store/source/mobile-recommend.png" width="200" alt="移动端跨平台推荐流" /><br/>
-      <b>移动端推荐流</b><br/>
-      <sub>4-Tab 极简排版 · 随时刷、随时存</sub>
+      <img src="docs/images/mobile-recommend.png" width="200" alt="移动端推荐流（真实使用截图）" /><br/>
+      <b>手机推荐页</b><br/>
+      <sub>惊喜推荐 + 池子状态 · 朋友式推荐理由</sub>
     </td>
     <td align="center" width="25%">
       <img src="docs/images/screenshot-recommend-feedback.png" width="200" alt="插件侧边栏推荐与反馈" /><br/>
