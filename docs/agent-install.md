@@ -1040,9 +1040,32 @@ within one profile can share login state. Secrets are never serialized into work
 Installed, prepared and currently connected are distinct states, and none proves a
 particular website trial will succeed.
 
-Managed preparation and the native adapter currently support macOS only. The upstream
-Windows beta is not supported here, and Linux/Docker has no native Ego integration or
-remote-host bridge. A Mac running Docker does not change the Linux container's capability.
+### Windows Ego Lite Beta
+
+1. Install the official [Windows Beta](https://www.egolite.ai/document/en/docs/windows/quick-start).
+   OpenBiliClaw can prepare its own profile directly after installation, before the official browser is first opened.
+2. Open Settings → Sources → Custom sources and select **Prepare Ego Lite**, or run
+   the following commands from the branch checkout on a source installation.
+
+   ```powershell
+   uv run openbiliclaw sources ego-status
+   uv run openbiliclaw sources prepare-ego
+   ```
+
+Preparation finds the installer-registered application directory and matching CLI version when the
+active-version junction and PATH entry are absent. It verifies both binaries with Authenticode and
+the Citro Labs signer, then starts a headless named instance with a private database-side profile.
+The Windows browser starts with a headless blank tab so its named service stays available.
+Before creating any workflow tab, the native Node process proves its parent PID and executable
+match the browser launched by the backend. Windows process creation time fences PID reuse.
+Source installs accept optional absolute `OPENBILICLAW_EGO_WINDOWS_APP` and
+`OPENBILICLAW_EGO_WINDOWS_CLI` paths for installs in other locations. See the
+[Windows test steps](testing/2026-11-21-ego-windows-beta.md) for real-machine checks and report collection.
+The source installer leaves the official Beta installation to the user. An installed Beta can be
+prepared by the backend at startup.
+
+Linux/Docker has no native Ego host or remote-host bridge. Running Docker on a Mac or Windows PC
+still gives OpenBiliClaw a Linux runtime.
 
 RSS/Atom/JSON Feed uses the default HTTP dependencies. New ordinary webpages never
 silently fall back to Playwright. Existing HTTP Sitemap/static-list recipes and saved
@@ -1068,7 +1091,7 @@ Login profiles remain in the application's persistent data directory. No real ac
 credentials are copied from the installer or the agent's personal browser.
 
 These legacy dependencies do not install Ego Lite; managed Ego preparation is a separate
-macOS runtime path. The native Ego adapter checks exact
+native runtime path. The native Ego adapter checks exact
 origins, methods and public DNS; it does not pin the host's socket resolution. See the
 [browser workflow module](modules/browser-workflows.md) for executor-specific boundaries.
 ## macOS 桌面包签名

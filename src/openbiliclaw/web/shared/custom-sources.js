@@ -169,6 +169,7 @@
         && ego?.connection_state === "offline";
       const ready = !unsupported && (ego?.available === true || standby);
       const missing = !unsupported && !ready && ego?.installed === false;
+      const manualInstall = ego?.setup_mode === "manual_install";
       const unverified = !unsupported && !ready && ego?.installed === true
         && ego?.connection_state === "unverified";
       const label = !ego ? "尚未获取 Ego Lite 状态"
@@ -181,13 +182,13 @@
       notice.append(node("p", "custom-source-note", "网页通过 Ego Lite 发现；公开 RSS、Atom、JSON Feed 订阅无需 Ego Lite。"));
       if (standby) notice.append(node("p", "custom-source-note", "当前没有网页任务，浏览器已退出以节省资源；采集时会在后台自动启动。"));
       else if (text(ego?.detail)) notice.append(node("p", "custom-source-note", text(ego.detail)));
-      if (!ready && !unsupported) notice.append(node("p", "custom-source-note", ego?.managed === true
+      if (!ready && !unsupported && !manualInstall) notice.append(node("p", "custom-source-note", ego?.managed === true
         ? "准备会安装 Ego Lite 并初始化专用浏览器环境；网站登录仍在接管页完成。"
         : missing ? "请在运行 OpenBiliClaw 的电脑上安装 Ego Lite，完成首次设置并打开应用，然后刷新状态。"
           : unverified ? "到聊一聊提供网站地址，试跑时会验证 Ego Lite 连接。"
             : "请确认运行 OpenBiliClaw 的电脑已打开 Ego Lite 并完成连接，然后刷新状态。"));
       const actions = node("div", "custom-source-actions");
-      if (ego?.managed === true && !unsupported && (!ready || preparing)) {
+      if (ego?.managed === true && !unsupported && (!ready || preparing) && !(manualInstall && missing)) {
         const prepare = button(preparing ? "正在准备 Ego Lite…" : "准备 Ego Lite", () => void prepareEgo());
         prepare.disabled = preparing;
         actions.append(prepare);

@@ -754,6 +754,7 @@ PY
     case "$ego_status:$ego_detail" in
         ready:*) echo "  Ego Lite was automatically prepared and its native connection verified." ;;
         skipped:external_host) echo "  Ego Lite uses your explicit external host; this installer did not alter or verify it." ;;
+        skipped:windows_ego_beta_manual_install) echo "  For website discovery, install the official Ego Lite Windows Beta, then prepare Ego Lite in Settings." ;;
         skipped:*) echo "  Ego Lite preparation skipped: $ego_detail. This runtime cannot run native Ego; feeds remain available." ;;
         failed:*) echo "  WARNING: Ego Lite preparation failed ($ego_detail); website discovery is not ready." ;;
         *) echo "  Ego Lite preparation was not confirmed; check its status in settings." ;;

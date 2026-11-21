@@ -149,6 +149,8 @@ def create_custom_sources_router(
             status = manager.status()
             if status.get("managed") is not True or status.get("platform_supported") is not True:
                 return
+            if status.get("setup_mode") == "manual_install" and not status.get("installed"):
+                return
             if status.get("setup_state") == "preparing":
                 return
             if status.get("setup_state") == "ready" and status.get("installed") is True:
@@ -172,6 +174,8 @@ def create_custom_sources_router(
             raise HTTPException(409, "此 Ego Lite 连接由外部配置管理。")
         if status.get("platform_supported") is False or status.get("setup_state") == "unsupported":
             raise HTTPException(409, str(status.get("detail", "当前环境不支持准备 Ego Lite。")))
+        if status.get("setup_mode") == "manual_install" and not status.get("installed"):
+            raise HTTPException(409, str(status["detail"]))
         if status.get("setup_state") == "ready" and status.get("available") is True:
             manager.schedule_idle_stop()
             return dict(status)
@@ -249,7 +253,11 @@ def create_custom_sources_router(
             if name == "ego":
                 setup = ego_setup_status()
                 status.update(
-                    {key: setup[key] for key in ("setup_state", "phase", "managed") if key in setup}
+                    {
+                        key: setup[key]
+                        for key in ("setup_state", "phase", "managed", "setup_mode")
+                        if key in setup
+                    }
                 )
                 if setup.get("managed") is True and setup.get("setup_state") in {
                     "preparing",

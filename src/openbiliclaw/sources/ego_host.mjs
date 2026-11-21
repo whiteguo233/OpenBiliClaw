@@ -1,6 +1,7 @@
 // Native Ego host: no Playwright, no remote debugging port, no model-authored code.
 import net from 'node:net';
 import fs from 'node:fs';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { SNAPSHOT_JS, COLLECT_JS, FORM_JS, SEARCH_INPUT_JS } from './ego_dom.mjs';
 
 export async function workflowTaskSpace(ego, config) {
@@ -27,9 +28,29 @@ export async function startFile(path) {
   return start(JSON.parse(fs.readFileSync(path,'utf8')));
 }
 
+export function verifyWindowsHost(pid, executable) {
+  // The embedded Windows Node process is a child of the browser that serves
+  // the command. Python pins that browser's image and kernel creation time.
+  const normalize = value => value.replaceAll('/', '\\').toLowerCase();
+  if (!Number.isSafeInteger(pid) || pid < 2 || process.ppid !== pid ||
+      typeof executable !== 'string' || normalize(process.execPath) !== normalize(executable)) {
+    throw Error('ego_windows_host_identity');
+  }
+}
+
+function publishReady(path, value) {
+  fs.writeFileSync(path+'.tmp',JSON.stringify(value),{mode:0o600});
+  fs.renameSync(path+'.tmp',path);
+}
+
 export async function start(config) {
   const ego = globalThis.ego;
   if (!ego || typeof ego.sendCDPMessage !== 'function') throw Error('ego_native_unavailable');
+  if (config.windows_host) {
+    const {pid,executable}=config.windows_host;
+    try { verifyWindowsHost(pid,executable); }
+    catch { publishReady(config.ready,{error:'ego_windows_host_identity'}); return; }
+  }
   let serial = 0, session, target, mainFrame, socket, closing = false;
   const pending = new Map(), guards = new Map(), sockets = new Set(), responseBytes = new Map();
   const ownedSessions = new Map();
@@ -178,7 +199,7 @@ export async function start(config) {
   const query = async selector => evaluate(`s=>{const e=document.querySelector(s);if(!e)return null;const r=e.getBoundingClientRect();const style=getComputedStyle(e);return {visible:!!e.getClientRects().length && r.width>0 && r.height>0 && style.visibility!=='hidden' && style.visibility!=='collapse',href:e.href||'',x:r.x+r.width/2,y:r.y+r.height/2};}`,selector);
   const snapshot=async(arg={})=>{const value=await evaluate(SNAPSHOT_JS,{entry_url:config.plan.entry_url,link_patterns:arg.link_patterns});return {...value,...diagnostic,login_wall:!!(value.login_wall||diagnostic.login_wall)};};
   const restoreInteractiveWindow=async()=>{
-    if(!config.interactive)return;
+    if(!config.interactive || config.headless)return;
     let win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
     if(win.bounds?.windowState!=='minimized')return;
     await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'normal'}},null);
@@ -247,7 +268,7 @@ export async function start(config) {
     try {if(target) {
       // Closing the last tab can leave an empty visible window behind, so put
       // the session window away before releasing it, including login windows.
-      try {
+      if(!config.headless) try {
         const win=await rpc('Browser.getWindowForTarget',{targetId:target},null,true);
         await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null,true);
       } catch {}
@@ -280,11 +301,33 @@ export async function start(config) {
       const key=a.key==='Space'?' ':a.key; await rpc('Input.dispatchKeyEvent',{type:'keyDown',key,windowsVirtualKeyCode:keys[a.key]});await rpc('Input.dispatchKeyEvent',{type:'keyUp',key,windowsVirtualKeyCode:keys[a.key]});},
     close:async()=>{await close();return true;},
   };
+  const tcp=!!config.auth_token;
+  const key=tcp?Buffer.from(config.auth_token,'hex'):null;
+  const proof=(role,nonce)=>createHmac('sha256',key).update(role+':'+nonce).digest('hex');
   const server=net.createServer(connection=>{
-    if(socket){connection.destroy();return;} socket=connection;sockets.add(connection);let buffer='';
+    if(socket){connection.destroy();return;}
+    let buffer='', authenticated=!tcp, nonce;
+    sockets.add(connection);
+    const authDeadline=tcp?setTimeout(()=>connection.destroy(),3000):null;
+    if(authenticated)socket=connection;
     connection.on('data',data=>{buffer+=data;if(buffer.length>256*1024){connection.destroy();return;}
       let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);
         let msg;try{msg=JSON.parse(line);}catch{connection.destroy();return;}
+        if(!authenticated){
+          if(socket){connection.destroy();return;}
+          if(!nonce && typeof msg?.hello==='string' && /^[a-f0-9]{64}$/.test(msg.hello)){
+            nonce=msg.hello;
+            connection.write(JSON.stringify({server:proof('server',nonce)})+'\n');
+            continue;
+          }
+          if(!nonce || typeof msg?.auth!=='string' || !/^[a-f0-9]{64}$/.test(msg.auth) ||
+              !timingSafeEqual(Buffer.from(msg.auth,'hex'),Buffer.from(proof('client',nonce),'hex'))){
+            connection.destroy();return;
+          }
+          authenticated=true;socket=connection;clearTimeout(authDeadline);
+          connection.write('{"authenticated":true}\n');
+          continue;
+        }
         if(msg.authorized!==undefined){const g=guards.get(msg.id);if(g){clearTimeout(g.timer);guards.delete(msg.id);g.resolve(msg.authorized===true);}continue;}
         // Acknowledge close before tearing down the socket: the caller's 3s
         // close budget must not fail merely because this reply raced teardown,
@@ -293,11 +336,15 @@ export async function start(config) {
         const fn=Object.hasOwn(commands,msg.operation)?commands[msg.operation]:null;
         Promise.resolve().then(()=>{if(!fn)throw Error('invalid_operation');if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);return fn(msg.arguments||{});}).then(result=>{if(diagnostic.fatal_error && !['snapshot','diagnostics','close'].includes(msg.operation))throw Error(diagnostic.fatal_error);send({id:msg.id,result});}).catch(e=>send({id:msg.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_operation_failed',...(e.message==='ego_navigation_failed' && diagnostic.navigation_error?{navigation_error:diagnostic.navigation_error}:{})}));
       }});
-    connection.on('close',()=>void close());
-    connection.on('error',()=>void close());
+    connection.on('close',()=>{clearTimeout(authDeadline);sockets.delete(connection);if(socket===connection)void close();});
+    connection.on('error',()=>{if(socket===connection)void close();});
   });
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.socket,resolve);});
-  fs.chmodSync(config.socket,0o600);
+  await new Promise((resolve,reject)=>{
+    server.once('error',reject);
+    if(tcp)server.listen(0,'127.0.0.1',resolve);
+    else server.listen(config.socket,resolve);
+  });
+  if(!tcp)fs.chmodSync(config.socket,0o600);
   const lifetime=setTimeout(()=>void close(),config.interactive?15*60*1000:120000);
   let task;
   try {
@@ -315,7 +362,7 @@ export async function start(config) {
     // Managed Ego is headless, including login screenshots. Keep minimization
     // for externally managed hosts; interactive screenshots need drawable
     // logical bounds but must never activate the local application.
-    if(!config.interactive) {
+    if(!config.headless && !config.interactive) {
       try {
         const win=await rpc('Browser.getWindowForTarget',{targetId:target},null);
         await rpc('Browser.setWindowBounds',{windowId:win.windowId,bounds:{windowState:'minimized'}},null);
@@ -325,7 +372,7 @@ export async function start(config) {
     await rpc('Page.setDownloadBehavior',{behavior:'deny'});
     await rpc('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
     mainFrame=(await rpc('Page.getFrameTree')).frameTree.frame.id;
-    fs.writeFileSync(config.ready,JSON.stringify({task_id:task.id,task_name:config.task_name,version:native(await ego.getBrowserVersion()).currentVersion}),{mode:0o600});
-  }catch(e){fs.writeFileSync(config.ready,JSON.stringify({task_id:task?.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_host_failed'}),{mode:0o600});await close();}
+    publishReady(config.ready,{task_id:task.id,task_name:config.task_name,version:native(await ego.getBrowserVersion()).currentVersion,...(tcp?{port:server.address().port}:{})});
+  }catch(e){publishReady(config.ready,{task_id:task?.id,error:/^[A-Za-z_]+$/.test(e.message)?e.message:'ego_host_failed'});await close();}
   await finished;
 }

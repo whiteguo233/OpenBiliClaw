@@ -203,7 +203,9 @@ Dynamic website / RSS / Atom / JSON Feed authoring (desktop / popup / mobile cha
           blocked verification iframe → bounded suggested_login_origins → web/native exact-origin consent → interactive scope only
           interactive owned iframe → exact document/login origin guard before resume → shared request/byte budget; no popup/worker permission
         source settings cards (desktop / popup / mobile) → explicit management API actions
-        macOS deployment → managed Ego install/onboarding → native handshake → owned task spaces; no Playwright fallback
+        macOS deployment → managed Ego install/onboarding → native handshake → owned task spaces
+        Windows Beta install → Authenticode → isolated headless Ego → native Node parent PID and image check
+          → authenticated loopback → same task spaces
           explicit exact-host route API → private network.json → current manual system proxies + selected direct hosts at cold start
           committed parsed DOM stable 8s (or complete document stable 1.5s) → original fixed extraction/scope checks; unparsed pages still fail
           preparation complete / last session closed → shared 120s idle grace → lease-protected host stop; CLI exit cleanup
