@@ -146,9 +146,12 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             target=int(config.scheduler.pool_target_count),
         )
 
+    from openbiliclaw.llm.rate_card import catalog_for_runtime
+
     usage_recorder = UsageRecorder(
         sink=database,
         cost_multiplier=float(getattr(config.llm, "cost_multiplier", 1.0) or 1.0),
+        catalog=catalog_for_runtime(config),
     )
 
     # Defensive read matching the getattr(config.scheduler, ..., default)

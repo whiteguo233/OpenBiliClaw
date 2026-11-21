@@ -30,6 +30,7 @@ from openbiliclaw.llm.pricing import estimate_cost
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
+    from openbiliclaw.llm.rate_card import RateCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class _UsageSink(Protocol):
         caller: str = "",
         success: bool = True,
         cached_input_tokens: int = 0,
+        cost_confidence: str = "",
     ) -> int: ...
 
 
@@ -71,13 +73,22 @@ class UsageRecorder:
     appends one row.
     """
 
-    def __init__(self, sink: _UsageSink | None, *, cost_multiplier: float = 1.0) -> None:
+    def __init__(
+        self,
+        sink: _UsageSink | None,
+        *,
+        cost_multiplier: float = 1.0,
+        catalog: RateCatalog | None = None,
+    ) -> None:
         self._sink = sink
         # ``llm.cost_multiplier`` (issue #353): a measured calibration
         # between the static pricing table and the provider invoice. Applied
         # at write time so every stored row is already in "invoice currency"
         # and the daily budget gate needs no second multiplier.
         self._cost_multiplier = max(0.0, float(cost_multiplier))
+        # Price catalog resolved per provider/model/time. ``None`` keeps the
+        # legacy static-table path (tests, minimal CLI commands).
+        self._catalog = catalog
 
     @property
     def enabled(self) -> bool:
@@ -109,18 +120,39 @@ class UsageRecorder:
         # openai_provider.py / claude_provider.py / gemini_provider.py.
         cached_tokens = int(usage.get("cached_input_tokens", 0) or 0)
 
-        try:
-            cost = estimate_cost(
-                provider,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                cached_tokens=cached_tokens,
-                cost_multiplier=self._cost_multiplier,
-            )
-        except Exception:
-            logger.debug("estimate_cost failed", exc_info=True)
-            return
+        cost_confidence = "fallback"
+        cost: float | None = None
+        if self._catalog is not None:
+            try:
+                effective = self._catalog.resolve(
+                    provider,
+                    model,
+                    prompt_tokens=prompt_tokens,
+                )
+            except Exception:
+                logger.debug("rate catalog lookup failed", exc_info=True)
+                effective = None
+            if effective is not None:
+                cost = effective.cost(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
+                    usd_cny=self._catalog.usd_cny,
+                )
+                cost_confidence = effective.confidence
+        if cost is None:
+            try:
+                cost = estimate_cost(
+                    provider,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cached_tokens=cached_tokens,
+                )
+            except Exception:
+                logger.debug("estimate_cost failed", exc_info=True)
+                return
+        cost *= self._cost_multiplier
 
         # Real-time INFO log so `journalctl -fu openbiliclaw` /
         # `docker logs -f` shows cost as it accrues. Caller defaults
@@ -133,13 +165,14 @@ class UsageRecorder:
             hit = cached_tokens / prompt_tokens * 100
             cache_note = f" cache_hit={cached_tokens}/{prompt_tokens} ({hit:.0f}%)"
         logger.info(
-            "[llm-cost] caller=%s model=%s tokens=%d→%d ≈ ¥%.4f%s",
+            "[llm-cost] caller=%s model=%s tokens=%d→%d ≈ ¥%.4f%s conf=%s",
             caller_tag,
             model or "(unknown)",
             prompt_tokens,
             completion_tokens,
             cost,
             cache_note,
+            cost_confidence,
         )
 
         # Anomaly WARN — single call over threshold is almost always a
@@ -172,6 +205,7 @@ class UsageRecorder:
                 estimated_cost_cny=cost,
                 caller=caller,
                 success=True,
+                cost_confidence=cost_confidence,
             )
         except Exception:
             # Never block the LLM hot path on billing-table writes.

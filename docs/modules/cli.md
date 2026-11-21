@@ -93,6 +93,7 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 | `config-export-legacy` | 导出可供旧二进制读取的固定 Provider 配置副本 | ✅ |
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
 | `cost [--days N] [--by all\|day\|provider\|caller]` | 查看 `llm_usage` 的 LLM 花费：今日已花 / 上限、按天、按 provider/model、按 caller（含 cache 命中率） | ✅ |
+| `price [--provider P] [--model M] [--at ISO8601]` | 查看价格目录：基础价、CNY 换算、当前峰谷档位、下一次切换、置信度 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
 | `auth status` | 查看认证状态 | ✅ |
 | `login codex` | 导入 / 探测 / 查看 / 删除 Codex CLI 的 ChatGPT OAuth 凭据（实验） | ✅ |
@@ -322,6 +323,29 @@ LLM 调用花费
 - `--by caller` 仍用于排查“钱花在哪一层”；cache 命中率 < 30% 标红，对应 prompt 前缀不稳定的 builder。
 
 > 金额是本地静态价目表的估算，不是 provider 账单。实测有稳定倍差时用 `llm.cost_multiplier` 校准，而不是反复改每日上限。
+
+### `openbiliclaw price`
+
+只读查看随包价格目录（models.dev 价目 + OpenRouter 峰谷窗口 + 用户覆盖）：
+
+```bash
+$ openbiliclaw price --provider deepseek --model deepseek-v4-flash --at 2026-11-23T02:00:00Z
+LLM 价格目录 价格来源 / 峰谷档位 / 置信度
+...
+ 模型        deepseek/deepseek-v4-flash
+ 置信度      exact（provider/model 精确匹配）
+ 当前单价    $0.3 / $1.2 每百万 token（¥2.16 / ¥8.64）
+ 当前档位    peak ×2
+ 下一次切换  2026-11-23 04:00 UTC
+ 谷时开始    2026-11-23 04:00 UTC
+ 示例费用    5k 输入 + 3k 输出 ≈ ¥0.036720
+```
+
+- 不带参数时只打印目录元数据（生成时间、覆盖 provider/model 数、来源 URL、USD/CNY）。
+- `--at` 省略时按当前 UTC 解析；传入的 naive 时间按 UTC 处理。
+- 置信度：`exact`（精确 provider/model）/ `user`（配置覆盖）/ `derived_relay`（同模型跨 provider 最高价）/ `fallback`（静态表）。
+- `derived_relay` / `fallback` 会额外提示：预算按保守上界处理，已知实际单价时写入 `[llm.pricing.overrides]`。
+- 目录里没有的模型明确提示“未找到”，不会显示 `¥0`。
 
 ### `openbiliclaw auth login`
 

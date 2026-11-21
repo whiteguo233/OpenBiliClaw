@@ -52,7 +52,7 @@ cost = f(provider, base_url, model, 计费项, 时间, prompt_tokens, cache_toke
 - `pricing.overrides` 有两种：
   1. **时间档**：`utc_days` + `utc_start` + `utc_end`。单位是 **百分之一小时**（`100` = 1 小时），`utc_end = 0` 表示跨午夜收尾。
   2. **长上下文档**：`min_prompt_tokens`，超过阈值后整套单价替换。
-- 实测 476 个模型，88 个带 overrides。DeepSeek 路由的窗口：
+- 实测 476 个模型，88 个带 overrides（**4 个时间档、54 个长上下文档**，其余是重复/无效条目）。DeepSeek 路由的窗口：
 
 ```
 base: prompt $0.15/M, completion $0.60/M, cache_read $0.003/M
@@ -302,8 +302,8 @@ PR #191（`feat/peak-hour-deferral`，commit `54f0ec03`）已经在 `presence.py
 | 阶段 | 内容 | 风险 |
 |---|---|---|
 | P0（本分支已做） | 修正 DeepSeek 现价；`llm.cost_multiplier` 保留为手动校准 | 低 |
-| P1 | `rate_card.py` + 生成脚本 + 随包 catalog + `openbiliclaw price show`；**不改变运行时计费** | 低 |
-| P2 | `UsageRecorder` 改用 `EffectiveRate`；`llm_usage` 增加 `cost_confidence` / `rate_source`；预算按置信度加安全系数 | 中 |
+| P1（已完成） | `rate_card.py` + 生成脚本 + 随包 catalog + `openbiliclaw price`；运行时计费未切换 | 低 |
+| P2（已完成） | `UsageRecorder` 改用 `EffectiveRate`；`llm_usage` 增加 `cost_confidence`；预算安全系数改为“未知中转用最高价” | 中 |
 | P3 | 合入 PR #191；`peak_policy` + catalog 窗口；保留 floor | 中 |
 | P4 | `price sync` + 设置页价格来源 / 置信度 / 今日花费明细 | 中 |
 | P5 | 预留式准入 + cost-aware routing（同模型选便宜实例） | 高 |
@@ -321,7 +321,7 @@ P1/P2 做完，issue #353 的 ×2 偏差就从“手动 multiplier”变成“�
 ## 12. 参考
 
 - models.dev API：`https://models.dev/api.json`（2026-11-21 抓取：324 providers / 10,018 models / 9,569 带价）
-- OpenRouter models：`https://openrouter.ai/api/v1/models`（476 models / 88 with overrides）
+- OpenRouter models：`https://openrouter.ai/api/v1/models`（476 models / 88 with overrides，其中 4 个时间档 / 54 个档位）
 - OpenRouter endpoints：`https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash-1017/endpoints`
 - DeepSeek 余额：`GET https://api.deepseek.com/user/balance`
 - 相关实现：`src/openbiliclaw/llm/pricing.py`、`src/openbiliclaw/llm/usage_recorder.py`、`src/openbiliclaw/llm/concurrency.py`、`src/openbiliclaw/runtime/presence.py`

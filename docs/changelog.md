@@ -37,6 +37,8 @@
 
 - DeepSeek 价目校准（issue #353 后续）：按 models.dev / OpenRouter 的 2026-11-21 实测价，`deepseek-v4-flash` 为 `$0.15/$0.60` 每百万 token（¥1.08/¥4.32），旧表的输出价 ¥2/M 低估 2.16 倍，正好对上 issue 里“自估 0.85 / 实际 1.91”的偏差。`deepseek-v4-pro` 同步改为 `$0.66/$1.98`，安装文档与 CLI 引导里的“¥0.001/千 token 几乎免费”改成输入/输出分列（高峰 2x）。这不是最终方案——价目表长期由随包 catalog + 用户覆盖取代，见 [价格目录与峰谷调度设计](plans/2026-11-21-llm-price-catalog-and-peak-scheduling.md)。
 
+- 价格目录与逐时计价（issue #353 后续 P1/P2）：新增 `llm/rate_card.py` 与随包 `pricing_catalog.json`（由 `scripts/build_llm_price_catalog.py` 从 models.dev 的 16 providers / 2,007 models 价目、OpenRouter 的 4 个 UTC 峰谷模型与 54 个长上下文档位生成）。解析优先级为用户覆盖 > provider/model 精确价 > 同模型跨 provider 最高价（未知中转站的保守上界）> 静态表；`0`/缺失价不当免费。`UsageRecorder` 改走 `EffectiveRate`（含 cache、档位、峰谷 2x），`llm_usage` 新增 `cost_confidence` 列（自动迁移），`openbiliclaw cost` 提示低置信花费；新增 `openbiliclaw price --provider … --model …` 查看当前档位、下一次切换与 CNY 换算，`[llm.pricing]` 支持汇率、catalog 路径与 `[[llm.pricing.overrides]]`。峰谷调度（PR #191 合并 + `peak_policy`）仍未接线，见设计稿。
+
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
 
 - PR #351（感谢 @jjjj31）：修复桌面页聊天流缺 CSRF 头导致 `/api/chat/agent/stream` 与 `/api/chat/stream`（含 agent loop 关闭时的旧回退、探针聊天、对话结算）固定 403、气泡卡在“正在思考”且 `chat_turns` 永远 pending；`streamAgentChatTurn()` 与 `streamChatTurn()` 补 `credentials: "same-origin"` 与 `X-OBC-Auth: 1` 头，并加静态回归测试。

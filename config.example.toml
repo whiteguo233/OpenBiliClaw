@@ -144,6 +144,22 @@ timeout = 1200
 # 稳定地是估算的 N 倍（尤其走 openai_compatible / 中转时），把这里设成 N，
 # 写入的 estimated_cost_cny 与「今日已花」会跟着校准。允许 0.1..20，默认 1.0。
 cost_multiplier = 1.0
+# 价格目录（issue #353 后续）。随包 catalog 由 models.dev 价目 + OpenRouter
+# 峰谷窗口生成；catalog_path 留空 = 使用内置快照。USD/CNY 汇率写死在这里，
+# 保证历史 llm_usage 行不会因为汇率变化而重算。
+[llm.pricing]
+usd_cny_rate = 7.2
+catalog_path = ""
+# 中转站/协议价覆盖：优先级最高，永远压过 catalog，同步不会覆盖。
+# 价格单位是每百万 token；currency 支持 USD / CNY。
+#
+# [[llm.pricing.overrides]]
+# provider = "openai_compatible"
+# model = "glm-5.3-flash"
+# input = 0.15
+# output = 0.50
+# cache_read = 0.03
+# currency = "USD"
 # 新实例请直接在桌面设置页创建。手工配置时复制下面的完整表，
 # 给每个渠道一个稳定且唯一的 ID，再把 ID 加进 default_chain：
 #

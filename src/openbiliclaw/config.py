@@ -650,6 +650,35 @@ class ModuleLLMConfig:
 
 
 @dataclass
+class PriceOverrideConfig:
+    """One user-supplied per-provider/model price (issue #353 follow-up).
+
+    Values are per 1M tokens in ``currency``. Overrides always win over the
+    bundled catalog and are never touched by sync.
+    """
+
+    provider: str = ""
+    model: str = ""
+    input: float = 0.0
+    output: float = 0.0
+    cache_read: float | None = None
+    cache_write: float | None = None
+    currency: str = "USD"
+
+
+@dataclass
+class PricingConfig:
+    """Price-catalog settings layered over the static pricing table."""
+
+    # USD/CNY snapshot used to convert catalog prices. Kept explicit so a
+    # historical cost row never changes when the rate does.
+    usd_cny_rate: float = 7.2
+    # Empty = bundled ``openbiliclaw/llm/pricing_catalog.json``.
+    catalog_path: str = ""
+    overrides: list[PriceOverrideConfig] = field(default_factory=list)
+
+
+@dataclass
 class LLMConfig:
     """LLM configuration with global defaults and per-module overrides."""
 
@@ -661,6 +690,7 @@ class LLMConfig:
     # bill is ~2x the estimate. Applied when writing ``llm_usage`` so the
     # daily spend cap and ``openbiliclaw cost`` agree with each other.
     cost_multiplier: float = 1.0
+    pricing: PricingConfig = field(default_factory=PricingConfig)
     # Non-empty = chat fallback on. There is no separate enable flag: the
     # legacy ``fallback_enabled`` bool was never consulted by the fallback
     # chain and has been removed (stale keys in old config.toml are ignored).
@@ -2535,6 +2565,68 @@ def _build_network_config(raw: dict[str, Any]) -> NetworkConfig:
     return NetworkConfig(mode=mode, proxy=proxy)
 
 
+def _optional_non_negative_float(value: object) -> float | None:
+    if not isinstance(value, int | float | str):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def _build_pricing_config(raw: object) -> PricingConfig:
+    """Parse ``[llm.pricing]`` (rate catalog + user price overrides)."""
+
+    if not isinstance(raw, dict):
+        return PricingConfig()
+    usd_cny_rate = _normalize_scheduler_float(
+        raw.get("usd_cny_rate"),
+        default=7.2,
+        min_value=1.0,
+        max_value=50.0,
+    )
+    catalog_path = str(raw.get("catalog_path") or "").strip()
+    overrides: list[PriceOverrideConfig] = []
+    raw_overrides = raw.get("overrides")
+    if isinstance(raw_overrides, list):
+        for item in raw_overrides:
+            if not isinstance(item, dict):
+                continue
+            provider = str(item.get("provider") or "").strip()
+            model = str(item.get("model") or "").strip()
+            if not provider or not model:
+                continue
+            input_rate = _optional_non_negative_float(item.get("input"))
+            output_rate = _optional_non_negative_float(item.get("output"))
+            if input_rate is None or output_rate is None:
+                logger.warning(
+                    "config: [llm.pricing.overrides] %s/%s 缺少合法 input/output，已忽略",
+                    provider,
+                    model,
+                )
+                continue
+            currency = str(item.get("currency") or "USD").strip().upper()
+            if currency not in {"USD", "CNY"}:
+                currency = "USD"
+            overrides.append(
+                PriceOverrideConfig(
+                    provider=provider,
+                    model=model,
+                    input=input_rate,
+                    output=output_rate,
+                    cache_read=_optional_non_negative_float(item.get("cache_read")),
+                    cache_write=_optional_non_negative_float(item.get("cache_write")),
+                    currency=currency,
+                )
+            )
+    return PricingConfig(
+        usd_cny_rate=usd_cny_rate,
+        catalog_path=catalog_path,
+        overrides=overrides,
+    )
+
+
 def _build_config(
     raw: dict[str, Any],
     *,
@@ -2728,6 +2820,7 @@ def _build_config(
             min_value=0.1,
             max_value=20.0,
         ),
+        pricing=_build_pricing_config(llm_raw.get("pricing")),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         instance_routing=instance_routing,
         builtin_providers_version=(2 if llm_raw.get("builtin_providers_version") == 2 else 0),
@@ -6978,6 +7071,33 @@ def _render_config_toml(
         lines.extend(_render_provider_section("requesty", config.llm.requesty))
         lines.extend(_render_provider_section("api_route", config.llm.api_route))
         lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
+    pricing_lines = [
+        "[llm.pricing]",
+        f"usd_cny_rate = {config.llm.pricing.usd_cny_rate}",
+        f"catalog_path = {_toml_string(config.llm.pricing.catalog_path)}",
+        "",
+    ]
+    for price_override in config.llm.pricing.overrides:
+        pricing_lines.extend(
+            [
+                "[[llm.pricing.overrides]]",
+                f"provider = {_toml_string(price_override.provider)}",
+                f"model = {_toml_string(price_override.model)}",
+                f"input = {price_override.input}",
+                f"output = {price_override.output}",
+            ]
+        )
+        if price_override.cache_read is not None:
+            pricing_lines.append(f"cache_read = {price_override.cache_read}")
+        if price_override.cache_write is not None:
+            pricing_lines.append(f"cache_write = {price_override.cache_write}")
+        pricing_lines.extend(
+            [
+                f"currency = {_toml_string(price_override.currency)}",
+                "",
+            ]
+        )
+    lines.extend(pricing_lines)
     lines.extend(
         [
             "[llm.sponsored]",

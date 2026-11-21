@@ -404,3 +404,70 @@ def test_query_llm_usage_by_caller_returns_cache_field(tmp_path: Path) -> None:
     assert hit_rate == pytest.approx(0.75, rel=1e-9)
     # 0% on recommendation
     assert by_caller["recommendation.write_expression"]["cached_input_tokens"] == 0
+
+
+def test_usage_recorder_uses_rate_catalog_and_records_confidence(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {
+                    "models": {
+                        "deepseek-v4-flash": {
+                            "input": 0.15,
+                            "output": 0.6,
+                            "cache_read": 0.003,
+                            "currency": "USD",
+                            "source": "models.dev",
+                        }
+                    }
+                }
+            },
+            "fx": {"usd_cny": 7.2},
+        }
+    )
+    recorder = UsageRecorder(sink=db, catalog=catalog)
+    response = _FakeResponse(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_tokens=1000,
+        completion_tokens=1000,
+    )
+    recorder.record(response, caller="soul.preference")
+
+    row = db.conn.execute(
+        "SELECT estimated_cost_cny, cost_confidence FROM llm_usage ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    # 1k × $0.15/M + 1k × $0.60/M = $0.00075 → ×7.2 = ¥0.0054
+    assert float(row["estimated_cost_cny"]) == pytest.approx(0.0054, rel=1e-6)
+    assert row["cost_confidence"] == "exact"
+
+
+def test_today_query_sums_low_confidence_spend(tmp_path: Path) -> None:
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    db.insert_llm_usage(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_tokens=1000,
+        completion_tokens=1000,
+        estimated_cost_cny=0.01,
+        caller="soul.preference",
+        cost_confidence="exact",
+    )
+    db.insert_llm_usage(
+        provider="openai_compatible",
+        model="glm-5.3-flash",
+        prompt_tokens=1000,
+        completion_tokens=1000,
+        estimated_cost_cny=0.02,
+        caller="discovery.evaluate_batch",
+        cost_confidence="derived_relay",
+    )
+
+    today = db.query_llm_usage_today()
+    assert today["cost_cny"] == pytest.approx(0.03)
+    assert today["low_confidence_cost_cny"] == pytest.approx(0.02)

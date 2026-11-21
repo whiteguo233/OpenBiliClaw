@@ -634,6 +634,7 @@ total = db.query_llm_usage_total(days=7)
 - `query_llm_usage_by_day` 保留 `date(timestamp,'localtime')` 分组，只用于报表；不要用它做预算判断（无法走索引，且窗口是滚动的）。
 - `max_llm_usage_id()` / `query_llm_usage_since_id()` 把一次 init / discovery 的 cost summary 限定在该阶段新写入的行。
 - `llm.cost_multiplier` 在写入前缩放估算；历史行不重算，`openbiliclaw cost` 与每日上限读到的都是落库值。
+- `llm_usage.cost_confidence`（v0.3.24x+）记录估算来源：`exact` / `derived_relay` / `user` / `fallback`，空值表示迁移前旧行。`query_llm_usage_today()` 额外返回 `low_confidence_cost_cny`，供 CLI / UI 提示“中转/回退估算”占比；预算仍按落库的 `estimated_cost_cny` 求和。
 
 ### Bangumi Producer Ledger
 

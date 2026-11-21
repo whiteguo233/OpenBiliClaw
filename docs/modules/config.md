@@ -655,6 +655,33 @@ Cheaper Inference 适配器不发送 `reasoning_effort`，且不提供 embedding
 
 `[llm.embedding].provider` 也接受 `openai_compatible`：多数 OpenAI-compat 后端（Together / vLLM / Azure）都暴露 `/v1/embeddings`，可以直接挂上来，与 chat 用同一组 base_url 也行（互相独立的 provider 实例）。
 
+### `[llm.pricing]`
+
+价格目录与用户覆盖（issue #353 后续）。随包 catalog 由 `scripts/build_llm_price_catalog.py` 从 models.dev（provider/model 价目）与 OpenRouter（UTC 峰谷窗口 + 长上下文档位）生成；运行时按 provider/model/当前时刻解析，解析不到才回退 `llm.pricing` 静态表（`pricing.py`）并标 `fallback` 置信度。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `usd_cny_rate` | float | `7.2` | catalog 的 USD 报价换算成 CNY 的汇率，合法范围 `1..50`。写死在配置里，避免历史 `llm_usage` 行随汇率变化而重算 |
+| `catalog_path` | string | `""` | 自定义 catalog JSON 路径；空 = 随包 `src/openbiliclaw/llm/pricing_catalog.json` |
+| `overrides` | array | `[]` | 用户单价覆盖，优先级最高；同步/重建 catalog 不会覆盖 |
+
+覆盖示例（单价单位是**每百万 token**，币种 `USD` 或 `CNY`）：
+
+```toml
+[llm.pricing]
+usd_cny_rate = 7.2
+
+[[llm.pricing.overrides]]
+provider = "openai_compatible"
+model = "glm-5.3-flash"
+input = 0.15
+output = 0.50
+cache_read = 0.03
+currency = "USD"
+```
+
+`provider/model` 都必填，`input` / `output` 必须是非负数；缺字段或负数的条目会被忽略并打 WARNING。`openbiliclaw price --provider … --model …` 可以查看解析结果、当前峰谷档位和置信度。目录里 `0` / 缺失价格不会被当成免费：未知中转站按同模型跨 provider 的**最高价**做保守上界。
+
 ### `[llm.embedding]`
 
 Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、recommendation 跨主题去重、PoolCurator 反馈相似度判定、interest / avoidance probe 主题归类。
