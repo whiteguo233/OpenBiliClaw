@@ -79,3 +79,18 @@
 登录使用保留的 `.test` 域名和本机 fixture，只在测试进程为该域指定 DNS 测试答案和浏览器回环路由。公网 Rust 流程沿用生产网络策略。测试覆盖候选入队，真实模型评估、第三方账号和冻结安装包另行验收。测试来源已停用，测试 Task Space 和宿主已关闭。上述 Windows 源码验收范围通过。
 
 修复后运行 Windows 原生与设置、接线、生命周期、运行历史、聊天审批和打包资源相关回归 157 项，全部通过。共享设置 JavaScript 30 项通过。Ruff、Linux 平台类型检查、Node 与 PowerShell 语法检查通过。
+
+### 首次启动与静默安装复测
+
+使用真实 `serve-api --host 127.0.0.1`、独立数据目录和本机已安装的 Ego Lite `0.6.3.17`。仅启动 API 进程，以隔离后台服务端口。配置态测试使用不联网的本机模型配置，窗口采样只观察测试专用 Ego 主进程。
+
+| 条件 | 实测结果 |
+| --- | --- |
+| 新数据目录，尚无模型配置，系统已安装 Ego | `/api/ping` 可用，来源列表因模型未配置返回 503。Ego 仍从验签、原生握手进入 `ready`，创建专用 profile，105 次采样均未发现可见窗口。 |
+| 新数据目录，有模型配置，模拟系统未安装 Ego | 将两项 Windows 路径覆盖指向隔离目录内不存在的文件。来源状态为 `manual_install`、`installed=false`，未启动 Ego 或创建托管 profile。 |
+| 新数据目录，有模型配置，系统已安装 Ego | API 在约 4.31 秒响应，Ego 约 5.86 秒就绪。专用 profile 创建成功，63 次采样均未发现可见窗口，无需点选准备。 |
+| 重启已准备的数据目录 | 状态为 `ready`、`available=false`。服务启动期间未唤醒 Ego，业务需要时再启动。 |
+
+Windows 源码引导在官方 Ego 尚未安装时报告 `windows_ego_beta_manual_install`。官方 `0.6.3.17` 安装器的默认系统级首装此前触发了 UAC。上游讨论记录了 `--prefers-user --silent` 的用户级用法。本机已有系统级安装，缺少干净 Windows 环境，静默参数的干净首装未实测。[上游安装讨论](https://github.com/citrolabs/ego-lite/issues/524)
+
+Windows 安装识别与部署准备相关回归 33 项通过。
