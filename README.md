@@ -44,12 +44,13 @@
 
 <table>
   <tr>
-    <td align="center" width="50%">
-      <img src="docs/images/user-community-qrcode.png" width="200" alt="QQ 用户交流群二维码" /><br/>
-      <b>QQ 用户群</b>
+    <td align="center" valign="middle" width="50%">
+      <img src="docs/images/user-community-qrcode.png" height="220" alt="QQ 用户交流群二维码" /><br/>
+      <b>QQ 用户群</b><br/>
+      <sub>扫码加入交流使用心得与平台适配</sub>
     </td>
-    <td align="center" width="50%">
-      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="200" alt="Discord 社区二维码" /></a><br/>
+    <td align="center" valign="middle" width="50%">
+      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" height="220" alt="Discord 社区二维码" /></a><br/>
       <b>Discord 社区</b><br/>
       <sub>扫码或<a href="https://discord.gg/PU6Xgch8yg">点击加入</a>，链接长期有效</sub>
     </td>

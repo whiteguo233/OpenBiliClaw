@@ -42,12 +42,13 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 <table>
   <tr>
-    <td align="center" width="50%">
-      <img src="docs/images/user-community-qrcode.png" width="200" alt="QQ user community QR code" /><br/>
-      <b>QQ Community</b>
+    <td align="center" valign="middle" width="50%">
+      <img src="docs/images/user-community-qrcode.png" height="220" alt="QQ user community QR code" /><br/>
+      <b>QQ Community</b><br/>
+      <sub>Scan to join the Chinese user group</sub>
     </td>
-    <td align="center" width="50%">
-      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="200" alt="Discord community QR code" /></a><br/>
+    <td align="center" valign="middle" width="50%">
+      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" height="220" alt="Discord community QR code" /></a><br/>
       <b>Discord Community</b><br/>
       <sub>Scan or <a href="https://discord.gg/PU6Xgch8yg">click to join</a> — invite never expires</sub>
     </td>
