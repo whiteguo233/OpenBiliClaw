@@ -40,6 +40,22 @@
 
 > 🇨🇳 **国内源**：[Gitee](https://gitee.com/whiteguo233/openbiliclaw/tree/main) 与 [AtomGit](https://atomgit.com/whiteguo233/OpenBiliClaw) 提供源码镜像；最新版安装包与插件请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 获取（[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)目前仅保留 v0.3.213 历史文件）。
 
+## 💬 用户交流群
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/images/user-community-qrcode.png" width="200" alt="QQ 用户交流群二维码" /><br/>
+      <b>QQ 用户群</b>
+    </td>
+    <td align="center" width="50%">
+      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="200" alt="Discord 社区二维码" /></a><br/>
+      <b>Discord 社区</b><br/>
+      <sub>扫码或<a href="https://discord.gg/PU6Xgch8yg">点击加入</a>，链接长期有效</sub>
+    </td>
+  </tr>
+</table>
+
 ## 10 秒看懂 OpenBiliClaw
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent。它从你的跨平台行为、反馈和对话中持续深化五层心理画像，带着对你的理解主动去 **B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram** 以及你用一句话订阅的**任意网站和 RSS** 里寻找好内容。
@@ -363,21 +379,21 @@ docker restart openbiliclaw-backend
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────────┐
-│                                  使用入口层                                    │
-│  浏览器插件 (Chrome/Edge/Firefox/Safari) · 桌面 Web (/web) · 移动 Web (/m)      │
+│                                  使用入口层                                   │
+│  浏览器插件 (Chrome/Edge/Firefox/Safari) · 桌面 Web (/web) · 移动 Web (/m)    │
 │  Flutter 原生端 (OpenBiliClaw-mobile) · DSH 插件 · Agent 宿主 (OpenClaw 等)   │
 └───────────────────────────────────────┬───────────────────────────────────────┘
                                         │ 本地 HTTP / WebSocket (127.0.0.1 / LAN)
                                         │ 可选：应用内 Tailnet · Caddy HTTPS · TLS Proxy
 ┌───────────────────────────────────────▼───────────────────────────────────────┐
-│                         FastAPI 本地后端 & Runtime 调度                         │
-│   并发闸门 · 后台补池 · Presence 心跳 · 跨进程预算 · 应用级配置热重载/迁移        │
+│                        FastAPI 本地后端 & Runtime 调度                        │
+│   并发闸门 · 后台补池 · Presence 心跳 · 跨进程预算 · 应用级配置热重载/迁移    │
 ├───────────────────┬───────────────────┬───────────────────┬───────────────────┤
 │    Soul Engine    │   Memory System   │ Discovery Engine  │  Recommendation   │
-│  五层心理画像演化   │   多层网状记忆     │ 15 类来源统一准入  │ 混排 · 多样性 · 解释 │
+│ 五层心理画像演化  │   多层网状记忆    │ 15 类来源统一准入 │ 混排·多样性·解释  │
 ├───────────────────┴───────────────────┴───────────────────┴───────────────────┤
-│  LLM & Embedding 路由（预置硅基流动免费模型 · Ollama · 多渠道有序故障切换链）    │
-│  本地 SQLite 存储（行为 · 画像 · 候选池 · 已看账本 · 对话 · 收藏/历史）           │
+│  LLM & Embedding 路由（预置硅基流动免费模型 · Ollama · 多渠道有序故障切换链） │
+│  本地 SQLite 存储（行为 · 画像 · 候选池 · 已看账本 · 对话 · 收藏/历史）       │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -419,22 +435,6 @@ OpenBiliClaw/
 | 网络与部署 | 桌面打包（PyInstaller + 公证 DMG / Inno Setup）· Docker Compose · 应用内 `tsnet` · Caddy / 内置 TLS Proxy |
 
 </details>
-
-## 💬 用户交流群
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/images/user-community-qrcode.png" width="200" alt="QQ 用户交流群二维码" /><br/>
-      <b>QQ 用户群</b>
-    </td>
-    <td align="center" width="50%">
-      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="200" alt="Discord 社区二维码" /></a><br/>
-      <b>Discord 社区</b><br/>
-      <sub>扫码或<a href="https://discord.gg/PU6Xgch8yg">点击加入</a>，链接长期有效</sub>
-    </td>
-  </tr>
-</table>
 
 ## 📖 文档与生态导航
 

@@ -38,6 +38,22 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 > 🇨🇳 **Mainland China sources**: [Gitee](https://gitee.com/whiteguo233/openbiliclaw/tree/main) and [AtomGit](https://atomgit.com/whiteguo233/OpenBiliClaw) host source mirrors. Get the latest installers and extension packages from [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) ([123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) currently holds v0.3.213 archive files only).
 
+## 💬 Community
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/images/user-community-qrcode.png" width="200" alt="QQ user community QR code" /><br/>
+      <b>QQ Community</b>
+    </td>
+    <td align="center" width="50%">
+      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="200" alt="Discord community QR code" /></a><br/>
+      <b>Discord Community</b><br/>
+      <sub>Scan or <a href="https://discord.gg/PU6Xgch8yg">click to join</a> — invite never expires</sub>
+    </td>
+  </tr>
+</table>
+
 ## OpenBiliClaw in 10 Seconds
 
 A local-first, private, open-source, self-improving content discovery Agent. It continuously deepens a five-layer psychological profile from your cross-platform activity, feedback, and chat, then proactively searches **Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, Instagram**, plus **any website or RSS feed** you describe in chat.
@@ -418,22 +434,6 @@ OpenBiliClaw/
 | Packaging & Networking | Desktop bundles (PyInstaller + notarized DMG / Inno Setup) · Docker Compose · embedded `tsnet` · Caddy / built-in TLS Proxy |
 
 </details>
-
-## 💬 Community
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/images/user-community-qrcode.png" width="200" alt="QQ user community QR code" /><br/>
-      <b>QQ Community</b>
-    </td>
-    <td align="center" width="50%">
-      <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="200" alt="Discord community QR code" /></a><br/>
-      <b>Discord Community</b><br/>
-      <sub>Scan or <a href="https://discord.gg/PU6Xgch8yg">click to join</a> — invite never expires</sub>
-    </td>
-  </tr>
-</table>
 
 ## 📖 Documentation & Ecosystem
 
