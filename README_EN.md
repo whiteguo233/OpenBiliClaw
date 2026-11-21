@@ -107,9 +107,9 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/images/chrome-web-store/source/desktop-recommend.png" width="480" alt="Desktop Web multi-platform mixed recommendation home" /><br/>
-      <b>Desktop Home · Cross-Platform Feed</b><br/>
-      <sub>Surprise pick · source filter tabs · live pool board · friend-like reasons</sub>
+      <img src="docs/images/desktop-home.png" width="480" alt="Desktop Web recommendation home (real usage screenshot)" /><br/>
+      <b>Desktop Home</b><br/>
+      <sub>Surprise pick hero · recommendation grid · friend-like reasons</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/images/desktop-profile.png" width="480" alt="Desktop Web Soul Profile view" /><br/>
@@ -122,9 +122,9 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 <table>
   <tr>
     <td align="center" width="25%">
-      <img src="docs/images/chrome-web-store/source/mobile-recommend.png" width="200" alt="Mobile cross-platform feed" /><br/>
+      <img src="docs/images/mobile-recommend.png" width="200" alt="Mobile Web feed (real usage screenshot)" /><br/>
       <b>Mobile Feed</b><br/>
-      <sub>4-tab layout · browse & save anywhere</sub>
+      <sub>Surprise pick + pool status · friend-like reasons</sub>
     </td>
     <td align="center" width="25%">
       <img src="docs/images/screenshot-recommend-feedback.png" width="200" alt="Extension recommendation feedback" /><br/>
