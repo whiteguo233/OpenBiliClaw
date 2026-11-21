@@ -6462,6 +6462,8 @@ class TestBackendAPI:
             "llm_daily_budget_cny": 0.0,
             "llm_daily_budget_on_exceed": "pause",
             "llm_today_cost_cny": 0.0,
+            "llm_daily_budget_reserved_cny": 0.0,
+            "llm_daily_budget_remaining_cny": 0.0,
             "llm_daily_budget_state": "disabled",
             "llm_daily_budget_day": "",
             "last_discovered_count": 14,

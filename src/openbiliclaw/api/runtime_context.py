@@ -1127,7 +1127,35 @@ class RuntimeContext:
             # available because its explicit calls bypass this predicate.
             return False
         scheduler = getattr(getattr(self, "config", None), "scheduler", None)
-        return _gate(scheduler, self.presence)
+        return _gate(
+            scheduler,
+            self.presence,
+            peak_active=self._peak_active_now(),
+        )
+
+    def _peak_active_now(self) -> bool | None:
+        """Return the catalog tariff verdict for account-sync/worker gates.
+
+        Account sync does profile maintenance, so it must pause during a
+        catalog peak just like the controller's maintenance loops. ``None``
+        means "no known tariff"; presence/budget gating still applies.
+        """
+
+        predicate = getattr(self, "_peak_tariff_predicate", None)
+        if predicate is None:
+            config = getattr(self, "config", None)
+            if config is None:
+                return None
+            from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
+            predicate = peak_predicate_for_config(config)
+            self._peak_tariff_predicate = predicate
+        if callable(predicate):
+            try:
+                return bool(predicate())
+            except Exception:
+                return None
+        return None
 
     @staticmethod
     def full_worker_expected() -> bool:
@@ -1280,6 +1308,7 @@ class RuntimeContext:
             return False
         registry.configure_chain(chain)
         self.config = new_config
+        self._peak_tariff_predicate = None
         if self.agent_tool_context is not None:
             self.agent_tool_context.config = new_config
         return True
@@ -1335,6 +1364,7 @@ class RuntimeContext:
             approval_gate=self.chat_approval_store,
         )
         self.config = new_config
+        self._peak_tariff_predicate = None
         self.agent_tool_context.config = new_config
         self.agent_loop = new_loop
         return True
@@ -2750,6 +2780,7 @@ class RuntimeContext:
         new_llm_gate.reconfigure(llm_concurrency)
         self.llm_concurrency_gate = new_llm_gate
         self.config = new_config
+        self._peak_tariff_predicate = None
         self.llm_registry = new_registry
         self.llm_service = new_llm_service
         self.bilibili_client = new_bilibili_client

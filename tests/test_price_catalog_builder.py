@@ -112,6 +112,7 @@ def test_long_context_tiers_are_extracted() -> None:
     tiers = catalog["tiers"]["gpt-tiered"]
     assert tiers == [
         {
+            "provider": "openai",
             "min_prompt_tokens": 200000,
             "input": 2.0,
             "output": 4.0,
@@ -168,3 +169,45 @@ def test_sync_failure_leaves_the_previous_catalog_untouched(tmp_path) -> None:
         raise AssertionError("sync should propagate the fetch failure")
 
     assert destination.read_text(encoding="utf-8") == "previous"
+
+
+def test_small_per_token_cache_prices_survive_conversion() -> None:
+    """$0.003/M == 3e-9/token; rounding per-token first would zero it."""
+
+    catalog = builder.build_catalog(
+        {
+            "deepseek": {
+                "models": {"m": {"cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}}}
+            }
+        },
+        {
+            "data": [
+                {
+                    "id": "deepseek/m",
+                    "pricing": {
+                        "prompt": "0.00000015",
+                        "completion": "0.0000006",
+                        "input_cache_read": "0.000000003",
+                    },
+                }
+            ]
+        },
+    )
+    assert catalog["providers"]["deepseek"]["models"]["m"]["cache_read"] == 0.003
+
+
+def test_zero_priced_catalog_card_is_rejected_by_the_loader() -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {
+                    "models": {
+                        "m": {"input": 0, "output": 0.6, "currency": "USD", "source": "test"}
+                    }
+                }
+            }
+        }
+    )
+    assert catalog.resolve("deepseek", "m") is None

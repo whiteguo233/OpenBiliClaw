@@ -240,3 +240,9 @@ def test_scheduler_config_response_exposes_daily_and_peak_fields() -> None:
     assert out.peak_hours == ""
     assert out.peak_timezone_offset_minutes == 480
     assert out.peak_refill_floor == 30
+
+
+def test_manual_parser_rejects_out_of_range_minutes() -> None:
+    assert parse_peak_windows("08:99-10:00", offset_minutes=0) == []
+    assert parse_peak_windows("09:00-25:00", offset_minutes=0) == []
+    assert parse_peak_windows("09:00-24:00", offset_minutes=0) == [(540, 0)]

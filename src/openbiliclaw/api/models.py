@@ -518,6 +518,8 @@ class RuntimeStatusResponse(BaseModel):
     llm_daily_budget_cny: float = 0.0
     llm_daily_budget_on_exceed: str = "pause"
     llm_today_cost_cny: float = 0.0
+    llm_daily_budget_reserved_cny: float = 0.0
+    llm_daily_budget_remaining_cny: float = 0.0
     llm_daily_budget_state: str = "disabled"
     llm_daily_budget_day: str = ""
     last_discovered_count: int = 0

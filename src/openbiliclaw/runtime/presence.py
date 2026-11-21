@@ -196,10 +196,16 @@ def parse_peak_windows(
             end_h, end_m = (int(part) for part in end_s.strip().split(":", 1))
         except (TypeError, ValueError):
             continue
+        if not (
+            0 <= start_h <= 23
+            and 0 <= start_m <= 59
+            and 0 <= end_h <= 24
+            and 0 <= end_m <= 59
+            and not (end_h == 24 and end_m != 0)
+        ):
+            continue
         local_start = start_h * 60 + start_m
         local_end = end_h * 60 + end_m
-        if not (0 <= local_start < 1440 and 0 <= local_end <= 1440):
-            continue
         if local_start == local_end:
             continue
         start = (local_start - offset) % 1440

@@ -47,8 +47,9 @@ def apply_background_budget_config(gate: LLMConcurrencyGate, config: object) -> 
         # opens the app database directly, so make sure its directory exists.
         data_dir.mkdir(parents=True, exist_ok=True)
         ledger = BackgroundBudgetLedger(data_dir / "openbiliclaw.db")
-        if daily_budget_cny > 0:
-            daily_ledger = DailySpendLedger(data_dir / "openbiliclaw.db")
+        # Keep the spend ledger even when the cap is disabled: runtime status
+        # can then show today's spend instead of a placeholder zero.
+        daily_ledger = DailySpendLedger(data_dir / "openbiliclaw.db")
     gate.configure_background_budget(
         max_calls=max_calls,
         window_seconds=window_seconds,
@@ -669,35 +670,48 @@ class LLMConcurrencyGate:
 
         mode = self._daily_budget_on_exceed
         if self._daily_budget_cny <= 0:
+            spend = 0.0
+            ledger = self._daily_spend_ledger
+            if ledger is not None:
+                try:
+                    spend = ledger.spend_cny()
+                except Exception:
+                    logger.warning("Daily spend lookup failed; treating spend as 0", exc_info=True)
             return {
                 "llm_daily_budget_cny": 0.0,
                 "llm_daily_budget_on_exceed": mode,
-                "llm_today_cost_cny": 0.0,
+                "llm_today_cost_cny": round(spend, 6),
                 "llm_daily_budget_state": "disabled",
-                "llm_daily_budget_day": "",
+                "llm_daily_budget_day": local_day_window()[0],
                 "llm_daily_budget_reserved_cny": 0.0,
                 "llm_daily_budget_remaining_cny": 0.0,
             }
         spend = 0.0
+        reserved = self._daily_budget_reserved_cny
         ledger = self._daily_spend_ledger
         if ledger is not None:
             try:
                 spend = ledger.spend_cny()
             except Exception:
                 logger.warning("Daily spend lookup failed; treating spend as 0", exc_info=True)
+            try:
+                reserved = ledger.active_reserved_cny()
+            except Exception:
+                logger.warning(
+                    "Daily reservation lookup failed; using process-local value",
+                    exc_info=True,
+                )
         day = local_day_window()[0]
-        exceeded = spend >= self._daily_budget_cny
+        remaining = self._daily_budget_cny - spend - reserved
+        exceeded = remaining <= 1e-9
         return {
             "llm_daily_budget_cny": self._daily_budget_cny,
             "llm_daily_budget_on_exceed": mode,
             "llm_today_cost_cny": round(spend, 6),
             "llm_daily_budget_state": "exceeded" if exceeded else "ok",
             "llm_daily_budget_day": day,
-            "llm_daily_budget_reserved_cny": round(self._daily_budget_reserved_cny, 6),
-            "llm_daily_budget_remaining_cny": round(
-                max(0.0, self._daily_budget_cny - spend - self._daily_budget_reserved_cny),
-                6,
-            ),
+            "llm_daily_budget_reserved_cny": round(reserved, 6),
+            "llm_daily_budget_remaining_cny": round(max(0.0, remaining), 6),
         }
 
     def daily_budget_allowed(self) -> bool:
@@ -736,14 +750,14 @@ class LLMConcurrencyGate:
             day=str(snapshot["llm_daily_budget_day"]),
         )
 
-    def _reserve_daily_budget(self, *, caller: str) -> float:
+    def _reserve_daily_budget(self, *, caller: str) -> str | float:
         """Reserve a worst-case slice of the daily cap before a provider call.
 
-        Concurrent calls in one process must not all read the same accrued
-        spend and pass the check together. Each admission reserves
-        ``daily_budget_reserve_cny`` (capped at 25% of the cap) and releases it
-        in ``slot()``'s finally block; the reservation is not a charge — the
-        ledger row written after the response remains the source of truth.
+        The reservation lives in the shared SQLite ledger when one is wired, so
+        sibling processes see it too; without a ledger it falls back to a
+        process-local counter. ``slot()`` releases it in a finally block. The
+        reservation is not a charge — the ``llm_usage`` row written after the
+        response remains the source of truth.
         """
 
         if self._daily_budget_cny <= 0:
@@ -751,34 +765,79 @@ class LLMConcurrencyGate:
         snapshot = self.daily_budget_snapshot()
         raw_spend = snapshot["llm_today_cost_cny"]
         spend = float(raw_spend) if isinstance(raw_spend, int | float) else 0.0
+        day = str(snapshot["llm_daily_budget_day"])
         if self._daily_budget_on_exceed == "warn":
             if spend >= self._daily_budget_cny:
-                self._note_daily_budget_exceeded(
-                    spend=spend,
-                    day=str(snapshot["llm_daily_budget_day"]),
-                )
+                self._note_daily_budget_exceeded(spend=spend, day=day)
             return 0.0
         reserve = min(self._daily_budget_reserve_cny, self._daily_budget_cny)
         if reserve <= 0:
-            reserve = min(0.01, self._daily_budget_cny)
-        if spend + self._daily_budget_reserved_cny + reserve > self._daily_budget_cny:
+            # Explicit ``0`` disables reservation. Still refuse once accrued
+            # spend itself is at/over the cap.
             if spend >= self._daily_budget_cny:
-                self._note_daily_budget_exceeded(
-                    spend=spend,
-                    day=str(snapshot["llm_daily_budget_day"]),
+                self._note_daily_budget_exceeded(spend=spend, day=day)
+                raise self._daily_budget_error(caller=caller, spend=spend, reserved=0.0)
+            return 0.0
+
+        ledger = self._daily_spend_ledger
+        if ledger is not None:
+            try:
+                token = ledger.try_reserve(
+                    amount_cny=reserve,
+                    limit_cny=self._daily_budget_cny,
                 )
-            raise LLMDailyBudgetExceededError(
-                f"Daily LLM budget exhausted for caller {caller!r}: "
-                f"today ¥{spend:.4f} spent + ¥{self._daily_budget_reserved_cny:.4f} "
-                f"reserved in flight / ¥{self._daily_budget_cny:.2f} "
-                f"(budget_on_exceed={self._daily_budget_on_exceed}). "
-                "Raise scheduler.daily_budget_cny, set it to 0 to disable the cap, "
-                "or wait for the next local calendar day."
+            except Exception:
+                logger.warning(
+                    "Daily reservation ledger unavailable; falling back to "
+                    "the process-local counter",
+                    exc_info=True,
+                )
+                token = None
+            if token is not None:
+                if token:
+                    return token
+                return ""
+            if spend >= self._daily_budget_cny:
+                self._note_daily_budget_exceeded(spend=spend, day=day)
+            raise self._daily_budget_error(
+                caller=caller,
+                spend=spend,
+                reserved=ledger.active_reserved_cny(),
+            )
+
+        if spend + self._daily_budget_reserved_cny + reserve > self._daily_budget_cny + 1e-9:
+            if spend >= self._daily_budget_cny:
+                self._note_daily_budget_exceeded(spend=spend, day=day)
+            raise self._daily_budget_error(
+                caller=caller,
+                spend=spend,
+                reserved=self._daily_budget_reserved_cny,
             )
         self._daily_budget_reserved_cny += reserve
         return reserve
 
-    def _release_daily_budget(self, reservation: float) -> None:
+    def _daily_budget_error(
+        self,
+        *,
+        caller: str,
+        spend: float,
+        reserved: float,
+    ) -> LLMDailyBudgetExceededError:
+        return LLMDailyBudgetExceededError(
+            f"Daily LLM budget exhausted for caller {caller!r}: "
+            f"today ¥{spend:.4f} spent + ¥{reserved:.4f} reserved in flight / "
+            f"¥{self._daily_budget_cny:.2f} "
+            f"(budget_on_exceed={self._daily_budget_on_exceed}). "
+            "Raise scheduler.daily_budget_cny, set it to 0 to disable the cap, "
+            "or wait for the next local calendar day."
+        )
+
+    def _release_daily_budget(self, reservation: str | float) -> None:
+        if isinstance(reservation, str):
+            ledger = self._daily_spend_ledger
+            if reservation and ledger is not None:
+                ledger.release(reservation)
+            return
         if reservation > 0:
             self._daily_budget_reserved_cny = max(
                 0.0, self._daily_budget_reserved_cny - reservation

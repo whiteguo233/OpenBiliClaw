@@ -29,6 +29,7 @@ import json
 import logging
 import sqlite3
 import time
+import uuid
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +43,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TABLE = "background_llm_budget"
+_RESERVATIONS_TABLE = "background_llm_budget_reservations"
+_CREATE_RESERVATIONS_SQL = f"""
+CREATE TABLE IF NOT EXISTS {_RESERVATIONS_TABLE} (
+    id TEXT PRIMARY KEY,
+    amount_cny REAL NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+)
+"""
+_CREATE_RESERVATIONS_INDEX_SQL = (
+    f"CREATE INDEX IF NOT EXISTS idx_{_RESERVATIONS_TABLE}_expires "
+    f"ON {_RESERVATIONS_TABLE}(expires_at)"
+)
+# A reservation must outlive the longest provider timeout (default 20 min).
+_RESERVATION_TTL_SECONDS = 1800.0
 _CREATE_SQL = f"""
 CREATE TABLE IF NOT EXISTS {_TABLE} (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -171,6 +187,8 @@ class DailySpendLedger:
             isolation_level=None,
         )
         connection.execute(f"PRAGMA busy_timeout = {int(self._timeout_seconds * 1000)}")
+        connection.execute(_CREATE_RESERVATIONS_SQL)
+        connection.execute(_CREATE_RESERVATIONS_INDEX_SQL)
         return connection
 
     def _window(self) -> tuple[str, str, str]:
@@ -189,6 +207,99 @@ class DailySpendLedger:
                 ).fetchone()
         except sqlite3.Error:
             logger.warning("Daily spend ledger unavailable; treating spend as 0", exc_info=True)
+            return 0.0
+        return max(0.0, float(row[0] or 0.0)) if row else 0.0
+
+    def try_reserve(
+        self,
+        *,
+        amount_cny: float,
+        limit_cny: float,
+        ttl_seconds: float = _RESERVATION_TTL_SECONDS,
+    ) -> str | None:
+        """Atomically reserve ``amount_cny`` against the shared daily ledger.
+
+        Returns a reservation id, ``""`` when ``amount_cny <= 0`` (caller
+        disabled reservations), or ``None`` when the cap would be exceeded.
+        The spend + active-reservation sum and the insert share one
+        ``BEGIN IMMEDIATE`` transaction, so sibling processes cannot both
+        admit against the same headroom.
+        """
+
+        amount = max(0.0, float(amount_cny))
+        if amount <= 0:
+            return ""
+        day, start_utc, _ = self._window()
+        del day
+        now = time.time()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    f"DELETE FROM {_RESERVATIONS_TABLE} WHERE expires_at <= ?",
+                    (now,),
+                )
+                spend_row = connection.execute(
+                    "SELECT COALESCE(SUM(estimated_cost_cny), 0.0) FROM llm_usage "
+                    "WHERE timestamp >= ? AND timestamp < ?",
+                    (start_utc, self._window()[2]),
+                ).fetchone()
+                spend = float(spend_row[0] or 0.0) if spend_row else 0.0
+                reserved_row = connection.execute(
+                    f"SELECT COALESCE(SUM(amount_cny), 0.0) FROM {_RESERVATIONS_TABLE}"
+                ).fetchone()
+                reserved = float(reserved_row[0] or 0.0) if reserved_row else 0.0
+                if spend + reserved + amount > float(limit_cny) + 1e-9:
+                    connection.execute("ROLLBACK")
+                    return None
+                reservation_id = uuid.uuid4().hex
+                connection.execute(
+                    f"INSERT INTO {_RESERVATIONS_TABLE} "
+                    "(id, amount_cny, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                    (reservation_id, amount, now, now + float(ttl_seconds)),
+                )
+                connection.execute("COMMIT")
+                return reservation_id
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+
+    def release(self, reservation_id: str) -> None:
+        """Release one reservation; unknown ids are a no-op."""
+
+        token = str(reservation_id or "")
+        if not token:
+            return
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute(
+                    f"DELETE FROM {_RESERVATIONS_TABLE} WHERE id = ?",
+                    (token,),
+                )
+        except sqlite3.Error:
+            logger.warning("Failed to release LLM budget reservation", exc_info=True)
+
+    def active_reserved_cny(self) -> float:
+        """Return the sum of unexpired reservations (0.0 when unreadable)."""
+
+        now = time.time()
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute(
+                        f"DELETE FROM {_RESERVATIONS_TABLE} WHERE expires_at <= ?",
+                        (now,),
+                    )
+                    row = connection.execute(
+                        f"SELECT COALESCE(SUM(amount_cny), 0.0) FROM {_RESERVATIONS_TABLE}"
+                    ).fetchone()
+                    connection.execute("COMMIT")
+                except BaseException:
+                    connection.execute("ROLLBACK")
+                    raise
+        except sqlite3.Error:
+            logger.warning("Daily reservation ledger unavailable", exc_info=True)
             return 0.0
         return max(0.0, float(row[0] or 0.0)) if row else 0.0
 

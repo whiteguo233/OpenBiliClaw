@@ -63,6 +63,7 @@ _CATALOG = {
     "tariffs": {
         "deepseek-v4-flash": [
             {
+                "provider": "deepseek",
                 "days": [0, 1, 2, 3, 4],
                 "start": 60,
                 "end": 240,
@@ -73,6 +74,7 @@ _CATALOG = {
                 "multiplier": 2.0,
             },
             {
+                "provider": "deepseek",
                 "days": [0, 1, 2, 3, 4],
                 "start": 360,
                 "end": 600,
@@ -86,8 +88,8 @@ _CATALOG = {
     },
     "tiers": {
         "gpt-tiered": [
-            {"min_prompt_tokens": 1000, "input": 2.0, "output": 4.0},
-            {"min_prompt_tokens": 5000, "input": 4.0, "output": 8.0},
+            {"provider": "openai", "min_prompt_tokens": 1000, "input": 2.0, "output": 4.0},
+            {"provider": "openai", "min_prompt_tokens": 5000, "input": 4.0, "output": 8.0},
         ]
     },
     "sources": {
@@ -471,3 +473,144 @@ def test_runtime_catalog_prefers_a_synced_data_dir_snapshot(tmp_path) -> None:
     catalog = catalog_for_runtime(config)
     assert catalog.provider_count == 1
     assert catalog.usd_cny == pytest.approx(7.2)
+
+
+def test_wrapped_tariff_window_uses_the_start_day_after_midnight() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {
+                    "models": {
+                        "m": {
+                            "input": 1.0,
+                            "output": 1.0,
+                            "currency": "USD",
+                            "source": "test",
+                        }
+                    }
+                }
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "provider": "deepseek",
+                        "days": [4],  # Friday only
+                        "start": 1380,  # 23:00 UTC
+                        "end": 60,  # 01:00 UTC
+                        "input": 2.0,
+                        "output": 2.0,
+                        "label": "peak",
+                        "multiplier": 2.0,
+                    }
+                ]
+            },
+        }
+    )
+    friday_night = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 27, 23, 30))
+    saturday_early = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 28, 0, 30))
+    saturday_after = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 28, 1, 30))
+    friday_before = catalog.resolve("deepseek", "m", now=_utc(2026, 11, 27, 0, 30))
+    assert friday_night is not None and friday_night.tariff_label == "peak"
+    assert saturday_early is not None and saturday_early.tariff_label == "peak"
+    assert saturday_after is not None and saturday_after.tariff_label == "base"
+    assert friday_before is not None and friday_before.tariff_label == "base"
+
+
+def test_user_override_does_not_inherit_catalog_tariffs_or_tiers() -> None:
+    override = types.SimpleNamespace(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        input=10.0,
+        output=20.0,
+        cache_read=None,
+        cache_write=None,
+        currency="CNY",
+    )
+    catalog = RateCatalog.from_dict(_CATALOG, overrides=[override])
+    effective = catalog.resolve(
+        "deepseek",
+        "deepseek-v4-flash",
+        now=_utc(2026, 11, 23, 2, 0),
+        prompt_tokens=5000,
+    )
+    assert effective is not None
+    assert effective.confidence == "user"
+    assert effective.tariff_label == "base"
+    assert effective.rates.input_per_mtok == 10.0
+    assert effective.rates.output_per_mtok == 20.0
+    assert effective.tier_label == ""
+
+
+def test_catalog_tariff_is_not_applied_to_a_different_provider() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "zai": {
+                    "models": {
+                        "deepseek-v4-flash": {
+                            "input": 0.2,
+                            "output": 0.8,
+                            "currency": "USD",
+                            "source": "models.dev",
+                        }
+                    }
+                }
+            },
+            "tariffs": {
+                "deepseek-v4-flash": [
+                    {
+                        "provider": "deepseek",
+                        "days": [0, 1, 2, 3, 4],
+                        "start": 60,
+                        "end": 240,
+                        "input": 0.4,
+                        "output": 1.6,
+                        "label": "peak",
+                        "multiplier": 2.0,
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("zai", "deepseek-v4-flash", now=_utc(2026, 11, 23, 2, 0))
+    assert effective is not None
+    assert effective.tariff_label == "base"
+    assert effective.rates.output_per_mtok == 0.8
+
+
+def test_tiers_are_provider_scoped() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openai": {
+                    "models": {
+                        "gpt-tiered": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "currency": "USD",
+                            "source": "models.dev",
+                        }
+                    }
+                },
+                "zai": {
+                    "models": {
+                        "gpt-tiered": {
+                            "input": 0.5,
+                            "output": 1.0,
+                            "currency": "USD",
+                            "source": "models.dev",
+                        }
+                    }
+                },
+            },
+            "tiers": {
+                "gpt-tiered": [
+                    {"provider": "openai", "min_prompt_tokens": 1000, "input": 9.0, "output": 9.0}
+                ]
+            },
+        }
+    )
+    openai_rate = catalog.resolve("openai", "gpt-tiered", prompt_tokens=2000)
+    zai_rate = catalog.resolve("zai", "gpt-tiered", prompt_tokens=2000)
+    assert openai_rate is not None and openai_rate.rates.input_per_mtok == 9.0
+    assert zai_rate is not None and zai_rate.rates.input_per_mtok == 0.5

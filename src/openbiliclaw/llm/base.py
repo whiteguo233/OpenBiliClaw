@@ -310,11 +310,14 @@ def classify_llm_failure_kind(exc: BaseException) -> str | None:
     seen: set[int] = set()
     current: BaseException | None = exc
     rate_limited = no_provider = auth_failed = model_not_found = False
+    budget_exhausted = False
     timed_out = invalid_response = connection = server_error = False
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         message = str(current).lower()
-        if isinstance(current, LLMRateLimitError) or any(
+        if isinstance(current, LLMBudgetExhaustedError):
+            budget_exhausted = True
+        elif isinstance(current, LLMRateLimitError) or any(
             marker in message for marker in _LLM_QUOTA_MARKERS
         ):
             rate_limited = True
@@ -356,6 +359,8 @@ def classify_llm_failure_kind(exc: BaseException) -> str | None:
         ):
             invalid_response = True
         current = current.__cause__ or current.__context__
+    if budget_exhausted:
+        return "budget_exhausted"
     if rate_limited:
         return "rate_limited"
     if no_provider:
@@ -444,7 +449,7 @@ def describe_llm_failure(exc: BaseException) -> str | None:
 
     seen: set[int] = set()
     current: BaseException | None = exc
-    moderation = auth_failed = rate_limited = False
+    moderation = auth_failed = rate_limited = budget_exhausted = False
     timed_out = no_provider = empty_response = False
     ssl_failed = connect_failed = model_not_found = False
     ollama_model_missing = False
@@ -468,7 +473,9 @@ def describe_llm_failure(exc: BaseException) -> str | None:
             # instance tried, which is the one the user just watched fail.
             if auth_error is None and isinstance(current, LLMAuthError):
                 auth_error = current
-        if isinstance(current, LLMRateLimitError) or any(
+        if isinstance(current, LLMBudgetExhaustedError):
+            budget_exhausted = True
+        elif isinstance(current, LLMRateLimitError) or any(
             marker in message for marker in _LLM_QUOTA_MARKERS
         ):
             rate_limited = True
@@ -503,6 +510,11 @@ def describe_llm_failure(exc: BaseException) -> str | None:
     if moderation:
         return (
             "AI 服务上游因内容合规策略拒绝了本次请求；可更换一个不带内容审查的模型 / 服务商后重试。"
+        )
+    if budget_exhausted:
+        return (
+            "本地 LLM 预算已用尽（不是 provider 限流）：请调高 scheduler.daily_budget_cny "
+            "或 scheduler.llm_budget_max_calls，设为 0 关闭，或等待本地零点 / 预算窗口滚动。"
         )
     if model_not_found:
         reason = (
@@ -868,7 +880,11 @@ class LLMRegistry:
 
         name = str(instance_id or "").strip().lower()
         provider = self._providers.get(name)
-        model = str(getattr(provider, "model", "") or "") if provider is not None else ""
+        model = ""
+        if provider is not None:
+            # Production adapters keep the configured model on ``_model``;
+            # older/fake providers expose ``model``. Read both.
+            model = str(getattr(provider, "model", None) or getattr(provider, "_model", "") or "")
         return self._provider_types.get(name, ""), model
 
     def _apply_route_ranker(self, order: list[str]) -> list[str]:

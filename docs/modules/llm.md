@@ -756,6 +756,7 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 - 随包 `pricing_catalog.json` 由 `scripts/build_llm_price_catalog.py` 从 models.dev（324 providers / 10,018 models 的 input/output/cache 价）与 OpenRouter（476 models 的 UTC 峰谷窗口、长上下文档位）生成；当前快照 16 providers / 2,007 models / 4 个峰谷模型 / 54 个档位模型。
 - 解析优先级：用户 `[llm.pricing.overrides]` > provider+model 精确卡 > 同模型跨 provider 的**最高价**（未知中转站的保守上界）> 静态 `pricing.py` 回退。`0` / 缺失价不会当免费；`ollama` / `sponsored` 这类显式免费 provider 单独处理。
 - `RateCard.effective(now, prompt_tokens)` 同时应用长上下文档位与 UTC 峰谷窗口；DeepSeek 的窗口来自 OpenRouter 路由（工作日 UTC 01–04、06–10 为 2x，= 北京时间 09–12、14–18），无窗口的 provider 不会被假装有谷时。
+- tariff 与长上下文档位都按 **provider + model** 绑定：同模型的其他 provider / 中转不会继承 DeepSeek 的峰谷价，用户 `[llm.pricing.overrides]` 也不会被 catalog 的窗口或档位改写。未知中转报价用同模型跨 provider 的最高价，`0`/缺失价视为 unknown。
 - `UsageRecorder` 有 catalog 时走 catalog 计费，并把 `exact` / `derived_relay` / `user` / `fallback` 写入 `llm_usage.cost_confidence`；`openbiliclaw cost` 会提示低置信花费占比。`openbiliclaw price --provider … --model …` 可查看当前档位、下一次切换与 CNY 换算。
 - 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步。
 - 目录可用 `openbiliclaw price --sync` 刷新到 `data/pricing_catalog.json`（原子写，失败保留旧文件）；`catalog_for_runtime` 在 `catalog_path` 为空时优先读该文件，否则用随包快照。

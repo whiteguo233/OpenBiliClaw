@@ -418,3 +418,96 @@ async def test_stop_mode_reserves_interactive_calls_too(usage_db: Database, tmp_
         with pytest.raises(LLMDailyBudgetExceededError):
             async with gate.slot(caller="soul.dialogue"):
                 pass
+
+
+def test_local_day_window_uses_each_boundary_dst_offset(tmp_path) -> None:
+    """Fall-back days are 25 hours long; both midnights need their own offset.
+
+    ``time.tzset`` is unavailable in this Python build, so run the probe in a
+    child process that starts with ``TZ=America/New_York`` (libc's mktime
+    picks it up at startup).
+    """
+
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = (
+        "from datetime import datetime, timezone\n"
+        "from openbiliclaw.local_day import local_day_window\n"
+        "print(*local_day_window(datetime(2026, 11, 1, 12, tzinfo=timezone.utc)))\n"
+    )
+    env = dict(os.environ)
+    env["TZ"] = "America/New_York"
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    day, start_date, start_time, end_date, end_time = result.stdout.split()
+    assert day == "2026-11-01"
+    # EDT midnight → 04:00 UTC; the next midnight is EST → 05:00 UTC.
+    assert f"{start_date} {start_time}" == "2026-11-01 04:00:00"
+    assert f"{end_date} {end_time}" == "2026-11-02 05:00:00"
+
+
+def test_public_failure_classifier_distinguishes_local_budget_from_429() -> None:
+    from openbiliclaw.llm.base import (
+        LLMBudgetExhaustedError,
+        classify_llm_failure_kind,
+        classify_llm_unavailability,
+        safe_llm_failure_message,
+    )
+
+    daily = LLMDailyBudgetExceededError("daily cap")
+    assert classify_llm_failure_kind(daily) == "budget_exhausted"
+    assert classify_llm_unavailability(daily) is None
+    message = safe_llm_failure_message(daily)
+    assert "本地" in message
+    assert "429" not in message
+
+    call_count = LLMBudgetExhaustedError("call cap")
+    assert classify_llm_failure_kind(call_count) == "budget_exhausted"
+    assert "429" not in safe_llm_failure_message(call_count)
+
+
+async def test_shared_reservation_ledger_blocks_a_sibling_gate(usage_db: Database) -> None:
+    """Two gates on the same database must share in-flight reservations."""
+
+    first_ledger = DailySpendLedger(usage_db._db_path)
+    second_ledger = DailySpendLedger(usage_db._db_path)
+    first = LLMConcurrencyGate(
+        2,
+        daily_budget_cny=0.15,
+        daily_budget_reserve_cny=0.10,
+        daily_budget_ledger=first_ledger,
+    )
+    second = LLMConcurrencyGate(
+        2,
+        daily_budget_cny=0.15,
+        daily_budget_reserve_cny=0.10,
+        daily_budget_ledger=second_ledger,
+    )
+
+    async with first.slot(caller="soul.insight"):
+        with pytest.raises(LLMDailyBudgetExceededError):
+            async with second.slot(caller="soul.insight"):
+                pass
+
+    async with second.slot(caller="soul.insight"):
+        pass
+
+
+async def test_explicit_zero_reservation_is_honored(usage_db: Database) -> None:
+    gate = LLMConcurrencyGate(
+        2,
+        daily_budget_cny=10.0,
+        daily_budget_reserve_cny=0.0,
+        daily_budget_ledger=DailySpendLedger(usage_db._db_path),
+    )
+    async with gate.slot(caller="soul.insight"):
+        assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == pytest.approx(0.0)

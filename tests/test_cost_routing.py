@@ -177,3 +177,44 @@ def test_primary_route_is_stable_for_cost_routing() -> None:
         )
     )
     assert primary_route(config) == ("openai_compatible", "m")
+
+
+def test_ranker_keeps_cross_model_slots_stable() -> None:
+    """[A1, B, A2] must become [A2, B, A1], not [A1, A2, B]."""
+
+    registry = _RouteRegistry(
+        {
+            "a1": ("deepseek", "m"),
+            "b": ("openai", "other"),
+            "a2": ("openai", "m"),
+        }
+    )
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 9, "output": 9, "currency": "USD"}}},
+                "openai": {
+                    "models": {
+                        "m": {"input": 1, "output": 1, "currency": "USD"},
+                        "other": {"input": 0.1, "output": 0.1, "currency": "USD"},
+                    }
+                },
+            },
+            "fx": {"usd_cny": 1.0},
+        }
+    )
+    rank = build_cost_ranker(registry, catalog)
+    assert rank(["a1", "b", "a2"]) == ["a2", "b", "a1"]
+
+
+def test_instance_route_reads_private_model_attribute() -> None:
+    registry = LLMRegistry()
+
+    class _PrivateModelProvider(_FakeProvider):
+        def __init__(self, name: str, model: str) -> None:
+            super().__init__(name, model)
+            self._model = model
+            del self.model
+
+    registry.register(_PrivateModelProvider("relay", "deepseek-v4-flash"), name="relay")
+    assert registry.instance_route("relay") == ("relay", "deepseek-v4-flash")

@@ -55,6 +55,15 @@ PROVIDER_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 # Route models that share a tariff schedule but not an exact ID.
+_OPENROUTER_PROVIDER_ALIASES = {
+    "z-ai": "zai",
+    "zhipuai": "zai",
+    "anthropic": "anthropic",
+    "google": "google",
+    "openai": "openai",
+    "deepseek": "deepseek",
+}
+
 TARIFF_ALIASES: dict[str, str] = {
     "deepseek-v4.1-flash": "deepseek-v4-flash",
     "deepseek-v4.1-flash-1017": "deepseek-v4-flash",
@@ -69,7 +78,10 @@ def _positive(value: Any) -> float | None:
         return None
     if number <= 0 or number != number:  # NaN
         return None
-    return round(number, 8)
+    # Keep the raw per-token precision: rounding at 8 decimals would turn
+    # OpenRouter's $0.003/M cache rate (3e-9 per token) into zero before the
+    # ×1e6 conversion in ``_openrouter_rates``.
+    return float(number)
 
 
 def _cost_tuple(cost: Any) -> tuple[float, float, float | None, float | None] | None:
@@ -224,7 +236,10 @@ def build_tiers(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         overrides = pricing.get("overrides")
         if not isinstance(overrides, list):
             continue
-        model_id = normalize_model_id(str(row.get("id") or ""))
+        route_id = str(row.get("id") or "")
+        author = route_id.split("/", 1)[0].strip().lower()
+        provider = _OPENROUTER_PROVIDER_ALIASES.get(author, author)
+        model_id = normalize_model_id(route_id)
         model_id = TARIFF_ALIASES.get(model_id, model_id)
         if not model_id:
             continue
@@ -241,6 +256,7 @@ def build_tiers(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
                 continue
             model_tiers.append(
                 {
+                    "provider": provider,
                     "min_prompt_tokens": threshold,
                     "input": rates[0],
                     "output": rates[1],
@@ -271,7 +287,10 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
         base = _openrouter_rates(pricing)
         if base is None:
             continue
-        model_id = normalize_model_id(str(row.get("id") or ""))
+        route_id = str(row.get("id") or "")
+        author = route_id.split("/", 1)[0].strip().lower()
+        provider = _OPENROUTER_PROVIDER_ALIASES.get(author, author)
+        model_id = normalize_model_id(route_id)
         model_id = TARIFF_ALIASES.get(model_id, model_id)
         if not model_id:
             continue
@@ -302,6 +321,7 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
                 continue
             windows.append(
                 {
+                    "provider": provider,
                     "days": days,
                     "start": start,
                     "end": end,

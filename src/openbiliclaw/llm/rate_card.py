@@ -107,13 +107,21 @@ class TariffWindow:
     source: str = ""
 
     def matches(self, moment: datetime) -> bool:
-        if self.days and moment.weekday() not in self.days:
-            return False
         minute = moment.hour * 60 + moment.minute
         if self.start_minute < self.end_minute:
+            if self.days and moment.weekday() not in self.days:
+                return False
             return self.start_minute <= minute < self.end_minute
         if self.start_minute > self.end_minute:
-            # Wraps midnight: [start, 24:00) ∪ [00:00, end).
+            # Wraps midnight. The after-midnight half belongs to the previous
+            # day's window (a Friday 23:00-01:00 window applies to Saturday
+            # 00:30), so check the day on the correct side of the boundary.
+            if minute >= self.start_minute:
+                weekday = moment.weekday()
+            else:
+                weekday = (moment.weekday() - 1) % 7
+            if self.days and weekday not in self.days:
+                return False
             return minute >= self.start_minute or minute < self.end_minute
         return False
 
@@ -263,11 +271,22 @@ def _as_utc(moment: datetime | None) -> datetime:
     return moment.astimezone(UTC)
 
 
-def _rates_from_mapping(raw: Mapping[str, Any]) -> TokenRates | None:
+def _rates_from_mapping(
+    raw: Mapping[str, Any],
+    *,
+    allow_zero: bool = False,
+) -> TokenRates | None:
     try:
         input_rate = float(raw["input"])
         output_rate = float(raw["output"])
     except (KeyError, TypeError, ValueError):
+        return None
+    if input_rate < 0 or output_rate < 0:
+        return None
+    if not allow_zero and (input_rate <= 0 or output_rate <= 0):
+        # A catalog card must be a real paid rate. A zero here is a missing
+        # or sentinel value (sensenova lists deepseek-v4-flash at 0), and
+        # treating it as free would silently disable the spend cap.
         return None
     cache_read = raw.get("cache_read")
     cache_write = raw.get("cache_write")
@@ -328,26 +347,34 @@ class RateCatalog:
             str(key).lower(): str(value).lower()
             for key, value in (data.get("aliases") or {}).items()
         }
-        self._tariffs: dict[str, tuple[TariffWindow, ...]] = {}
+        # Tariffs/tiers are provider-specific. A model id alone is not enough:
+        # a relay or another vendor may resell the same model on a flat price,
+        # and a user override must never inherit the catalog's window.
+        self._tariffs: dict[tuple[str, str], tuple[TariffWindow, ...]] = {}
+        tariff_groups: dict[tuple[str, str], list[TariffWindow]] = {}
         for model, windows in (data.get("tariffs") or {}).items():
             if not isinstance(windows, list):
                 continue
-            parsed = [
-                window
-                for window in (
-                    _tariff_from_mapping(raw, source="openrouter")
-                    for raw in windows
-                    if isinstance(raw, dict)
-                )
-                if window is not None
-            ]
-            if parsed:
-                self._tariffs[str(model).lower()] = tuple(parsed)
-        self._tiers: dict[str, tuple[RateTier, ...]] = {}
+            model_key = str(model).lower()
+            for raw in windows:
+                if not isinstance(raw, dict):
+                    continue
+                window = _tariff_from_mapping(raw, source="openrouter")
+                if window is None:
+                    continue
+                provider = str(raw.get("provider") or "").strip().lower()
+                tariff_groups.setdefault((provider, model_key), []).append(window)
+                if provider and provider != "openrouter":
+                    tariff_groups.setdefault(("openrouter", model_key), []).append(window)
+        for key, windows in tariff_groups.items():
+            self._tariffs[key] = tuple(windows)
+
+        self._tiers: dict[tuple[str, str], tuple[RateTier, ...]] = {}
+        tier_groups: dict[tuple[str, str], list[RateTier]] = {}
         for model, tiers in (data.get("tiers") or {}).items():
             if not isinstance(tiers, list):
                 continue
-            parsed_tiers: list[RateTier] = []
+            model_key = str(model).lower()
             for raw in tiers:
                 if not isinstance(raw, dict):
                     continue
@@ -359,12 +386,15 @@ class RateCatalog:
                     threshold = int(threshold_raw)
                 except (TypeError, ValueError):
                     continue
-                if rates is not None and threshold > 0:
-                    parsed_tiers.append(RateTier(min_prompt_tokens=threshold, rates=rates))
-            if parsed_tiers:
-                self._tiers[str(model).lower()] = tuple(
-                    sorted(parsed_tiers, key=lambda tier: tier.min_prompt_tokens)
-                )
+                if rates is None or threshold <= 0:
+                    continue
+                provider = str(raw.get("provider") or "").strip().lower()
+                tier = RateTier(min_prompt_tokens=threshold, rates=rates)
+                tier_groups.setdefault((provider, model_key), []).append(tier)
+                if provider and provider != "openrouter":
+                    tier_groups.setdefault(("openrouter", model_key), []).append(tier)
+        for key, parsed_tiers in tier_groups.items():
+            self._tiers[key] = tuple(sorted(parsed_tiers, key=lambda tier: tier.min_prompt_tokens))
         self._override_cards: dict[tuple[str, str], RateCard] = {}
         self._install_overrides(overrides)
 
@@ -486,6 +516,7 @@ class RateCatalog:
             source="models.dev:offers",
             confidence="derived_relay",
             verified_at=self.generated_at,
+            catalog_pricing=False,
         )
 
     def resolve(
@@ -567,15 +598,16 @@ class RateCatalog:
         source: str,
         confidence: str,
         verified_at: str,
+        catalog_pricing: bool = True,
     ) -> RateCard:
-        # Time-of-day tariffs are provider-specific: a relay reselling a
-        # DeepSeek model is not obliged to follow DeepSeek's peak schedule, so
-        # attaching the catalog window to ``openai_compatible`` would defer
-        # work on a guess. Direct providers (and OpenRouter itself, the source
-        # of the window) keep them; relays can set manual ``peak_hours``.
-        tariffs = self._tariffs.get(model, ())
-        if provider in _RELAY_PROVIDERS and provider != "openrouter":
-            tariffs = ()
+        # Tariffs/tiers come from the catalog only for the provider that
+        # published them. Relays and user overrides keep flat rates; a relay
+        # can opt into a manual ``peak_hours`` window instead.
+        tariffs: tuple[TariffWindow, ...] = ()
+        tiers: tuple[RateTier, ...] = ()
+        if catalog_pricing:
+            tariffs = self._tariffs.get((provider, model), self._tariffs.get(("", model), ()))
+            tiers = self._tiers.get((provider, model), self._tiers.get(("", model), ()))
         return RateCard(
             provider=provider,
             model=model,
@@ -583,7 +615,7 @@ class RateCatalog:
             currency=currency,
             source=source,
             confidence=confidence,
-            tiers=self._tiers.get(model, ()),
+            tiers=tiers,
             tariffs=tariffs,
             verified_at=verified_at,
         )
@@ -604,6 +636,7 @@ class RateCatalog:
                 source="user",
                 confidence="user",
                 verified_at="",
+                catalog_pricing=False,
             )
 
 
@@ -717,15 +750,13 @@ def build_cost_ranker(
 
     def rank(order: list[str]) -> list[str]:
         groups: dict[str, list[str]] = {}
-        model_order: list[str] = []
-        for name in order:
+        slots: dict[str, list[int]] = {}
+        for index, name in enumerate(order):
             route = getattr(registry, "instance_route", None)
             provider_type, model = route(name) if callable(route) else ("", "")
             key = normalize_model_id(model) or f"instance:{name}"
-            if key not in groups:
-                groups[key] = []
-                model_order.append(key)
-            groups[key].append(name)
+            groups.setdefault(key, []).append(name)
+            slots.setdefault(key, []).append(index)
 
         def score(name: str) -> float:
             route = getattr(registry, "instance_route", None)
@@ -736,9 +767,14 @@ def build_cost_ranker(
             native = effective.rates.input_per_mtok + effective.rates.output_per_mtok
             return native * (catalog.usd_cny if effective.currency == "USD" else 1.0)
 
-        ranked: list[str] = []
-        for key in model_order:
-            ranked.extend(sorted(groups[key], key=score))
+        # Replace each same-model slot in place. This reorders A1/A2 without
+        # moving an unrelated B across the chain: [A1, B, A2] stays [A*, B, A*],
+        # preserving the user's cross-model fallback precedence.
+        ranked = list(order)
+        for key, names in groups.items():
+            ordered_names = sorted(names, key=score)
+            for slot, name in zip(slots[key], ordered_names, strict=True):
+                ranked[slot] = name
         return ranked
 
     return rank
