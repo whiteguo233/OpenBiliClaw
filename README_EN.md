@@ -40,20 +40,24 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 ## 💬 Community
 
+<div align="center">
+
 <table>
   <tr>
-    <td align="center" valign="middle" width="50%">
+    <td align="center" valign="middle" width="420">
       <img src="docs/images/user-community-qrcode.png" width="240" alt="QQ user community QR code" /><br/>
       <b>QQ Community</b><br/>
       <sub>Group <code>1073034112</code> · Scan to join</sub>
     </td>
-    <td align="center" valign="middle" width="50%">
+    <td align="center" valign="middle" width="420">
       <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="240" alt="Discord community QR code" /></a><br/>
       <b>Discord Community</b><br/>
       <sub>Scan or <a href="https://discord.gg/PU6Xgch8yg">click to join</a> — invite never expires</sub>
     </td>
   </tr>
 </table>
+
+</div>
 
 ## OpenBiliClaw in 10 Seconds
 
@@ -98,6 +102,8 @@ Four steps for most users. Firefox / Safari, Docker, shell script, and manual so
 
 One local backend, five coordinated surfaces: the **browser extension** handles in-page interaction, sessions, and read-only tasks; **Desktop Web (`/web`)** offers a full-screen dashboard with live runtime status; **Mobile Web (`/m`)** is tuned for phones; the separate **Flutter native app** ([OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile)) runs across Android / iOS / desktop; and the **DSH client plugin** ([dsh-openbiliclaw](https://github.com/whiteguo233/dsh-openbiliclaw)) brings recommendations plus 22 Agent Bridge tools right inside DeepSeek Harness.
 
+<div align="center">
+
 <table>
   <tr>
     <td align="center" width="50%">
@@ -138,8 +144,12 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
   </tr>
 </table>
 
+</div>
+
 <details>
 <summary>More screenshots (traits · values · cognitive style · mobile profile & chat)</summary>
+
+<div align="center">
 
 <table>
   <tr>
@@ -177,6 +187,8 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
     </td>
   </tr>
 </table>
+
+</div>
 
 </details>
 
