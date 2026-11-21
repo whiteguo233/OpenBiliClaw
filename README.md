@@ -42,20 +42,24 @@
 
 ## 💬 用户交流群
 
+<div align="center">
+
 <table>
   <tr>
-    <td align="center" valign="middle" width="50%">
+    <td align="center" valign="middle" width="420">
       <img src="docs/images/user-community-qrcode.png" width="240" alt="QQ 用户交流群二维码" /><br/>
       <b>QQ 用户群</b><br/>
       <sub>群号 <code>1073034112</code> · 扫码加入交流</sub>
     </td>
-    <td align="center" valign="middle" width="50%">
+    <td align="center" valign="middle" width="420">
       <a href="https://discord.gg/PU6Xgch8yg"><img src="docs/images/discord-community-qrcode.jpg" width="240" alt="Discord 社区二维码" /></a><br/>
       <b>Discord 社区</b><br/>
       <sub>扫码或<a href="https://discord.gg/PU6Xgch8yg">点击加入</a>，链接长期有效</sub>
     </td>
   </tr>
 </table>
+
+</div>
 
 ## 10 秒看懂 OpenBiliClaw
 
@@ -100,6 +104,8 @@
 
 一套本地后端，五个协同入口：**浏览器插件**负责平台交互、登录会话与只读任务；**桌面 Web（`/web`）**提供大屏推荐与实时看板；**移动 Web（`/m`）**适配手机触屏；独立仓库的 **Flutter 原生 App**（[OpenBiliClaw-mobile](https://github.com/whiteguo233/OpenBiliClaw-mobile)）覆盖 Android / iOS / 桌面；**DSH 客户端插件**（[dsh-openbiliclaw](https://github.com/whiteguo233/dsh-openbiliclaw)）把推荐流和 22 个 Agent 工具带进 DeepSeek Harness。
 
+<div align="center">
+
 <table>
   <tr>
     <td align="center" width="50%">
@@ -140,8 +146,12 @@
   </tr>
 </table>
 
+</div>
+
 <details>
 <summary>更多界面截图（特质 · 价值 · 认知风格 · 移动端画像与对话）</summary>
+
+<div align="center">
 
 <table>
   <tr>
@@ -179,6 +189,8 @@
     </td>
   </tr>
 </table>
+
+</div>
 
 </details>
 
