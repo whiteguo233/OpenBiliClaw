@@ -712,7 +712,7 @@ class LLMConcurrencyGate:
         # could not even reserve its worst-case slice. Warn mode never
         # reserves, so only actual spend can make it "exceeded".
         if mode == "warn":
-            exceeded = remaining <= 1e-9
+            exceeded = spend + 1e-9 >= self._daily_budget_cny
         else:
             next_reserve = min(self._daily_budget_reserve_cny, self._daily_budget_cny)
             exceeded = remaining < next_reserve - 1e-9 if next_reserve > 0 else remaining <= 1e-9

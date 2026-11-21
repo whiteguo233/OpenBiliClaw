@@ -293,8 +293,14 @@ def _rates_from_mapping(
         return None
     cache_read = raw.get("cache_read")
     cache_write = raw.get("cache_write")
-    cache_read_rate = float(cache_read) if cache_read is not None else None
-    cache_write_rate = float(cache_write) if cache_write is not None else None
+    try:
+        cache_read_rate = float(cache_read) if cache_read is not None else None
+    except (TypeError, ValueError):
+        cache_read_rate = None
+    try:
+        cache_write_rate = float(cache_write) if cache_write is not None else None
+    except (TypeError, ValueError):
+        cache_write_rate = None
     if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
         cache_read_rate = None
     if cache_write_rate is not None and (
@@ -321,14 +327,28 @@ def _tariff_from_mapping(raw: Mapping[str, Any], *, source: str) -> TariffWindow
     if not (0 <= start < 1440 and 0 <= end <= 1440) or start == end:
         return None
     days_raw = raw.get("days")
-    days = frozenset(int(day) for day in days_raw) if isinstance(days_raw, list) else frozenset()
+    days: set[int] = set()
+    if isinstance(days_raw, list):
+        for day in days_raw:
+            try:
+                weekday = int(day)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= weekday <= 6:
+                days.add(weekday)
+    try:
+        multiplier = float(raw.get("multiplier") or 1.0)
+    except (TypeError, ValueError):
+        multiplier = 1.0
+    if not math.isfinite(multiplier) or multiplier <= 0:
+        multiplier = 1.0
     return TariffWindow(
-        days=days,
+        days=frozenset(days),
         start_minute=start,
         end_minute=end,
         rates=rates,
         label=str(raw.get("label") or "peak"),
-        multiplier=float(raw.get("multiplier") or 1.0),
+        multiplier=multiplier,
         source=source,
     )
 
@@ -442,7 +462,15 @@ class RateCatalog:
         except (OSError, ValueError):
             logger.warning("LLM price catalog unavailable at %s", catalog_path, exc_info=True)
             data = {}
-        return cls(data, overrides=overrides, source_path=catalog_path)
+        try:
+            return cls(data, overrides=overrides, source_path=catalog_path)
+        except (AttributeError, TypeError, ValueError):
+            logger.warning(
+                "Malformed LLM price catalog at %s; using static pricing",
+                catalog_path,
+                exc_info=True,
+            )
+            return cls({}, overrides=overrides, source_path=catalog_path)
 
     @classmethod
     def from_dict(
@@ -451,7 +479,11 @@ class RateCatalog:
         *,
         overrides: Iterable[Any] = (),
     ) -> RateCatalog:
-        return cls(data, overrides=overrides)
+        try:
+            return cls(data, overrides=overrides)
+        except (AttributeError, TypeError, ValueError):
+            logger.warning("Malformed LLM price catalog; using static pricing", exc_info=True)
+            return cls({}, overrides=overrides)
 
     @property
     def usd_cny(self) -> float:
@@ -696,8 +728,14 @@ def _override_values(
         return None
     cache_read = get("cache_read")
     cache_write = get("cache_write")
-    cache_read_rate = float(cache_read) if cache_read is not None else None
-    cache_write_rate = float(cache_write) if cache_write is not None else None
+    try:
+        cache_read_rate = float(cache_read) if cache_read is not None else None
+    except (TypeError, ValueError):
+        cache_read_rate = None
+    try:
+        cache_write_rate = float(cache_write) if cache_write is not None else None
+    except (TypeError, ValueError):
+        cache_write_rate = None
     if cache_read_rate is not None and (not math.isfinite(cache_read_rate) or cache_read_rate < 0):
         cache_read_rate = None
     if cache_write_rate is not None and (

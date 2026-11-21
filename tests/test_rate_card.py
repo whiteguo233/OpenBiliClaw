@@ -727,3 +727,62 @@ def test_packaging_spec_bundles_the_pricing_catalog() -> None:
         encoding="utf-8"
     )
     assert "pricing_catalog.json" in spec
+    assert '"openbiliclaw/llm"' in spec
+
+
+def test_nested_malformed_catalog_entries_do_not_raise() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {
+                    "models": {
+                        "m": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "cache_read": [],
+                            "currency": "USD",
+                        }
+                    }
+                }
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "input": 1.0,
+                        "output": 2.0,
+                        "start": 0,
+                        "end": 60,
+                        "days": ["bad"],
+                        "multiplier": [],
+                    }
+                ]
+            },
+            "tiers": {
+                "m": [
+                    {
+                        "min_prompt_tokens": 1000,
+                        "input": 1.0,
+                        "output": 2.0,
+                        "cache_read": [],
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("deepseek", "m", prompt_tokens=2000)
+    assert effective is not None
+    assert effective.rates.cache_read_per_mtok is None
+
+
+def test_malformed_override_cache_prices_do_not_raise() -> None:
+    override = types.SimpleNamespace(
+        provider="deepseek",
+        model="m",
+        input=1.0,
+        output=2.0,
+        cache_read=[],
+        cache_write={},
+        currency="USD",
+    )
+    catalog = RateCatalog.from_dict({}, overrides=[override])
+    assert catalog.resolve("deepseek", "m") is not None
