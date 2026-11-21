@@ -90,7 +90,9 @@ class UsageRecorder:
             multiplier = float(cost_multiplier)
         except (TypeError, ValueError):
             multiplier = 1.0
-        self._cost_multiplier = multiplier if math.isfinite(multiplier) and multiplier > 0 else 1.0
+        self._cost_multiplier = (
+            multiplier if math.isfinite(multiplier) and 0 < multiplier <= 20.0 else 1.0
+        )
         # Price catalog resolved per provider/model/time. ``None`` keeps the
         # legacy static-table path (tests, minimal CLI commands).
         self._catalog = catalog

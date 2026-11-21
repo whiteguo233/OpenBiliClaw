@@ -77,7 +77,7 @@ TARIFF_ALIASES: dict[str, str] = {
 def _positive(value: Any) -> float | None:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(number) or number <= 0:
         return None
@@ -145,6 +145,8 @@ def _openrouter_rates(
     )
     if converted[0] > _MAX_CATALOG_RATE or converted[1] > _MAX_CATALOG_RATE:
         return None
+    if any(value is not None and value > _MAX_CATALOG_RATE for value in converted[2:]):
+        return None
     return converted
 
 
@@ -207,7 +209,7 @@ def build_offers(models_dev: dict[str, Any]) -> dict[str, dict[str, Any]]:
     offers: dict[str, dict[str, Any]] = {}
     for model_id, bucket in sorted(buckets.items()):
         outputs = bucket["output"]
-        if not outputs:
+        if not outputs or not bucket["input"]:
             continue
         offers[model_id] = {
             "count": len(outputs),
@@ -227,7 +229,7 @@ def _minute_of_day(raw: Any) -> int | None:
 
     try:
         hundredths = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if hundredths < 0 or hundredths > 2400:
         return None

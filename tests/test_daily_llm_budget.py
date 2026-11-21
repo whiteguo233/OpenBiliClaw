@@ -625,3 +625,18 @@ def test_nan_cost_multiplier_falls_back_to_one(tmp_path: Path) -> None:
     config = load_config(path, consult_environment=False)
     assert config.llm.cost_multiplier == pytest.approx(1.0)
     assert UsageRecorder(sink=None, cost_multiplier=float("nan"))._cost_multiplier == 1.0
+
+
+def test_oversized_integer_config_value_falls_back(tmp_path: Path) -> None:
+    from openbiliclaw.config import _normalize_scheduler_float, load_config
+
+    assert _normalize_scheduler_float(10**400, default=64, min_value=1) == 64
+    path = tmp_path / "config.toml"
+    path.write_text(f"[agent]\nloop_max_steps = {10**400}\n", encoding="utf-8")
+    assert load_config(path, consult_environment=False).agent.loop_max_steps == 64
+
+
+def test_absurd_usage_multiplier_falls_back_to_one() -> None:
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+
+    assert UsageRecorder(sink=None, cost_multiplier=1e308)._cost_multiplier == 1.0

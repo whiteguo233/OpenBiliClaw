@@ -517,7 +517,10 @@ class RateCatalog:
     def set_usd_cny(self, rate: float) -> None:
         """Apply a configured FX rate to this process-local catalog."""
 
-        value = float(rate)
+        try:
+            value = float(rate)
+        except (TypeError, ValueError, OverflowError):
+            return
         if math.isfinite(value) and 0 < value <= _MAX_USD_CNY:
             self._usd_cny = value
 

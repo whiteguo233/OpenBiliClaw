@@ -988,3 +988,9 @@ def test_programmatic_fx_setter_rejects_nonfinite() -> None:
     assert catalog.usd_cny == 7.2
     catalog.set_usd_cny(5000.0)
     assert catalog.usd_cny == 7.2
+
+
+def test_fx_setter_rejects_overflowing_integers() -> None:
+    catalog = RateCatalog.from_dict({"fx": {"usd_cny": 7.2}})
+    catalog.set_usd_cny(10**400)
+    assert catalog.usd_cny == 7.2

@@ -5027,17 +5027,18 @@ def _normalize_scheduler_int(
 ) -> int:
     """Normalize scheduler tuning values into bounded positive ints."""
     if isinstance(value, int | float):
-        normalized = int(value)
+        try:
+            normalized = int(value)
+        except (OverflowError, ValueError):
+            return default
     elif isinstance(value, str):
         try:
             normalized = int(value.strip())
-        except ValueError:
+        except (ValueError, OverflowError):
             return default
     else:
         return default
 
-    if not math.isfinite(normalized):
-        return default
     if normalized < min_value:
         return default
     if max_value is not None and normalized > max_value:
@@ -5108,11 +5109,14 @@ def _normalize_scheduler_float(
 ) -> float:
     """Normalize scheduler tuning values into bounded floats."""
     if isinstance(value, int | float):
-        normalized = float(value)
+        try:
+            normalized = float(value)
+        except OverflowError:
+            return default
     elif isinstance(value, str):
         try:
             normalized = float(value.strip())
-        except ValueError:
+        except (ValueError, OverflowError):
             return default
     else:
         return default

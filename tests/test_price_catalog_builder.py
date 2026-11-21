@@ -388,3 +388,53 @@ def test_absurd_offer_does_not_discard_the_valid_quote() -> None:
     )
     assert catalog["offers"]["m"]["input_max"] == 0.15
     assert catalog["offers"]["m"]["output_max"] == 0.6
+
+
+def test_oversized_input_with_valid_output_yields_no_offer() -> None:
+    catalog = builder.build_catalog(
+        {"zai": {"models": {"only": {"cost": {"input": 1e308, "output": 0.6}}}}},
+        {"data": []},
+    )
+    assert "only" not in catalog["offers"]
+
+
+def test_oversized_openrouter_cache_rate_is_rejected() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "openai/gpt-tiered",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.000002",
+                    "input_cache_read": "1e302",
+                    "overrides": [
+                        {
+                            "min_prompt_tokens": 1000,
+                            "prompt": "0.000002",
+                            "completion": "0.000004",
+                            "input_cache_read": "1e302",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+    assert builder.build_tiers(payload) == {}
+
+
+def test_sync_skips_upstream_integers_that_overflow_float(tmp_path) -> None:
+    models = {
+        "deepseek": {
+            "models": {
+                "valid": {"cost": {"input": 0.15, "output": 0.6}},
+                "bad": {"cost": {"input": 10**310, "output": 1}},
+            }
+        }
+    }
+    destination = tmp_path / "catalog.json"
+    summary = builder.sync_price_catalog(
+        destination,
+        fetcher=lambda url: models if url == builder.DEFAULT_MODELS_DEV_URL else {"data": []},
+    )
+    assert summary["offers"] == 1
+    assert "bad" not in destination.read_text(encoding="utf-8")
