@@ -608,6 +608,12 @@ class LLMStreamChunk:
 
     delta: str = ""
     response: LLMResponse | None = None
+    # Set by ``LLMRegistry._stream_chain`` so a consumer that aborts before
+    # the terminal chunk can still settle against the provider/model that
+    # actually served the delta (not a guess from the configured chain).
+    provider: str = ""
+    model: str = ""
+    instance_id: str = ""
 
 
 class LLMProvider(ABC):
@@ -1552,11 +1558,29 @@ class LLMRegistry:
                 continue
             emitted_delta = False
             try:
+                provider_type = self._provider_types.get(provider_name, "")
+                configured_model = str(
+                    getattr(provider, "model", None)
+                    or getattr(provider, "_model", "")
+                    or ""
+                )
                 async for chunk in stream_fn(provider):
                     if chunk.delta:
                         emitted_delta = True
                     if chunk.response is not None:
                         chunk.response.instance_id = provider_name
+                        if not chunk.response.provider:
+                            chunk.response.provider = provider_type
+                        if not chunk.response.model:
+                            chunk.response.model = (
+                                str(chunk.model or "") or configured_model
+                            )
+                    if not chunk.provider:
+                        chunk.provider = provider_type
+                    if not chunk.model:
+                        chunk.model = configured_model
+                    if not chunk.instance_id:
+                        chunk.instance_id = provider_name
                     yield chunk
             except LLMRateLimitError as exc:
                 if emitted_delta:

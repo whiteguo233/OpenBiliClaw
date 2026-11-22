@@ -244,3 +244,26 @@ def test_ranker_prefers_known_free_ollama_over_a_paid_route() -> None:
     )
     rank = build_cost_ranker(registry, catalog)
     assert rank(["paid", "local"]) == ["local", "paid"]
+
+
+async def test_stream_chain_stamps_actual_provider_and_model() -> None:
+    from openbiliclaw.llm.base import LLMStreamChunk
+
+    class _StreamProvider:
+        model = "glm-4.7-flash"
+
+        async def stream_complete(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            yield LLMStreamChunk(delta="hello")
+
+    registry = LLMRegistry()
+    registry.register(_StreamProvider(), name="paid", provider_type="openrouter")
+
+    async def _stream(provider):  # type: ignore[no-untyped-def]
+        async for chunk in provider.stream_complete():
+            yield chunk
+
+    chunks = [chunk async for chunk in registry._stream_chain(["paid"], stream_fn=_stream)]
+    assert chunks[0].delta == "hello"
+    assert chunks[0].provider == "openrouter"
+    assert chunks[0].model == "glm-4.7-flash"
+    assert chunks[0].instance_id == "paid"

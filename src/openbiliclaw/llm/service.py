@@ -834,6 +834,8 @@ class LLMService:
 
         terminal: LLMResponse | None = None
         delta_text = ""
+        stream_provider = ""
+        stream_model = ""
         try:
             async with self._provider_slot(
                 caller=caller,
@@ -841,6 +843,10 @@ class LLMService:
             ):
                 try:
                     async for chunk in _route_stream():
+                        if chunk.provider:
+                            stream_provider = chunk.provider
+                        if chunk.model:
+                            stream_model = chunk.model
                         if chunk.delta:
                             delta_text += chunk.delta
                         if chunk.response is not None:
@@ -848,9 +854,18 @@ class LLMService:
                         yield chunk
                 finally:
                     if terminal is not None and terminal.content.strip():
+                        if not terminal.provider:
+                            terminal.provider = stream_provider
+                        if not terminal.model:
+                            terminal.model = stream_model
                         self._record_usage(terminal, caller=caller)
                     elif terminal is None:
-                        self._settle_partial_stream(caller=caller, delta_text=delta_text)
+                        self._settle_partial_stream(
+                            caller=caller,
+                            delta_text=delta_text,
+                            provider=stream_provider,
+                            model=stream_model,
+                        )
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -966,7 +981,14 @@ class LLMService:
             return provider_type, model
         return "", ""
 
-    def _settle_partial_stream(self, *, caller: str, delta_text: str) -> None:
+    def _settle_partial_stream(
+        self,
+        *,
+        caller: str,
+        delta_text: str,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
         """Charge a stream the consumer closed before its terminal chunk.
 
         The provider has already seen the request. Without a settlement, an
@@ -976,7 +998,10 @@ class LLMService:
 
         if not delta_text.strip():
             return
-        provider, model = self._stream_identity(caller)
+        if not provider or not model:
+            fallback_provider, fallback_model = self._stream_identity(caller)
+            provider = provider or fallback_provider
+            model = model or fallback_model
         self._record_usage(
             LLMResponse(content=delta_text, provider=provider, model=model),
             caller=caller,
@@ -1752,6 +1777,8 @@ class LLMService:
 
         terminal: LLMResponse | None = None
         delta_text = ""
+        stream_provider = ""
+        stream_model = ""
         try:
             async with self._provider_slot(
                 caller=caller,
@@ -1759,6 +1786,10 @@ class LLMService:
             ):
                 try:
                     async for chunk in _route_stream():
+                        if chunk.provider:
+                            stream_provider = chunk.provider
+                        if chunk.model:
+                            stream_model = chunk.model
                         if chunk.delta:
                             delta_text += chunk.delta
                         if chunk.response is not None:
@@ -1766,9 +1797,18 @@ class LLMService:
                         yield chunk
                 finally:
                     if terminal is not None and (terminal.content.strip() or terminal.tool_calls):
+                        if not terminal.provider:
+                            terminal.provider = stream_provider
+                        if not terminal.model:
+                            terminal.model = stream_model
                         self._record_usage(terminal, caller=caller)
                     elif terminal is None:
-                        self._settle_partial_stream(caller=caller, delta_text=delta_text)
+                        self._settle_partial_stream(
+                            caller=caller,
+                            delta_text=delta_text,
+                            provider=stream_provider,
+                            model=stream_model,
+                        )
         except LLMToolCallUnsupportedError:
             raise
         except LLMBudgetExhaustedError:

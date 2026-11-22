@@ -44,7 +44,7 @@
 
 - 价格/预算验收修复：峰谷窗口与长上下文档位改为 **provider + model** 作用域，用户覆盖与中转不再继承官方窗口；每日预留改为共享 SQLite `background_llm_budget_reservations`（跨进程、30 分钟 TTL、原子 reserve/release），热重载不再丢失在途预留；本地日边界按每个午夜各自的 DST 偏移计算；预算耗尽不再被公开错误分类/文案伪装成 provider 429；account sync 同样接入 peak predicate；cost-aware routing 读取各 adapter 的 `_model` 且跨模型位置保持不变；手动窗口拒绝 `08:99` 这类越界分钟。
 
-- 最终验收修复：Claude `cache_creation_input_tokens` 按 1.25x 输入价计入每日账本（cache read 不再被 clamp 到 uncached 数）；流式网关拒绝 `stream_options` 时缺失 usage 改为按保守 prompt/completion 估算并标记 `fallback`，不再 ¥0 绕过上限；设置页 `daily_budget_cny` / `daily_budget_reserve_cny` 越界/非有限值返回 HTTP 400 而不是静默写 0；cost-aware routing 将已知免费 provider（ollama/sponsored/siliconflow_free）评为 0，排在付费路由前；峰谷下一次切换按 15 分钟粒度采样，短窗口不再漏报。
+- 最终验收修复：Claude `cache_creation_input_tokens` 按 1.25x 输入价计入每日账本（cache read 不再被 clamp 到 uncached 数）；流式网关拒绝 `stream_options` 时缺失 usage 改为按保守 prompt/completion 估算并标记 `fallback`，不再 ¥0 绕过上限；设置页 `daily_budget_cny` / `daily_budget_reserve_cny` 越界/非有限值返回 HTTP 400 而不是静默写 0；cost-aware routing 将已知免费 provider（ollama/sponsored/siliconflow_free）评为 0，排在付费路由前；峰谷下一次切换按 1 分钟粒度采样，短窗口不再漏报。
 - 第三轮验收修复：OpenRouter `:batch` 路由不再混入标准长上下文档位；OpenRouter 卡片不再继承其他 provider 的 tariff/tier；非有限（NaN/Inf）报价与缓存价拒绝落账；SQLite 恢复后共享准入仍扣减进程内 fallback 预留；审计事件使用未四舍五入花费、失败可重试；原生工具调用只记一次 usage，流式在槽内结算后才释放预留；popup 状态白名单补齐 `llm_daily_budget_reserved_cny` / `llm_daily_budget_remaining_cny`。
 
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
