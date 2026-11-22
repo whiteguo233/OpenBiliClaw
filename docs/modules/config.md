@@ -991,6 +991,11 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 ### Ego Lite 执行宿主
 
+Windows Beta 从本机已安装的官方程序启动。安装目录无法自动识别时，可通过
+`OPENBILICLAW_EGO_WINDOWS_APP` 和 `OPENBILICLAW_EGO_WINDOWS_CLI` 指定
+浏览器与 CLI 的绝对路径。两个路径仍接受同样的 Authenticode 校验。已有
+`OPENBILICLAW_EGO_BROWSER/SERVER_NAME/PROFILE` 外部宿主配置用于 macOS。
+
 新网页的 `auto` 和 `ego` 使用官方 Ego Lite；只有实际识别成功的 RSS/Atom/JSON Feed 自动使用 HTTP。更新已有流程时 `auto` 保留该流程执行器，避免悄然迁移。新建不接受 Playwright，已有旧流程仍按原执行器运行。
 
 默认在部署阶段准备托管宿主，无需新增 `config.toml` 开关。macOS 本机源码安装在依赖
@@ -1004,7 +1009,7 @@ API、桌面和 CLI 服务启动检查在 `ready` 且已安装时跳过，即使
 聊天网页准备仍可补救未完成环境，安装不占用页面观察预算。实际网页任务按需启动已准备
 宿主；只读状态查询不下载、不启动应用、不打开首次设置。
 自动初始化跳过个人浏览数据导入，不设默认浏览器、不添加 Dock、不启用崩溃报告。
-当前托管与原生执行只支持 macOS；Linux/Docker 和 Windows 不因安装 Python 依赖而获得此能力。
+上面的自动下载与引导适用于 macOS。Windows 需要独立安装官方 Beta，Linux 容器没有原生 Ego 宿主。
 
 启动后端时显式提供以下**任一非空环境变量**即退出托管（`managed=false`）。它们仅用于
 操作者自行管理的外部宿主；不接受网页或模型指定可执行文件，不会自动安装、初始化或

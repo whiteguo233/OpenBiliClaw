@@ -203,6 +203,8 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
+**Windows Beta on main** supports automatic setup of an isolated, headless Ego Lite host for website trials and scheduled discovery. [Installation and validation](docs/agent-install.md#windows-ego-lite-beta)
+
 ## Why OpenBiliClaw?
 
 > The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili, Xiaohongshu, Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, Instagram, and custom websites / RSS.
@@ -234,7 +236,7 @@ Recommendation algorithms are essentially a **middleman** balancing engagement, 
 
 ### Cross-Platform & Custom Web
 - 🌐 **14 Built-in Platforms** — video, short posts, Q&A, developer hubs, and anime databases unified in one pipeline.
-- 🕸️ **Add Any Website or RSS in Chat** — paste an RSS/Atom/JSON Feed or website URL plus what you want to read in Chat, review a live trial, and schedule recurring discovery; macOS ships managed **Ego Lite** with an in-app human login takeover page for authenticated sites ([details](docs/modules/web.md)).
+- 🕸️ **Add Websites or RSS in Chat** — paste an RSS/Atom/JSON Feed or website URL plus what you want to read, review a live trial, and schedule recurring discovery. macOS and Windows Beta support managed **Ego Lite** with an in-app login takeover page. [Details](docs/modules/web.md)
 
 ### Multi-Surface & Agent Ecosystem
 - 🧩 **Full Browser Extension** — Chrome / Edge / Brave / Arc / Firefox / Safari support for sidebar recommendations, feedback, and same-origin read-only tasks.
@@ -265,7 +267,7 @@ Recommendation algorithms are essentially a **middleman** balancing engagement, 
 | **Weibo** | Init · search · hot · creator | Backend runs anonymous public discovery; personal init uses same-origin extension tasks | [weibo.md](docs/modules/weibo.md) |
 | **GitHub** | Starred-repo init · search · ranked · latest | Official REST API anonymously for public repos; optional PAT for rate limits, no extension | [github.md](docs/modules/github.md) |
 | **Instagram** | Topic/creator discovery · likes/saves/follows init | Disabled by default; bounded import in logged-in browser, needs overseas access ([scope](docs/platform-source-acceptance.instagram.md)) | [instagram.md](docs/modules/instagram.md) |
-| **Custom Web / RSS** | Chat authoring · live trial · human takeover · schedule | Feeds use bounded anonymous HTTP; dynamic websites use managed Ego Lite on macOS | [web.md](docs/modules/web.md) |
+| **Custom Web / RSS** | Chat authoring · live trial · human takeover · schedule | Feeds use bounded anonymous HTTP. Dynamic websites use managed Ego Lite on macOS and Windows Beta | [web.md](docs/modules/web.md) |
 
 > **Data boundaries**: OpenBiliClaw never stores your platform passwords or bypasses login. Periodic account re-pull is off by default (signals are pulled only when you click "Start initialization" or opt in). Out of the box only Bilibili is enabled; enable other sources in Settings. Full contracts: [docs/modules/source-auth.md](docs/modules/source-auth.md).
 
@@ -404,6 +406,7 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 │ 5-Layer Profiling │ Layered Networked │  15-Source Pool   │ Mix · Diversity   │
 │  & Probe Dialogue │   Memory Store    │  & Jev/LLM Eval   │ & Warm Reasons    │
 ├───────────────────┴───────────────────┴───────────────────┴───────────────────┤
+│  Web discovery: HTTP feeds · managed Ego Lite on macOS and Windows Beta       │
 │  LLM & Embedding Routing (Free SiliconFlow Qwen/BGE-M3 · Ollama · Failover)   │
 │  LLM Costing: catalog · daily CNY cap/reserve · peak windows · routing        │
 │  Local SQLite Store (Events · Profile · Pool · Seen Ledger · Chat · Library)  │

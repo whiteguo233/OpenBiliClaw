@@ -21,7 +21,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install project and pytest
-        run: python -m pip install -e . "pytest>=8"
+        run: python -m pip install -e . "pytest>=8" "pytest-asyncio>=0.23"
+
+      - name: Set up Node.js for native Ego host tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Test Windows Ego process boundaries and local transport
+        run: python -m pytest -q tests/test_ego_windows.py
 
       - name: Exercise real HKCU Run and process launch
         run: python -m pytest -q tests/test_windows_autostart_e2e.py

@@ -601,7 +601,7 @@ macOS 首次设置兼容官方 0.6.2.7 末页“加入用户体验计划”文�
 macOS 托管启动统一使用官方 Ego 应用自身的无界面模式，首次设置和定时采集不显示本机
 窗口；人工登录通过用户打开的接管页截图／操作完成。源码和桌面部署共用此行为，
 无需新增依赖或配置；现有在线宿主在下次正常冷启动采用新参数，不中断活跃会话。
-但当前托管准备与原生适配器都只支持 macOS：Linux Docker 没有 Ego 宿主或远程桥接，
+原生 Windows Beta 使用宿主机上手动安装的官方浏览器。Linux Docker 没有 Ego 宿主或远程桥接，
 即使 Docker 运行在 Mac 上，容器仍报告 `platform_supported=false` / `setup_state=unsupported`。
 容器中不能使用托管准备按钮，准备 API 返回 409，也不会自动改用 Playwright。
 `OPENBILICLAW_EGO_*` 外部宿主配置只用于同机原生连接，不提供跨容器远程桥接。

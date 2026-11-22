@@ -201,9 +201,9 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 后续网页采集 → 已初始化宿主按需启动 → 原生 Ego 任务空间
 ```
 
-macOS 部署自动准备专用 Ego Lite，普通网页按需启动宿主，真实 Feed 使用 HTTP；
+macOS 部署自动准备专用 Ego Lite。Windows 手动安装官方 Beta 后，后端验签并按需启动无窗口专用宿主。固定 Node 入口比对父进程 PID 与程序路径，后端验证浏览器的创建时间，再通过带认证的本机回环连接。真实 Feed 使用 HTTP；
 API 后台准备不阻塞界面，已准备环境不重复安装；准备失败不回退到 Playwright。
-原生桥当前连接本机 macOS 宿主，验收状态见[专门记录](testing/2026-10-22-ego-lite-discovery-e2e.md)。
+原生宿主验收见 [macOS 试测](testing/2026-10-22-ego-lite-discovery-e2e.md)和 [Windows Beta 真机验收](testing/2026-11-21-ego-windows-beta.md)。
 以下为旧匿名 HTTP recipe 的兼容链路：
 
 ```text

@@ -3008,6 +3008,8 @@ def prepare_ego_for_deployment(project_dir: Path, mode: str) -> dict[str, Any]:
     reason = (
         "docker_runtime_unsupported"
         if mode == "docker"
+        else "windows_ego_beta_manual_install"
+        if sys.platform == "win32"
         else "platform_unsupported"
         if sys.platform != "darwin"
         else "external_host"

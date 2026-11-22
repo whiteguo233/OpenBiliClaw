@@ -471,7 +471,9 @@ Website / RSS / Atom / JSON Feed chat → original user limits + prepare/trial �
                      Blocked verification iframe → bounded origin choices → web/native explicit consent → interactive scope only
                      Interactive owned iframe → document/login guard before resume → shared request/byte budget; popups/workers blocked
                      desktop / popup / mobile → peer source settings cards + source_name labels
-                     macOS deployment → automatic Ego setup → native handshake → on-demand startup; no Playwright fallback
+                     macOS deployment → automatic Ego setup → native handshake → on-demand startup
+                     Windows Beta install → Authenticode → headless Ego → native Node parent PID + image check
+                       → authenticated loopback → shared workflow and takeover
                      Explicit host routing → private network.json → system manual proxy rules + exact direct hosts on cold start
                      Committed parsed DOM stable 8s / complete DOM stable 1.5s → unchanged extraction/scope verification
                      Preparation complete / last session closed → shared 120s idle grace → stop only without session leases; CLI exit cleanup
@@ -858,7 +860,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
 │  │   自有交互 iframe -> 恢复前守卫 -> 共享请求/流量预算；弹窗/worker 拒绝 │ │
 │  │   被拒验证框 -> 有界域名选项 -> Web/原生逐域确认；普通广告不授权     │ │
-│  │   macOS 部署自动准备 Ego Lite → 原生握手 → 按需启动；失败明确报告 │ │
+│  │   macOS 自动准备 / Windows Beta 手动安装 → 原生握手 → 按需启动    │ │
 │  │   显式域名路由 → 私有 network.json → 系统手动代理 + 精确域名直连 │ │
 │  │   准备完成 / 末个会话关闭 → 120 秒保温 → 租约保护回收；CLI 退出清理 │ │
 │  │   托管初始只读打开超时 → 清理 → 原总预算内复用身份重试一次         │ │

@@ -205,6 +205,8 @@
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
+**主线 Windows Beta** 支持为官方 Ego Lite 自动准备独立无窗口宿主，可试跑和定时采集网站。[安装与验收](docs/agent-install.md#windows-ego-lite-beta)
+
 ## 为什么需要 OpenBiliClaw？
 
 > 名字起源于 B 站（`Bili` = Bilibili，`Claw` = 爪子），项目最早只支持 B 站。从 v0.3.0 起已演进为通用跨平台 Agent，覆盖 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与自定义网站 / RSS，持续扩展更多来源。
@@ -236,7 +238,7 @@
 
 ### 全网内容源与自定义网站
 - 🌐 **14 大内置平台** — 一套理解打通视频、短图文、长问答与技术社区，打破平台间的信息孤岛。
-- 🕸️ **聊天一句话加网站 / RSS** — 在「聊一聊」粘贴任何 RSS/Atom/JSON Feed 或网页 URL 与想看的内容，试跑确认后即可定时抓取；macOS 原生集成托管 **Ego Lite**，需要登录的网站可在应用内人工接管页安全登录（[详情](docs/modules/web.md)）。
+- 🕸️ **聊天一句话加网站 / RSS** — 在「聊一聊」粘贴 RSS/Atom/JSON Feed 或网页 URL 与想看的内容，试跑确认后即可定时抓取。macOS 与 Windows Beta 支持托管 **Ego Lite**，需要登录时可在应用内人工接管。[详情](docs/modules/web.md)
 
 ### 多端入口与 Agent 生态
 - 🧩 **全主流浏览器插件** — 支持 Chrome / Edge / Brave / Arc / Firefox / Safari，提供侧边栏推荐、行为采集与同源只读任务。
@@ -267,7 +269,7 @@
 | **微博** | 初始化 · 搜索 · 热榜 · 创作者 | 公开 discovery 后端匿名完成；个人初始化走同源扩展任务 | [weibo.md](docs/modules/weibo.md) |
 | **GitHub** | Star 初始化 · 搜索 · 排名 · 最新 | 官方 REST API 匿名只读公开仓库；可选 PAT 提额，不碰插件 | [github.md](docs/modules/github.md) |
 | **Instagram** | 话题/创作者发现 · 点赞/收藏/关注初始化 | 默认关闭；同一浏览器登录后有界导入，需海外网络（[实测](docs/platform-source-acceptance.instagram.md)） | [instagram.md](docs/modules/instagram.md) |
-| **自定义网站 / RSS** | 聊天建源 · 试跑样例 · 接管登录 · 定时采集 | Feed 走匿名安全 HTTP；动态网站在 macOS 走托管 Ego Lite | [web.md](docs/modules/web.md) |
+| **自定义网站 / RSS** | 聊天建源 · 试跑样例 · 接管登录 · 定时采集 | Feed 走匿名安全 HTTP，动态网站使用托管 Ego Lite（macOS / Windows Beta） | [web.md](docs/modules/web.md) |
 
 > **数据边界**：不保存平台密码，不绕过登录；账号周期回拉默认关闭（手动点「开始初始化」或显式开启时才拉取）；开箱默认只启用 B 站，其余来源按需在设置页勾选开启。完整平台验收与技术契约见 [docs/modules/source-auth.md](docs/modules/source-auth.md)。
 
@@ -405,6 +407,7 @@ docker restart openbiliclaw-backend
 │    Soul Engine    │   Memory System   │ Discovery Engine  │  Recommendation   │
 │ 五层心理画像演化  │   多层网状记忆    │ 15 类来源统一准入 │ 混排·多样性·解释  │
 ├───────────────────┴───────────────────┴───────────────────┴───────────────────┤
+│  Web 采集：HTTP Feed · 托管 Ego Lite（macOS / Windows Beta）                  │
 │  LLM & Embedding 路由（预置硅基流动免费模型 · Ollama · 多渠道有序故障切换链） │
 │  LLM 成本：价格目录 · 每日 CNY 上限/预留 · 峰谷 · 同模型选价                  │
 │  本地 SQLite 存储（行为 · 画像 · 候选池 · 已看账本 · 对话 · 收藏/历史）       │

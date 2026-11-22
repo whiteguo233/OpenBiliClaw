@@ -5,6 +5,8 @@
 ## v0.3.239：Windows 安装路径、画像完整性与界面收紧（2026-11-16）
 
 - **文档与项目主页优化（2026-11-21）**：精简中英文 README（`README.md` / `README_EN.md`）至核心用户导览并将 PR 级内部实现细节收敛至 `docs/architecture-overview*.md` 与模块文档；清理误混入快速开始的提示词、重复隐私段、悬空注释与过时数据，保留顶部合作伙伴与生态入口并补齐跨平台多端最新截图。同步翻新 GitHub Pages 主页（`docs/index.html`）：Hero 升级为桌面 + 移动多端叠层展示、安装区改为 4 模式 Tab 切换、15 个内容来源支持按类别筛选、更新过期 Gitee 版本与 Instagram 状态标签、移除静态过时 Star 计数，并全量校验中英 i18n 键、链接与多视口无错渲染。
+- 增加本机官方 Ego Lite Windows Beta 实验适配。修复签名模块加载，使用无窗口空白页维持命名宿主，按父进程 PID、程序路径与创建时间验证连接。Windows 11 真机通过原生握手、公开网站试跑与自然调度，以及测试站登录接管和重启恢复。[验证记录](testing/2026-11-21-ego-windows-beta.md)
+- Windows 直接从官方安装注册信息识别尚未首次打开的 Ego Lite，选择登记版本的 CLI。用户级静默重装后，OpenBiliClaw 首启可自动验签并初始化专用 profile。[静默重装验收](testing/2026-11-21-ego-windows-beta.md#本机清理后静默重装复测)
 - 桌面、后端和浏览器插件统一为 0.3.239。独立插件 0.3.236 的按需账号字段与连接测试改进一并交付。
 - 固定免费组件目录 `sponsored-runtime-2026-11-16.1`：五平台 manifest 兼容窗口为 0.3.239，Mac 两架构重新完成 Developer ID 签名与 Apple 公证；运行时源码仅更新 `rustix` 1.1.6 修补 RUSTSEC-2026-0486，协议、模型、额度与密钥 epoch 不变。
 - 安装包、容器、运行时与浏览器商店的各渠道回执见 [v0.3.239 发布记录](testing/2026-11-16-release-v0.3.239.md)。Firefox AMO 的 `0.3.239` 已公开，Chrome Web Store 已提交并处于 `PENDING_REVIEW`。首次尝试的 0.3.238 未发布任何资产，空发行页与标签已删除。

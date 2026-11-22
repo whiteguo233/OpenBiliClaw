@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import base64
 import errno
 import hashlib
 import ipaddress
@@ -29,6 +30,7 @@ from typing import Any, BinaryIO
 import httpx
 
 from openbiliclaw.proc import no_window_kwargs
+from openbiliclaw.sources import ego_windows
 from openbiliclaw.sources.ego_onboarding import EgoOnboardingError, complete_onboarding
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,8 @@ _DETAILS = {
     "handshake": "Verifying the Ego Lite native connection",
     "ready": "The managed Ego Lite native connection is ready",
     "offline": "Ego Lite is prepared and will start when a website task needs it",
-    "unsupported": "Managed Ego Lite setup currently requires macOS",
+    "unsupported": "Managed Ego Lite requires macOS or the official Windows Beta",
+    "windows_missing": "请安装官方 Ego Lite Windows Beta，完成首次设置后再准备专用浏览器。",
     "external": "An explicitly configured external Ego Lite host is managed separately",
 }
 
@@ -100,6 +103,20 @@ async def _command(*args: str, timeout: float = 30) -> str:
 
 def _external() -> bool:
     return any(os.environ.get(name) for name in _EXTERNAL_ENV)
+
+
+def _managed_platform() -> bool:
+    return sys.platform in {"darwin", "win32"}
+
+
+def _lock_file(handle: BinaryIO, *, shared: bool = False, blocking: bool = False) -> None:
+    if sys.platform == "win32":
+        ego_windows.lock_file(handle, shared=shared, blocking=blocking)
+        return
+    import fcntl
+
+    mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+    fcntl.flock(handle, mode if blocking else mode | fcntl.LOCK_NB)
 
 
 _DNS_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -156,12 +173,22 @@ class EgoSetupManager:
 
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir.resolve() / "ego-managed"
-        self.app = self.root / "ego lite.app"
         self.profile_dir = self.root / "profile"
         self.server_name = "obc-" + hashlib.sha256(str(self.root).encode()).hexdigest()[:24]
-        self.executable = self.app / (
-            "Contents/Frameworks/ego Framework.framework/Versions/Current/Helpers/ego-browser"
+        self.windows = sys.platform == "win32"
+        self._windows_installation = (
+            ego_windows.installation() if self.windows and not _external() else None
         )
+        if self.windows:
+            self.executable, self.app = self._windows_installation or (
+                self.root / "ego-browser.exe",
+                self.root / "ego.exe",
+            )
+        else:
+            self.app = self.root / "ego lite.app"
+            self.executable = self.app / (
+                "Contents/Frameworks/ego Framework.framework/Versions/Current/Helpers/ego-browser"
+            )
         self._state_path = self.root / "setup.json"
 
     def network_settings(self) -> dict[str, Any]:
@@ -295,11 +322,9 @@ class EgoSetupManager:
         The lease is advisory and cross-process: an idle reaper may stop the
         managed host only after every session process has released it.
         """
-        import fcntl
-
         handle = self._open_session_lock()
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            _lock_file(handle, shared=True, blocking=True)
         except BaseException:
             handle.close()
             raise
@@ -307,11 +332,9 @@ class EgoSetupManager:
 
     def try_exclusive_session_lease(self) -> BinaryIO | None:
         """Return an exclusive lease only when no live session holds one."""
-        import fcntl
-
         handle = self._open_session_lock()
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_file(handle)
         except BlockingIOError:
             handle.close()
             return None
@@ -322,12 +345,7 @@ class EgoSetupManager:
 
     @staticmethod
     def release_session_lease(handle: BinaryIO) -> None:
-        import fcntl
-
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
+        handle.close()
 
     def _state(self) -> dict[str, Any]:
         if self.root.is_symlink() or self._state_path.is_symlink():
@@ -353,8 +371,16 @@ class EgoSetupManager:
         # Inspect only our own recorded PID and exact managed command identity.
         from subprocess import TimeoutExpired, run
 
-        pid = self._state().get("pid")
-        if not isinstance(pid, int) or pid <= 1 or sys.platform != "darwin":
+        state = self._state()
+        pid = state.get("pid")
+        if type(pid) is not int or pid <= 1:
+            return None
+        if self.windows:
+            birth = state.get("process_created")
+            if type(birth) is int and ego_windows.browser_process(pid, self.app) == birth:
+                return pid
+            return None
+        if sys.platform != "darwin":
             return None
         try:
             text = run(
@@ -390,10 +416,16 @@ class EgoSetupManager:
 
     def status(self) -> dict[str, Any]:
         """Read installation and prior handshake facts; never launch/probe the CLI."""
-        supported = sys.platform == "darwin"
         external = _external()
+        supported = _managed_platform() and not (external and self.windows)
         state = self._state() if not external else {}
-        installed = self.executable.is_file() if not external else False
+        installed = (
+            not external
+            and self.executable.is_file()
+            and (
+                not self.windows or (self._windows_installation is not None and self.app.is_file())
+            )
+        )
         pid = self._pid() if installed and supported and not external else None
         available = bool(pid and state.get("ready_pid") == pid and state.get("initialized"))
         setup_state = str(state.get("setup_state", "idle"))
@@ -409,22 +441,21 @@ class EgoSetupManager:
         )
         if setup_state == "ready":
             detail = _DETAILS["ready" if available else "offline"]
+        if self.windows and not external and not installed:
+            setup_state, phase, detail = "idle", "idle", _DETAILS["windows_missing"]
         if supported and not external and setup_state == "preparing":
             # A killed API worker must not leave a permanent progress spinner.
             # Opening an existing lock read-only does not start or initialize anything.
-            import fcntl
-
             lock_path = self.root / "setup.lock"
             try:
                 if lock_path.is_symlink():
                     raise OSError
-                with lock_path.open("r") as lock:
+                with lock_path.open("r+b" if self.windows else "rb") as lock:
                     try:
-                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        _lock_file(lock)
                     except BlockingIOError:
                         pass
                     else:
-                        fcntl.flock(lock, fcntl.LOCK_UN)
                         setup_state, detail = "failed", "ego_setup_interrupted"
             except OSError:
                 setup_state, detail = "failed", "ego_setup_interrupted"
@@ -437,6 +468,7 @@ class EgoSetupManager:
             "available": available,
             "platform_supported": supported,
             "connection_state": "ready" if available else "unverified" if pid else "offline",
+            **({"setup_mode": "manual_install"} if self.windows else {}),
         }
 
     def _phase(self, phase: str) -> None:
@@ -677,6 +709,11 @@ class EgoSetupManager:
             raise EgoSetupError("ego_setup_host_already_running")
         self.profile_dir.mkdir(mode=0o700, exist_ok=True)
         self.profile_dir.chmod(0o700)
+        if self.windows:
+            if debugging:
+                raise EgoSetupError("ego_setup_windows_debug_unsupported")
+            await self._launch_windows()
+            return 0
         args = [
             str(self.app / "Contents/MacOS/ego lite"),
             f"--ego-server-name={self.server_name}",
@@ -741,7 +778,81 @@ class EgoSetupManager:
             await asyncio.sleep(0.25)
         raise EgoSetupError("ego_setup_host_timeout")
 
+    async def _launch_windows(self) -> None:
+        # The user installs the official Beta. Validate both images before
+        # running code from a detected path or an explicit path override.
+        self._phase("verify")
+        paths = base64.b64encode(
+            json.dumps([str(self.app), str(self.executable)]).encode()
+        ).decode()
+        script = (
+            "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
+            "Import-Module (Join-Path $PSHOME "
+            "'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1');"
+            f"$paths=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{paths}'))"
+            " | ConvertFrom-Json;"
+            "foreach ($path in $paths) {"
+            "$sig=Get-AuthenticodeSignature -LiteralPath $path;"
+            "if ($sig.Status -ne 'Valid' -or "
+            "$sig.SignerCertificate.GetNameInfo('SimpleName',$false) -ne 'CITRO LABS PTE. LIMITED')"
+            " { exit 1 } }; 'OBC_EGO_SIGNED'"
+        )
+        try:
+            output = await _command(
+                str(
+                    Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+                    / "System32"
+                    / "WindowsPowerShell"
+                    / "v1.0"
+                    / "powershell.exe"
+                ),
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                base64.b64encode(script.encode("utf-16-le")).decode(),
+            )
+        except (OSError, EgoSetupError) as exc:
+            raise EgoSetupError("ego_setup_windows_signature_unverified") from exc
+        if "OBC_EGO_SIGNED" not in output.splitlines():
+            raise EgoSetupError("ego_setup_windows_signature_unverified")
+        process = await asyncio.create_subprocess_exec(
+            str(self.app),
+            f"--ego-server-name={self.server_name}",
+            f"--user-data-dir={self.profile_dir}",
+            "--headless=new",
+            "--no-first-run",
+            "--enable-automation",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-sync",
+            # This Windows build closes the native service without an initial tab.
+            "about:blank",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            **no_window_kwargs(),
+        )
+        try:
+            birth = ego_windows.browser_process(process.pid, self.app)
+            if not birth or process.returncode is not None:
+                raise EgoSetupError("ego_setup_host_exited")
+            self._write(pid=process.pid, process_created=birth, ready_pid=None, debug_port=0)
+        except BaseException:
+            with suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+            raise
+
     async def _stop(self, *, exit_budget: float = 6.0) -> None:
+        if self.windows:
+            pid = self._pid()
+            if pid and self._state().get("ready_pid") == pid:
+                with suppress(OSError, TimeoutError, EgoSetupError):
+                    await _command(*self._windows_shutdown_command(pid), timeout=3)
+                deadline = time.monotonic() + min(max(exit_budget, 0), 3)
+                while self._pid() == pid and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+            await asyncio.to_thread(self._stop_windows, exit_budget)
+            return
         pid = self._pid()
         debug_port = self._state().get("debug_port", 0)
         has_debug_port = isinstance(debug_port, int) and bool(debug_port)
@@ -788,7 +899,24 @@ class EgoSetupManager:
 
     def stop_sync(self, *, wait: float = 2.0) -> None:
         """Best-effort stop for interpreter shutdown; never touches external hosts."""
-        if _external() or sys.platform != "darwin":
+        if _external() or not _managed_platform():
+            return
+        if self.windows:
+            from subprocess import TimeoutExpired, run
+
+            pid = self._pid()
+            if pid and self._state().get("ready_pid") == pid:
+                with suppress(OSError, TimeoutExpired):
+                    run(
+                        self._windows_shutdown_command(pid),
+                        capture_output=True,
+                        timeout=3,
+                        **no_window_kwargs(),
+                    )
+                deadline = time.monotonic() + max(wait, 0)
+                while self._pid() == pid and time.monotonic() < deadline:
+                    time.sleep(0.05)
+            self._stop_windows(wait)
             return
         pid = self._pid()
         if not pid:
@@ -806,6 +934,35 @@ class EgoSetupManager:
         with suppress(Exception):
             self._write(pid=None, ready_pid=None, debug_port=0)
 
+    def _stop_windows(self, wait: float) -> None:
+        pid = self._pid()
+        birth = self._state().get("process_created")
+        if pid and type(birth) is int:
+            ego_windows.browser_process(pid, self.app, stop_at=birth)
+            deadline = time.monotonic() + max(wait, 0.1)
+            while self._pid() == pid:
+                if time.monotonic() >= deadline:
+                    raise EgoSetupError("ego_setup_host_did_not_exit")
+                time.sleep(0.05)
+        self._write(pid=None, process_created=None, ready_pid=None, debug_port=0)
+
+    def _windows_shutdown_command(self, pid: int) -> list[str]:
+        return [
+            str(self.executable),
+            f"--ego-server-name={self.server_name}",
+            "nodejs",
+            "-e",
+            self._windows_host_verification(pid)
+            + "ego.sendCDPMessage(JSON.stringify({id:1,method:'Browser.close'}));",
+        ]
+
+    def _windows_host_verification(self, pid: int) -> str:
+        module = Path(__file__).with_name("ego_host.mjs").as_uri()
+        return (
+            f"const m=await import({json.dumps(module)});"
+            f"m.verifyWindowsHost({pid},{json.dumps(str(self.app))});"
+        )
+
     async def _handshake(self) -> None:
         pid = self._pid()
         if not pid or self._state().get("debug_port"):
@@ -816,6 +973,8 @@ class EgoSetupManager:
             "console.log('OBC_EGO_READY:'+JSON.stringify({"
             "version:v.currentVersion,profile:p.profiles.some(x=>x.id==='Default')}));"
         )
+        if self.windows:
+            expression = self._windows_host_verification(pid) + expression
         output = await _command(
             str(self.executable),
             f"--ego-server-name={self.server_name}",
@@ -852,6 +1011,12 @@ class EgoSetupManager:
 
     async def _connect_host(self) -> None:
         """Resume known setup pages after a verified stop; never replay a lost click."""
+        if self.windows:
+            if not self._pid():
+                await self._launch(debugging=False)
+            self._phase("handshake")
+            await self._handshake()
+            return
         for attempt in range(len(_RETRY_DELAYS) + 1):
             try:
                 if not self._state().get("initialized"):
@@ -891,7 +1056,11 @@ class EgoSetupManager:
                 await asyncio.sleep(_RETRY_DELAYS[attempt])
 
     async def _operate(self, *, initialize: bool, wait_for_owner: bool = False) -> dict[str, Any]:
-        if _external() or sys.platform != "darwin":
+        if (
+            _external()
+            or not _managed_platform()
+            or (self.windows and not self._windows_installation)
+        ):
             return self.status()
         if self.root.is_symlink() or self.profile_dir.is_symlink() or self.app.is_symlink():
             raise EgoSetupError("ego_setup_invalid_directory")
@@ -899,12 +1068,10 @@ class EgoSetupManager:
             return self.status()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.root.chmod(0o700)
-        import fcntl
-
         lock_path = self.root / "setup.lock"
         if lock_path.is_symlink():
             raise EgoSetupError("ego_setup_invalid_directory")
-        with lock_path.open("a") as lock:
+        with lock_path.open("a+b") as lock:
             lock_path.chmod(0o600)
             wait_budget = _CONNECT_TIMEOUT
             if initialize and wait_for_owner:
@@ -913,7 +1080,7 @@ class EgoSetupManager:
             waited = False
             while True:
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    _lock_file(lock)
                     break
                 except BlockingIOError:
                     # Status-oriented preparation returns progress immediately.
@@ -928,7 +1095,7 @@ class EgoSetupManager:
                     status = self.status()
                     if status["available"] or (waited and status["setup_state"] == "failed"):
                         return status
-                if initialize:
+                if initialize and not self.windows:
                     async with asyncio.timeout(_INSTALL_TIMEOUT):
                         await self._install()
                 connect_budget = (
@@ -952,8 +1119,6 @@ class EgoSetupManager:
                     )
                 )
                 self._write(setup_state="failed", detail=code)
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
         return self.status()
 
     async def prepare(self, *, wait: bool = False) -> dict[str, Any]:
@@ -970,7 +1135,7 @@ class EgoSetupManager:
 
     def register_exit_cleanup(self) -> None:
         """Reclaim this managed host on interpreter exit when no session is live."""
-        if _external() or sys.platform != "darwin":
+        if _external() or not _managed_platform():
             return
         key = str(self.root)
         if key in _EXIT_REAPERS:
@@ -995,7 +1160,7 @@ class EgoSetupManager:
 
     def schedule_idle_stop(self, *, grace: float | None = None) -> None:
         """Reclaim a prepared or used host after all processes release session leases."""
-        if _external() or sys.platform != "darwin":
+        if _external() or not _managed_platform():
             return
         self.register_exit_cleanup()
         key = str(self.root)
@@ -1036,26 +1201,21 @@ class EgoSetupManager:
         idle stop can never race a launch. Callers decide *when* stopping is
         safe (for example only while holding the exclusive session lease).
         """
-        if _external() or sys.platform != "darwin":
+        if _external() or not _managed_platform():
             return self.status()
         if not self._state().get("initialized") and not self._pid():
             return self.status()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.root.chmod(0o700)
-        import fcntl
-
         lock_path = self.root / "setup.lock"
         if lock_path.is_symlink():
             raise EgoSetupError("ego_setup_invalid_directory")
-        with lock_path.open("a") as lock:
+        with lock_path.open("a+b") as lock:
             lock_path.chmod(0o600)
             try:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_file(lock)
             except BlockingIOError:
                 logger.info("Ego host stop deferred: setup is busy")
                 return self.status()
-            try:
-                await self._stop(exit_budget=exit_budget)
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            await self._stop(exit_budget=exit_budget)
         return self.status()

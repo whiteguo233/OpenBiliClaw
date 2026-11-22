@@ -738,6 +738,9 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
     Write-Host '  Jev routes need the configured key environment variable in the backend.'
     Write-Host "  See: $InstallDir\docs\modules\config.md#director"
     Write-Host ''
+    Write-Host 'Optional website discovery: install the official Ego Lite Windows Beta from https://lite.ego.app/download.'
+    Write-Host '  Complete Ego Lite setup, then use Settings > Sources > Custom sources > Prepare Ego Lite.'
+    Write-Host ''
     Write-Host 'Reference docs:'
     Write-Host "  - $InstallDir\docs\agent-install.md     (install guide)"
     Write-Host "  - $InstallDir\docs\agent-deployment.md  (troubleshooting)"
