@@ -266,8 +266,13 @@ def build_tiers(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             continue
         model_tiers: list[dict[str, Any]] = []
         for override in overrides:
+            if not isinstance(override, dict):
+                continue
+            threshold_raw = override.get("min_prompt_tokens")
+            if threshold_raw is None:
+                continue
             try:
-                threshold = int(override.get("min_prompt_tokens"))
+                threshold = int(threshold_raw)
             except (TypeError, ValueError, OverflowError):
                 continue
             if threshold <= 0:
@@ -338,6 +343,8 @@ def build_tariffs(openrouter: dict[str, Any]) -> dict[str, list[dict[str, Any]]]
             continue
         windows: list[dict[str, Any]] = []
         for override in overrides:
+            if not isinstance(override, dict):
+                continue
             start = _minute_of_day(override.get("utc_start"))
             end = _minute_of_day(override.get("utc_end"))
             if start is None or end is None or start == end:

@@ -201,7 +201,10 @@ async def test_disabled_cap_admits_everything(usage_db: Database, tmp_path: Path
         async with gate.slot(caller="soul.insight"):
             pass
 
-    assert gate.daily_budget_snapshot()["llm_daily_budget_state"] == "disabled"
+    snapshot = gate.daily_budget_snapshot()
+    assert snapshot["llm_daily_budget_state"] == "disabled"
+    # Disabled caps promise no ledger read, so today's display stays zero.
+    assert snapshot["llm_today_cost_cny"] == 0.0
 
 
 def test_apply_background_budget_config_wires_daily_cap(tmp_path: Path) -> None:

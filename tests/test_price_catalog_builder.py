@@ -475,3 +475,29 @@ def test_sync_refuses_an_empty_upstream_snapshot(tmp_path) -> None:
     else:  # pragma: no cover - defensive
         raise AssertionError("empty snapshot should be rejected")
     assert destination.read_text(encoding="utf-8") == "previous"
+
+
+def test_null_override_record_is_skipped_without_aborting() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "deepseek/deepseek-v4-flash",
+                "pricing": {
+                    "prompt": "0.00000015",
+                    "completion": "0.0000006",
+                    "overrides": [
+                        None,
+                        {
+                            "utc_days": ["monday"],
+                            "utc_start": 100,
+                            "utc_end": 200,
+                            "prompt": "0.0000003",
+                            "completion": "0.0000012",
+                        },
+                    ],
+                },
+            }
+        ]
+    }
+    tariffs = builder.build_tariffs(payload)
+    assert len(tariffs["deepseek-v4-flash"]) == 1

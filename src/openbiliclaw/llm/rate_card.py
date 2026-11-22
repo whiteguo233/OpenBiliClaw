@@ -207,15 +207,30 @@ class RateCard:
     def _next_label_change(self, moment: datetime) -> datetime | None:
         current = self.current_tariff(moment)
         current_label = current.label if current else "base"
-        # Windows are minute-granular and hour-aligned in every catalog we
-        # generate today; a bounded hourly scan is cheap and avoids a
-        # per-call loop over 11k minutes.
+
+        def label_at(candidate: datetime) -> str:
+            window = self.current_tariff(candidate)
+            return window.label if window else "base"
+
+        # Find the first differing hour, then binary-search inside it. A plain
+        # hourly scan reports 01:45 for a 01:00 boundary when queried at 00:45.
+        low = moment
+        high: datetime | None = None
         for hours in range(1, 8 * 24):
             candidate = moment + timedelta(hours=hours)
-            window = self.current_tariff(candidate)
-            if (window.label if window else "base") != current_label:
-                return candidate
-        return None
+            if label_at(candidate) != current_label:
+                high = candidate
+                break
+            low = candidate
+        if high is None:
+            return None
+        while (high - low) > timedelta(minutes=1):
+            middle = low + (high - low) / 2
+            if label_at(middle) != current_label:
+                high = middle
+            else:
+                low = middle
+        return high.replace(second=0, microsecond=0)
 
 
 @dataclass(frozen=True)

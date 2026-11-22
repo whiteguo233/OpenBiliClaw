@@ -673,19 +673,14 @@ class LLMConcurrencyGate:
 
         mode = self._daily_budget_on_exceed
         if self._daily_budget_cny <= 0:
-            spend = 0.0
-            ledger = self._daily_spend_ledger
-            if ledger is not None:
-                try:
-                    spend = ledger.spend_cny()
-                except Exception:
-                    logger.warning("Daily spend lookup failed; treating spend as 0", exc_info=True)
+            # Disabled cap: documented as no ledger read. The cost command
+            # queries its own aggregate when the user wants today's spend.
             return {
                 "llm_daily_budget_cny": 0.0,
                 "llm_daily_budget_on_exceed": mode,
-                "llm_today_cost_cny": round(spend, 6),
+                "llm_today_cost_cny": 0.0,
                 "llm_daily_budget_state": "disabled",
-                "llm_daily_budget_day": local_day_window()[0],
+                "llm_daily_budget_day": "",
                 "llm_daily_budget_reserved_cny": 0.0,
                 "llm_daily_budget_remaining_cny": 0.0,
             }

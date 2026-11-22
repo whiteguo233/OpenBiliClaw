@@ -48,7 +48,7 @@ from openbiliclaw.runtime.source_policy import (
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from openbiliclaw.config import Config
     from openbiliclaw.fish.engine import FishCandidate
@@ -777,6 +777,7 @@ class RuntimeContext:
     # built runtime for SQLite writes / LLM tokens.
     task_registry: BackgroundTaskRegistry = field(default_factory=BackgroundTaskRegistry)
     llm_concurrency_gate: Any = None
+    _peak_tariff_predicate: Callable[[], bool] | None = None
     pool_inventory_commit_callback: Any = field(init=False, repr=False, compare=False)
     _pool_inventory_commit_subscribers: list[Any] = field(
         default_factory=list,
@@ -1160,6 +1161,13 @@ class RuntimeContext:
             from openbiliclaw.llm.rate_card import peak_predicate_for_config
 
             predicate = peak_predicate_for_config(config)
+            if predicate is None:
+                # Cache the "unpriced route" answer too; otherwise every
+                # status/controller tick reloads the 350 KB catalog.
+                def _no_peak() -> bool:
+                    return False
+
+                predicate = _no_peak
             self._peak_tariff_predicate = predicate
         if callable(predicate):
             try:

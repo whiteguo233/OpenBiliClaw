@@ -1027,3 +1027,14 @@ def test_openrouter_inherits_a_unique_providers_tariff() -> None:
     effective = catalog.resolve("openrouter", "m", now=_utc(2026, 11, 23, 2, 0))
     assert effective is not None
     assert effective.tariff_label == "peak"
+
+
+def test_next_change_reports_the_exact_boundary_not_the_next_hour() -> None:
+    catalog = RateCatalog.from_dict(_CATALOG)
+    card = catalog.card("deepseek", "deepseek-v4-flash")
+    assert card is not None
+    effective = card.effective(
+        now=_utc(2026, 11, 23, 0, 45),
+        include_next_change=True,
+    )
+    assert effective.next_change_at == _utc(2026, 11, 23, 1, 0)
