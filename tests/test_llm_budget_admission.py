@@ -368,3 +368,52 @@ def test_gate_constructor_keeps_legacy_signature_defaults() -> None:
     assert gate.background_budget_max_calls == 0
     assert gate.background_budget_window_seconds == 3600
     assert gate.status_payload()["llm_background_budget_shared"] is False
+
+
+class _OrderedUsageSink:
+    """Delegate to a real DB and snapshot the gate while the row is written."""
+
+    def __init__(self, database: Any, gate: LLMConcurrencyGate) -> None:
+        self.database = database
+        self.gate = gate
+        self.reserved_at_write: list[float] = []
+
+    def insert_llm_usage(self, **kwargs: Any) -> int:
+        snapshot = self.gate.daily_budget_snapshot()
+        self.reserved_at_write.append(float(snapshot["llm_daily_budget_reserved_cny"]))
+        return int(self.database.insert_llm_usage(**kwargs))
+
+
+async def test_usage_row_is_written_before_the_reservation_is_released(tmp_path: Any) -> None:
+    from openbiliclaw.llm.budget import DailySpendLedger
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+    from openbiliclaw.storage.database import Database
+
+    memory = _seed_memory(tmp_path, count=0)
+    database = Database(tmp_path / "usage.db")
+    database.initialize()
+    gate = LLMConcurrencyGate(
+        4,
+        daily_budget_cny=0.15,
+        daily_budget_reserve_cny=0.10,
+        daily_budget_ledger=DailySpendLedger(database._db_path),  # noqa: SLF001
+    )
+    sink = _OrderedUsageSink(database, gate)
+    service = LLMService(
+        registry=_StubRegistry(),
+        memory=memory,
+        concurrency_gate=gate,
+        usage_recorder=UsageRecorder(sink=sink),
+    )
+
+    await service.complete_with_core_memory(
+        system_instruction="sys",
+        user_input="user",
+        caller="soul.insight",
+        inject_core_memory=False,
+    )
+
+    assert sink.reserved_at_write
+    assert sink.reserved_at_write[0] > 0.0
+    # The slot released only after the usage row was written.
+    assert gate.daily_budget_snapshot()["llm_daily_budget_reserved_cny"] == 0.0

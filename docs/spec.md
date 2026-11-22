@@ -301,6 +301,8 @@ source metadata (including XHS note body / tag names) → candidate storage → 
 Setup / popup / desktop / mobile / CLI → ordinary config API
   ├ llm.instances.<id> (siliconflow_free or BYOK) → default / module ordered chains
   │   → LLMService → LLMRegistry → selected provider adapter
+  │       ├ price catalog / tariffs → per-call CNY estimate + cost_confidence
+  │       ├ background gate → call-count + daily CNY cap (reserve) + peak windows
   │       └ siliconflow_free → two read-only instances: Qwen3-8B / Qwen3.5-4B
   └ llm.embedding → independent EmbeddingService
       ├ siliconflow_free → fixed BGE-M3 (1024 text dimensions, stable cache provenance)

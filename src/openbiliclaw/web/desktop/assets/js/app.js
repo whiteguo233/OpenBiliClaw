@@ -9372,6 +9372,13 @@ ${cardFeedbackBarHtml()}`;
         last_account_sync_message: String(merged.last_account_sync_message ?? ""),
         last_account_sync_severity: String(merged.last_account_sync_severity ?? ""),
         bilibili_cookie_staged: Boolean(merged.bilibili_cookie_staged),
+        llm_daily_budget_cny: Number(merged.llm_daily_budget_cny ?? 0),
+        llm_daily_budget_on_exceed: String(merged.llm_daily_budget_on_exceed ?? "pause"),
+        llm_today_cost_cny: Number(merged.llm_today_cost_cny ?? 0),
+        llm_daily_budget_reserved_cny: Number(merged.llm_daily_budget_reserved_cny ?? 0),
+        llm_daily_budget_remaining_cny: Number(merged.llm_daily_budget_remaining_cny ?? 0),
+        llm_daily_budget_state: String(merged.llm_daily_budget_state ?? "disabled"),
+        llm_daily_budget_day: String(merged.llm_daily_budget_day ?? ""),
         live_summary: String(merged.live_summary || merged.message || merged.state || "")
       };
     }
@@ -9568,10 +9575,45 @@ ${cardFeedbackBarHtml()}`;
       $("#metricPool").textContent = String(state.runtimeStatus.pool_available_count);
       syncMessageCount();
       syncSourceMetric();
-      $("#runtimeSummary").textContent = state.runtimeStatus.live_summary || summary?.available || "后端在线，推荐池与采集运行时可读取。";
+      const baseSummary = state.runtimeStatus.live_summary || summary?.available || "后端在线，推荐池与采集运行时可读取。";
+      // Surface a spend stop on the home page too, not just inside settings:
+      // the daemon keeps the UI alive precisely so the user can see why
+      // automatic work went quiet (issue #353).
+      const budgetNotice = budgetExceededSummary(state.runtimeStatus);
+      $("#runtimeSummary").textContent = budgetNotice ? `${budgetNotice}｜${baseSummary}` : baseSummary;
       renderPoolStatus(state.runtimeStatus);
+      renderDailyBudgetStatus(state.runtimeStatus);
       maybeAutoLoadAfterPoolRefill();
       renderAccountSyncStatus(state.runtimeStatus);
+    }
+
+    function renderDailyBudgetStatus(runtime) {
+      const el = document.getElementById("dailyBudgetStatus");
+      if (!el) return;
+      const limit = Number(runtime?.llm_daily_budget_cny) || 0;
+      const spent = Number(runtime?.llm_today_cost_cny) || 0;
+      const day = runtime?.llm_daily_budget_day || "";
+      if (limit <= 0) {
+        el.textContent = `今日（${day || "本日"}）已花 ¥${spent.toFixed(4)}（未设上限；金额为本地估算）`;
+        el.classList.remove("is-error");
+        return;
+      }
+      const exceeded = runtime?.llm_daily_budget_state === "exceeded";
+      const mode = runtime?.llm_daily_budget_on_exceed || "pause";
+      const modeText = mode === "stop" ? "已停止全部 LLM 调用" : mode === "warn" ? "仅提醒，继续调用" : "已暂停自动补货/画像等后台调用";
+      el.textContent = exceeded
+        ? `今日（${day}）已花 ¥${spent.toFixed(4)} / 上限 ¥${limit.toFixed(2)}：${modeText}。调高上限或等本地零点重置。`
+        : `今日（${day}）已花 ¥${spent.toFixed(4)} / 上限 ¥${limit.toFixed(2)}（${mode}）`;
+      el.classList.toggle("is-error", exceeded);
+    }
+
+    function budgetExceededSummary(runtime) {
+      if (runtime?.llm_daily_budget_state !== "exceeded") return "";
+      const limit = Number(runtime?.llm_daily_budget_cny) || 0;
+      const spent = Number(runtime?.llm_today_cost_cny) || 0;
+      const mode = runtime?.llm_daily_budget_on_exceed || "pause";
+      const action = mode === "stop" ? "全部 LLM 调用已停止" : mode === "warn" ? "仅提醒，调用继续" : "后台自动调用已暂停";
+      return `今日 LLM 花费 ¥${spent.toFixed(4)} / 上限 ¥${limit.toFixed(2)}，${action}`;
     }
 
     function setInput(id, value) {
@@ -9599,6 +9641,8 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function getFloatInput(id, fallback) {
+      const element = document.getElementById(id);
+      if (element?.validity?.badInput) return Number.NaN;
       const value = Number.parseFloat(getInput(id));
       return Number.isFinite(value) ? value : fallback;
     }
@@ -11572,6 +11616,15 @@ ${cardFeedbackBarHtml()}`;
       }
       setInput("extensionDisconnectGrace", scheduler.extension_disconnect_grace_seconds);
       setInput("poolTarget", scheduler.pool_target_count);
+      setInput(
+        "dailyBudgetCny",
+        Number(scheduler.daily_budget_cny) > 0 ? scheduler.daily_budget_cny : ""
+      );
+      setSelect("budgetOnExceed", scheduler.budget_on_exceed || "pause");
+      setSelect("peakPolicy", scheduler.peak_policy || "off");
+      setInput("peakRefillFloor", scheduler.peak_refill_floor);
+      setInput("peakHours", scheduler.peak_hours || "");
+      setInput("peakTimezoneOffset", scheduler.peak_timezone_offset_minutes ?? 480);
       setInput("accountSyncInterval", scheduler.account_sync_interval_hours);
       setInput("refreshCheckInterval", scheduler.refresh_check_interval_seconds);
       setInput("signalEventThreshold", scheduler.signal_event_threshold);
@@ -13347,6 +13400,12 @@ ${cardFeedbackBarHtml()}`;
           source_incremental_enabled: Boolean(document.getElementById("sourceIncrementalEnabled")?.checked),
           extension_disconnect_grace_seconds: getIntInput("extensionDisconnectGrace", 90),
           pool_target_count: getIntInput("poolTarget", 300),
+          daily_budget_cny: getFloatInput("dailyBudgetCny", 0),
+          budget_on_exceed: $("#budgetOnExceed")?.value || "pause",
+          peak_policy: $("#peakPolicy")?.value || "off",
+          peak_refill_floor: getIntInput("peakRefillFloor", 30),
+          peak_hours: $("#peakHours")?.value?.trim() || "",
+          peak_timezone_offset_minutes: getIntInput("peakTimezoneOffset", 480),
           account_sync_interval_hours: getIntInput("accountSyncInterval", 6),
           refresh_check_interval_seconds: getIntInput("refreshCheckInterval", 60),
           signal_event_threshold: getIntInput("signalEventThreshold", 6),

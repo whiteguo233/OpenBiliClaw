@@ -23,6 +23,7 @@ Two side-channels for real-time observability:
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import TYPE_CHECKING, Protocol
 
@@ -30,6 +31,7 @@ from openbiliclaw.llm.pricing import estimate_cost
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
+    from openbiliclaw.llm.rate_card import RateCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class _UsageSink(Protocol):
         caller: str = "",
         success: bool = True,
         cached_input_tokens: int = 0,
+        cost_confidence: str = "",
     ) -> int: ...
 
 
@@ -71,8 +74,34 @@ class UsageRecorder:
     appends one row.
     """
 
-    def __init__(self, sink: _UsageSink | None) -> None:
+    def __init__(
+        self,
+        sink: _UsageSink | None,
+        *,
+        cost_multiplier: float = 1.0,
+        catalog: RateCatalog | None = None,
+    ) -> None:
         self._sink = sink
+        # ``llm.cost_multiplier`` (issue #353): a measured calibration
+        # between the static pricing table and the provider invoice. Applied
+        # at write time so every stored row is already in "invoice currency"
+        # and the daily budget gate needs no second multiplier.
+        try:
+            multiplier = float(cost_multiplier)
+        except (TypeError, ValueError, OverflowError):
+            multiplier = 1.0
+        self._cost_multiplier = (
+            multiplier if math.isfinite(multiplier) and 0 < multiplier <= 20.0 else 1.0
+        )
+        # Price catalog resolved per provider/model/time. ``None`` keeps the
+        # legacy static-table path (tests, minimal CLI commands).
+        self._catalog = catalog
+
+    @property
+    def catalog(self) -> RateCatalog | None:
+        """The rate catalog used for settlement, when one is wired."""
+
+        return self._catalog
 
     @property
     def enabled(self) -> bool:
@@ -98,23 +127,68 @@ class UsageRecorder:
 
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        missing_usage = prompt_tokens <= 0 and completion_tokens <= 0
+        if missing_usage:
+            # A compatible gateway can reject stream_options and then return a
+            # stream with no usage object. Recording ¥0 would let such calls
+            # bypass the daily cap indefinitely; charge a conservative fallback
+            # instead and expose the low confidence to cost/status views.
+            completion_tokens = max(1, len(str(getattr(response, "content", "") or "")) // 4)
+            prompt_tokens = max(2048, completion_tokens)
+            logger.warning(
+                "LLM usage missing for provider=%r model=%r; recording a "
+                "conservative fallback estimate",
+                provider,
+                model,
+            )
         # Normalized cache field — providers populate when their backend
         # served some input tokens from prompt cache. ``cached_input_tokens``
         # is always <= prompt_tokens. See provider docs in
         # openai_provider.py / claude_provider.py / gemini_provider.py.
         cached_tokens = int(usage.get("cached_input_tokens", 0) or 0)
+        cache_write_tokens = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        # Anthropic's ``input_tokens`` excludes both cache reads and cache
+        # writes; OpenAI/Gemini include reads in prompt_tokens.
+        if provider in {"claude", "anthropic"} and (cached_tokens or cache_write_tokens):
+            prompt_tokens += cached_tokens + cache_write_tokens
 
-        try:
-            cost = estimate_cost(
-                provider,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                cached_tokens=cached_tokens,
-            )
-        except Exception:
-            logger.debug("estimate_cost failed", exc_info=True)
-            return
+        cost_confidence = "fallback"
+        cost: float | None = None
+        if self._catalog is not None:
+            try:
+                effective = self._catalog.resolve(
+                    provider,
+                    model,
+                    prompt_tokens=prompt_tokens,
+                )
+            except Exception:
+                logger.debug("rate catalog lookup failed", exc_info=True)
+                effective = None
+            if effective is not None:
+                cost = effective.cost(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
+                    cache_write_tokens=cache_write_tokens,
+                    usd_cny=self._catalog.usd_cny,
+                )
+                cost_confidence = effective.confidence
+        if cost is None:
+            try:
+                cost = estimate_cost(
+                    provider,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cached_tokens=cached_tokens,
+                    cache_write_tokens=cache_write_tokens,
+                )
+            except Exception:
+                logger.debug("estimate_cost failed", exc_info=True)
+                return
+        if missing_usage:
+            cost_confidence = "fallback"
+        cost *= self._cost_multiplier
 
         # Real-time INFO log so `journalctl -fu openbiliclaw` /
         # `docker logs -f` shows cost as it accrues. Caller defaults
@@ -127,13 +201,14 @@ class UsageRecorder:
             hit = cached_tokens / prompt_tokens * 100
             cache_note = f" cache_hit={cached_tokens}/{prompt_tokens} ({hit:.0f}%)"
         logger.info(
-            "[llm-cost] caller=%s model=%s tokens=%d→%d ≈ ¥%.4f%s",
+            "[llm-cost] caller=%s model=%s tokens=%d→%d ≈ ¥%.4f%s conf=%s",
             caller_tag,
             model or "(unknown)",
             prompt_tokens,
             completion_tokens,
             cost,
             cache_note,
+            cost_confidence,
         )
 
         # Anomaly WARN — single call over threshold is almost always a
@@ -166,6 +241,7 @@ class UsageRecorder:
                 estimated_cost_cny=cost,
                 caller=caller,
                 success=True,
+                cost_confidence=cost_confidence,
             )
         except Exception:
             # Never block the LLM hot path on billing-table writes.

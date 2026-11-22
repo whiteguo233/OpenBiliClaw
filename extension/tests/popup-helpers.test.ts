@@ -1304,6 +1304,13 @@ test("normalizeRuntimeStatus fills stable fallback fields", () => {
     last_update_error: "",
     backend_update_state: "unknown",
     backend_update_reason: "none",
+    llm_daily_budget_cny: 0,
+    llm_daily_budget_on_exceed: "pause",
+    llm_today_cost_cny: 0,
+    llm_daily_budget_reserved_cny: 0,
+    llm_daily_budget_remaining_cny: 0,
+    llm_daily_budget_state: "disabled",
+    llm_daily_budget_day: "",
   });
 });
 
@@ -1345,6 +1352,13 @@ test("normalizeRuntimeStatus preserves backend update summary fields", () => {
       last_update_error: "",
       backend_update_state: "update_available",
       backend_update_reason: "none",
+      llm_daily_budget_cny: 0,
+      llm_daily_budget_on_exceed: "pause",
+      llm_today_cost_cny: 0,
+      llm_daily_budget_reserved_cny: 0,
+      llm_daily_budget_remaining_cny: 0,
+      llm_daily_budget_state: "disabled",
+      llm_daily_budget_day: "",
     },
   );
 });

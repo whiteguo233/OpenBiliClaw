@@ -140,6 +140,28 @@ concurrency = 3
 # Applies to OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter /
 # OrcaRouter / Requesty / API Route / Cheaper Inference / openai_compatible. Allowed range: 10..1200. Default 1200s (20 minutes).
 timeout = 1200
+# 估算校准系数（issue #353）。llm_usage 的费用来自静态价目表；如果实测账单
+# 稳定地是估算的 N 倍（尤其走 openai_compatible / 中转时），把这里设成 N，
+# 写入的 estimated_cost_cny 与「今日已花」会跟着校准。允许 0.1..20，默认 1.0。
+cost_multiplier = 1.0
+# 同模型多实例时，按当前价格把便宜的中转/官方实例排到链前面；不同模型永不互换。
+cost_aware_routing = false
+# 价格目录（issue #353 后续）。随包 catalog 由 models.dev 价目 + OpenRouter
+# 峰谷窗口生成；catalog_path 留空 = 使用内置快照。USD/CNY 汇率写死在这里，
+# 保证历史 llm_usage 行不会因为汇率变化而重算。
+[llm.pricing]
+usd_cny_rate = 7.2
+catalog_path = ""
+# 中转站/协议价覆盖：优先级最高，永远压过 catalog，同步不会覆盖。
+# 价格单位是每百万 token；currency 支持 USD / CNY。
+#
+# [[llm.pricing.overrides]]
+# provider = "openai_compatible"
+# model = "glm-5.3-flash"
+# input = 0.15
+# output = 0.50
+# cache_read = 0.03
+# currency = "USD"
 # 新实例请直接在桌面设置页创建。手工配置时复制下面的完整表，
 # 给每个渠道一个稳定且唯一的 ID，再把 ID 加进 default_chain：
 #
@@ -705,6 +727,32 @@ enabled = true
 # 0 disables this guard. Defaults are deliberately conservative for paid APIs.
 llm_budget_max_calls = 120
 llm_budget_window_seconds = 3600
+# Money-side cap (issue #353). Call count cannot bound spend: 120 short
+# evaluations and 120 long generations differ by ~10x. Checked against today's
+# llm_usage.estimated_cost_cny before every LLM call, on local calendar-day
+# boundaries. 0 (or negative) disables the cap.
+# budget_on_exceed:
+#   pause — refuse background automatic calls, keep chat/settings working
+#   stop  — refuse every call, including user-initiated ones
+#   warn  — allow everything, log + write one budget_exceeded event per day
+# The estimate is a static price table; if your invoice differs by a stable
+# factor, set llm.cost_multiplier (see [llm]) instead of shrinking this cap.
+daily_budget_cny = 0.0
+budget_on_exceed = "pause"
+# 每次调用先预留的 worst-case 金额，避免并发请求同时读到同一份余额。
+# 实际费用仍以后续 llm_usage 行为准，预留只用于准入。
+daily_budget_reserve_cny = 0.10
+# 峰谷策略（issue #353 后续）。off = 保持旧行为；defer = 只在价格目录标记的
+# 低价窗口跑后台（维护全停，补货低于 peak_refill_floor 时紧急放行）；
+# prefer = 只停维护，补货保持新鲜。窗口来自 [llm.pricing] 的 catalog；
+# 目录没有窗口的 provider 不会假装有谷时。
+peak_policy = "off"
+# 手动覆盖，格式 "HH:MM-HH:MM,HH:MM-HH:MM"，按 peak_timezone_offset_minutes
+# 解释；留空 = 使用 catalog。仅用于目录覆盖不到的 provider。
+peak_hours = ""
+peak_timezone_offset_minutes = 480
+# 补货水位：池子 >= 该值时高峰暂停补货；0 = 高峰完全停补货（不推荐）。
+peak_refill_floor = 30
 # Optional cost-saving guard for daemon-owned background LLM / embedding work.
 # When true, refresh / pool precompute / account sync / speculation / proactive
 # push only run while the browser extension has an active runtime-stream

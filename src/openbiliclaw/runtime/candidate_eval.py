@@ -476,7 +476,7 @@ class CandidateEvalCoordinator:
         self.last_error = str(exc)
         kind = classify_llm_failure_kind(exc)
         now = self.time_fn()
-        if kind == "rate_limited":
+        if kind in {"rate_limited", "budget_exhausted"}:
             # 15s matches the scheduler's minimum useful retry cadence. Recalibrate
             # when provider/model cooldown behavior materially changes.
             delay = _RATE_LIMIT_BACKOFF_SECONDS[

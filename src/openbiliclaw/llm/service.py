@@ -18,6 +18,7 @@ from .base import (
     LLMBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMResponse,
     LLMStreamChunk,
     LLMToolCallUnsupportedError,
 )
@@ -27,6 +28,7 @@ from .concurrency import (
     PrioritySemaphore,
     coerce_total_concurrency,
 )
+from .pricing import estimate_cost
 from .prompts import build_socratic_dialogue_prompt
 from .sponsored_errors import SponsoredError, is_fallback_allowed
 
@@ -44,11 +46,10 @@ DEFAULT_LLM_CONCURRENCY = DEFAULT_TOTAL_LLM_CONCURRENCY
 MIN_STRUCTURED_MAX_TOKENS = 4096
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator, Mapping
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Mapping
 
     from openbiliclaw.memory.manager import MemoryManager
 
-    from .base import LLMResponse
     from .sponsored_provider import SponsoredProvider
 
 
@@ -725,6 +726,11 @@ class LLMService:
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
                 response = await _do_llm_call()
+                # Record before the slot exits: the daily-budget reservation is
+                # released on exit, and a concurrent call must see this spend
+                # row before it can reserve the same headroom.
+                if response.content.strip():
+                    self._record_usage(response, caller=caller)
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -733,15 +739,6 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
-        # Best-effort usage ledger write. The recorder swallows its own
-        # exceptions so a billing-table hiccup never affects the LLM
-        # response that just succeeded.
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(response, caller=caller)
         return response
 
     async def stream_complete_with_core_memory(
@@ -836,15 +833,39 @@ class LLMService:
                 yield chunk
 
         terminal: LLMResponse | None = None
+        delta_text = ""
+        stream_provider = ""
+        stream_model = ""
         try:
             async with self._provider_slot(
                 caller=caller,
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
-                async for chunk in _route_stream():
-                    if chunk.response is not None:
-                        terminal = chunk.response
-                    yield chunk
+                try:
+                    async for chunk in _route_stream():
+                        if chunk.provider:
+                            stream_provider = chunk.provider
+                        if chunk.model:
+                            stream_model = chunk.model
+                        if chunk.delta:
+                            delta_text += chunk.delta
+                        if chunk.response is not None:
+                            terminal = chunk.response
+                        yield chunk
+                finally:
+                    if terminal is not None and terminal.content.strip():
+                        if not terminal.provider:
+                            terminal.provider = stream_provider
+                        if not terminal.model:
+                            terminal.model = stream_model
+                        self._record_usage(terminal, caller=caller)
+                    elif terminal is None:
+                        self._settle_partial_stream(
+                            caller=caller,
+                            delta_text=delta_text,
+                            provider=stream_provider,
+                            model=stream_model,
+                        )
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -853,12 +874,6 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if terminal is None or not terminal.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(terminal, caller=caller)
 
     def _resolve_sponsored_provider(self) -> SponsoredProvider | None:
         """Return the Sponsored provider, or None when disabled.
@@ -889,6 +904,108 @@ class LLMService:
         if callable(record_fn):
             with suppress(Exception):
                 record_fn(response, caller=caller)
+
+    def _stream_identity(self, caller: str) -> tuple[str, str]:
+        """Pick the worst-case route for a stream that closed before terminal.
+
+        The actual fallback provider is only known from the terminal chunk. If
+        the consumer aborts after a delta, charge the most expensive configured
+        route (catalog first, static table fallback) rather than assuming the
+        first / free instance.
+        """
+
+        try:
+            chain = self._resolve_module_chain(caller)
+        except Exception:
+            chain = None
+        route = getattr(self.registry, "instance_route", None)
+        candidates: list[tuple[float, str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(provider_type: str, model: str) -> None:
+            provider_key = str(provider_type or "").strip().lower()
+            if not provider_key or (provider_key, model) in seen:
+                return
+            seen.add((provider_key, model))
+            catalog = getattr(self.usage_recorder, "catalog", None)
+            cost = 0.0
+            if catalog is not None:
+                try:
+                    effective = catalog.resolve(provider_key, model, prompt_tokens=1000)
+                except Exception:
+                    effective = None
+                if effective is not None:
+                    cost = effective.cost(
+                        prompt_tokens=1000,
+                        completion_tokens=0,
+                        usd_cny=catalog.usd_cny,
+                    )
+            if cost <= 0:
+                cost = estimate_cost(provider_key, model, 1000, 0)
+            candidates.append((cost, provider_key, model))
+
+        names = list(chain or getattr(self.registry, "fallback_chain", []) or [])
+        if callable(route):
+            for name in names:
+                try:
+                    provider_type, model = route(name)
+                except Exception:
+                    continue
+                add(provider_type, model)
+
+        fallback_provider = str(getattr(self.registry, "fallback_provider", "") or "")
+        if fallback_provider:
+            provider_type, model = "", ""
+            if callable(route):
+                with suppress(Exception):
+                    provider_type, model = route(fallback_provider)
+            add(provider_type or fallback_provider, model)
+
+        try:
+            override = self._resolve_module_override(caller)
+        except Exception:
+            override = None
+        if override is not None:
+            add(override[0], str(override[1] or ""))
+
+        default_provider = str(getattr(self.registry, "default_provider", "") or "")
+        if default_provider:
+            model = ""
+            if callable(route):
+                with suppress(Exception):
+                    _, model = route(default_provider)
+            add(default_provider, model)
+
+        if candidates:
+            _, provider_type, model = max(candidates, key=lambda item: item[0])
+            return provider_type, model
+        return "", ""
+
+    def _settle_partial_stream(
+        self,
+        *,
+        caller: str,
+        delta_text: str,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
+        """Charge a stream the consumer closed before its terminal chunk.
+
+        The provider has already seen the request. Without a settlement, an
+        aborted stream is free and can bypass the daily cap indefinitely; the
+        recorder's missing-usage path fills a conservative estimate.
+        """
+
+        if not delta_text.strip():
+            return
+        if not provider or not model:
+            fallback_provider, fallback_model = self._stream_identity(caller)
+            provider = provider or fallback_provider
+            model = model or fallback_model
+        self._record_usage(
+            LLMResponse(content=delta_text, provider=provider, model=model),
+            caller=caller,
+        )
 
     async def execute_sponsored_task(
         self,
@@ -1217,6 +1334,8 @@ class LLMService:
         try:
             async with self._provider_slot(caller=caller):
                 response = await _do_llm_call()
+                if response.content.strip():
+                    self._record_usage(response, caller=caller)
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -1225,12 +1344,6 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(response, caller=caller)
         return response
 
     async def complete_with_tools(
@@ -1365,12 +1478,6 @@ class LLMService:
             )
         if not response.content.strip() and not response.tool_calls:
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(response, caller=caller)
         return response
 
     def _route_supports_native_tools(self, caller: str) -> bool:
@@ -1455,7 +1562,10 @@ class LLMService:
                 caller=caller,
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
-                return await _do_llm_call()
+                response = await _do_llm_call()
+                if response.content.strip() or response.tool_calls:
+                    self._record_usage(response, caller=caller)
+                return response
         except LLMToolCallUnsupportedError:
             raise
         except LLMBudgetExhaustedError:
@@ -1545,20 +1655,26 @@ class LLMService:
         emitted_delta = False
         if native:
             try:
-                async for chunk in self._stream_native_tool_call(
-                    messages=messages,
-                    tools=tools,
-                    caller=caller,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    reasoning_effort=effective_reasoning_effort,
-                    bypass_semaphore=bypass_semaphore,
-                ):
-                    if chunk.delta:
-                        emitted_delta = True
-                    if chunk.response is not None:
-                        terminal = chunk.response
-                    yield chunk
+                # ``aclosing`` forces the inner generator's finally block (which
+                # settles usage before releasing the daily-budget reservation)
+                # to finish before the public stream's aclose() returns.
+                async with aclosing(
+                    self._stream_native_tool_call(
+                        messages=messages,
+                        tools=tools,
+                        caller=caller,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        reasoning_effort=effective_reasoning_effort,
+                        bypass_semaphore=bypass_semaphore,
+                    )
+                ) as stream:
+                    async for chunk in stream:
+                        if chunk.delta:
+                            emitted_delta = True
+                        if chunk.response is not None:
+                            terminal = chunk.response
+                        yield chunk
             except LLMToolCallUnsupportedError:
                 if emitted_delta or terminal is not None:
                     raise
@@ -1591,12 +1707,6 @@ class LLMService:
                 yield chunk
         if terminal is None or (not terminal.content.strip() and not terminal.tool_calls):
             raise LLMResponseContentError("LLM returned an empty response.")
-        recorder = self.usage_recorder
-        if recorder is not None:
-            record_fn = getattr(recorder, "record", None)
-            if callable(record_fn):
-                with suppress(Exception):
-                    record_fn(terminal, caller=caller)
 
     async def _stream_native_tool_call(
         self,
@@ -1608,7 +1718,7 @@ class LLMService:
         max_tokens: int,
         reasoning_effort: str | None,
         bypass_semaphore: bool,
-    ) -> AsyncIterator[LLMStreamChunk]:
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         """Run one streaming native-FC call under the provider slot and routing."""
 
         def _route_user_stream() -> AsyncIterator[LLMStreamChunk]:
@@ -1665,13 +1775,40 @@ class LLMService:
             ):
                 yield chunk
 
+        terminal: LLMResponse | None = None
+        delta_text = ""
+        stream_provider = ""
+        stream_model = ""
         try:
             async with self._provider_slot(
                 caller=caller,
                 bypass_background=(bypass_semaphore or _BACKGROUND_ADMISSION_BYPASS.get()),
             ):
-                async for chunk in _route_stream():
-                    yield chunk
+                try:
+                    async for chunk in _route_stream():
+                        if chunk.provider:
+                            stream_provider = chunk.provider
+                        if chunk.model:
+                            stream_model = chunk.model
+                        if chunk.delta:
+                            delta_text += chunk.delta
+                        if chunk.response is not None:
+                            terminal = chunk.response
+                        yield chunk
+                finally:
+                    if terminal is not None and (terminal.content.strip() or terminal.tool_calls):
+                        if not terminal.provider:
+                            terminal.provider = stream_provider
+                        if not terminal.model:
+                            terminal.model = stream_model
+                        self._record_usage(terminal, caller=caller)
+                    elif terminal is None:
+                        self._settle_partial_stream(
+                            caller=caller,
+                            delta_text=delta_text,
+                            provider=stream_provider,
+                            model=stream_model,
+                        )
         except LLMToolCallUnsupportedError:
             raise
         except LLMBudgetExhaustedError:

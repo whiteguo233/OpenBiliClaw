@@ -92,6 +92,8 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 | `language [locale]` | 查看或切换界面 / CLI / 模型输出语言（`zh-Hans` / `zh-Hant` / `en`） | ✅ |
 | `config-export-legacy` | 导出可供旧二进制读取的固定 Provider 配置副本 | ✅ |
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
+| `cost [--days N] [--by all\|day\|provider\|caller]` | 查看 `llm_usage` 的 LLM 花费：今日已花 / 上限、按天、按 provider/model、按 caller（含 cache 命中率） | ✅ |
+| `price [--provider P] [--model M] [--at ISO8601] [--sync]` | 查看/同步价格目录：基础价、CNY 换算、当前峰谷档位、下一次切换、置信度 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
 | `auth status` | 查看认证状态 | ✅ |
 | `login codex` | 导入 / 探测 / 查看 / 删除 Codex CLI 的 ChatGPT OAuth 凭据（实验） | ✅ |
@@ -227,7 +229,7 @@ OPENBILICLAW_LANG=en openbiliclaw recommend   # 单次覆盖，不写配置
 
 导演启用时，`recommend` 支持 `--request-id`（128 字符内，重试复用）、`--stream-ref`（默认 cli）、`--intent NEXT|STAY`、`--restore`、`--limit 1..20`、`--direction`（500 字符内）。恢复仅打印同一批次；成功打印后确认 presentation，provider 在同一事件循环内关闭。CLI feedback 投影原 ingress event，不重复写学习事件。独立 `discover*` 也注入语义过滤，按 loop 管理并发、每请求关闭 transport，不跨 `asyncio.run()` 复用连接。导演 off 保持旧路径。见[导演合同](director.md)。
 
-配置概览会直接显示「停止后台 LLM 请求」是否启用、「浏览器断开后暂停」是否启用和当前宽限秒数、「开机自启动」配置 / 系统注册状态、海外网络模式与自定义代理地址，以及默认关闭的「收藏自动同步」解析状态，方便确认实际网络路由和 `[saved_sync].auto_sync_enabled` 是否已经写入后端配置。
+配置概览会直接显示「停止后台 LLM 请求」是否启用、「浏览器断开后暂停」是否启用和当前宽限秒数、「开机自启动」配置 / 系统注册状态、海外网络模式与自定义代理地址，以及默认关闭的「收藏自动同步」解析状态，方便确认实际网络路由和 `[saved_sync].auto_sync_enabled` 是否已经写入后端配置。「每日 LLM 花费上限」一行显示 `[scheduler].daily_budget_cny` 与超限模式（`0` 显示「不限」），便于保存后确认预算真的进了运行时。
 推荐引擎构造同样读取 `[discovery]` 的 `keyframe_max_frames`、`keyframe_fetch_limit`、
 `danmaku_fetch_limit` 和 `danmaku_max_chars`；手动 `recommend` 的预热范围与 daemon/API 使用同一配置。
 `config-show` 还会显示 B 站发布日期范围和权重，便于确认最终解析值；权重默认 `0.5`，设为 `1`
@@ -301,6 +303,54 @@ Provider 健康检查
   deepseek: 可用
   ollama: 不可用
     原因: connection refused
+```
+
+### `openbiliclaw cost`
+
+读取 `llm_usage` 表汇总 LLM 调用花费（数据来自每次成功响应后的估算写入）。除原有的按天 / 按 provider / 按 caller 三张表外，命令顶部现在固定打印一行“今日（本地日历日）已花 / 上限”：
+
+```bash
+$ openbiliclaw cost
+LLM 调用花费
+最近 7 天
+今日（2026-11-21）已花 ¥0.4210 / 上限 ¥10.00（pause，正常）
+...
+```
+
+- 上限来自 `[scheduler].daily_budget_cny`；未设置时显示“未设上限”。
+- 超限显示红色的“已超限”，并带上 `budget_on_exceed` 模式。
+- `llm.cost_multiplier` 不为 1 时追加一行提示，说明估算已校准。
+- `--by caller` 仍用于排查“钱花在哪一层”；cache 命中率 < 30% 标红，对应 prompt 前缀不稳定的 builder。
+
+> 金额是本地静态价目表的估算，不是 provider 账单。实测有稳定倍差时用 `llm.cost_multiplier` 校准，而不是反复改每日上限。
+
+### `openbiliclaw price`
+
+只读查看随包价格目录（models.dev 价目 + OpenRouter 峰谷窗口 + 用户覆盖）：
+
+```bash
+$ openbiliclaw price --provider deepseek --model deepseek-v4-flash --at 2026-11-23T02:00:00Z
+LLM 价格目录 价格来源 / 峰谷档位 / 置信度
+...
+ 模型        deepseek/deepseek-v4-flash
+ 置信度      exact（provider/model 精确匹配）
+ 当前单价    $0.3 / $1.2 每百万 token（¥2.16 / ¥8.64）
+ 当前档位    peak ×2
+ 下一次切换  2026-11-23 04:00 UTC
+ 谷时开始    2026-11-23 04:00 UTC
+ 示例费用    5k 输入 + 3k 输出 ≈ ¥0.036720
+```
+
+- 不带参数时只打印目录元数据（生成时间、覆盖 provider/model 数、来源 URL、USD/CNY）。
+- `--at` 省略时按当前 UTC 解析；传入的 naive 时间按 UTC 处理。
+- 置信度：`exact`（精确 provider/model）/ `user`（配置覆盖）/ `derived_relay`（同模型跨 provider 最高价）/ `fallback`（静态表）。
+- `derived_relay` / `fallback` 会额外提示：预算按保守上界处理，已知实际单价时写入 `[llm.pricing.overrides]`。
+- 目录里没有的模型明确提示“未找到”，不会显示 `¥0`。
+- `--sync` 联网拉取 models.dev + OpenRouter，原子写入 `data/pricing_catalog.json`（可用 `--output` 覆盖、`--timeout` 调整超时）。失败时旧文件保持不变。运行中的 daemon 在下一次配置热重载/重启后使用新目录，也可以把路径写进 `[llm.pricing].catalog_path`。
+
+```bash
+$ openbiliclaw price --sync
+已写入 .../data/pricing_catalog.json：16 providers / 2007 models / 4 个峰谷模型 / 54 个档位模型
 ```
 
 ### `openbiliclaw auth login`
@@ -1005,7 +1055,7 @@ OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。
 请选一个 LLM 服务：
 
  #   名称                                  说明
- 1   DeepSeek 官方 ★默认推荐                默认 deepseek-v4-flash (V4)。¥0.001/千 token 几乎免费,国内可直连
+ 1   DeepSeek 官方 ★默认推荐                默认 deepseek-v4-flash (V4)。输入约 ¥0.00108 / 输出约 ¥0.00432 每千 token(高峰 2x),国内可直连
  2   ★ 第二推荐 — 中转站 / OpenAI 协议兼容服务 买了中转站 Key 选这个。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM
  3   OpenAI 官方                           默认 gpt-5-nano (最便宜的 GPT-5)。api.openai.com,需要 sk- 开头的 Key
  4   Gemini 官方                           默认 gemini-2.5-flash (稳定 / 便宜)。Google AI Studio 申请 Key,免费档每天 1500 次够用

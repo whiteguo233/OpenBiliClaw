@@ -24,9 +24,14 @@ if TYPE_CHECKING:
 
 
 def test_estimate_cost_known_provider_model() -> None:
-    """deepseek-v4-flash: ¥0.001 input + ¥0.002 output per 1K tokens."""
+    """deepseek-v4-flash: ¥0.00108 input + ¥0.00432 output per 1K tokens.
+
+    Rates re-checked 2026-11-21 against models.dev / OpenRouter
+    ($0.15 / $0.60 per M × 7.2). The old output rate (¥0.002) was 2.16x low
+    and is what issue #353 measured against the real DeepSeek bill.
+    """
     cost = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
-    assert cost == pytest.approx(0.005 + 0.006, rel=1e-9)
+    assert cost == pytest.approx(0.0054 + 0.01296, rel=1e-9)
 
 
 def test_estimate_cost_api_route_default_model() -> None:
@@ -80,17 +85,18 @@ def test_estimate_cost_applies_deepseek_cache_discount() -> None:
     """v0.3.28+: cached portion of input is billed at 10% (DeepSeek).
 
     5K prompt, 3K completion, 4K of those prompt tokens cached.
-    - Non-cached input: 1K × ¥0.001 = ¥0.001
-    - Cached input: 4K × ¥0.001 × 0.1 = ¥0.0004
-    - Output: 3K × ¥0.002 = ¥0.006
-    Total: ¥0.0074 (vs ¥0.011 without cache discount = 33% saved)
+    - Non-cached input: 1K × ¥0.00108 = ¥0.00108
+    - Cached input: 4K × ¥0.00108 × 0.1 = ¥0.000432
+    - Output: 3K × ¥0.00432 = ¥0.01296
+    Total: ¥0.014472 (vs ¥0.01836 without cache discount = 21% saved)
     """
     cost_no_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
     cost_with_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000)
-    assert cost_no_cache == pytest.approx(0.011, rel=1e-9)
-    assert cost_with_cache == pytest.approx(0.0074, rel=1e-9)
-    # Save ratio sanity check
-    assert cost_with_cache < cost_no_cache * 0.7
+    assert cost_no_cache == pytest.approx(0.01836, rel=1e-9)
+    assert cost_with_cache == pytest.approx(0.014472, rel=1e-9)
+    # Save ratio sanity check (output is now the dominant cost, so the
+    # cache-only saving is ~21% here, not the old ~33%).
+    assert cost_with_cache < cost_no_cache * 0.85
 
 
 def test_estimate_cost_applies_openai_cache_discount() -> None:
@@ -109,8 +115,8 @@ def test_estimate_cost_clamps_cached_to_prompt_tokens() -> None:
     Without clamping, the math goes negative on the non-cached portion.
     """
     cost = estimate_cost("deepseek", "deepseek-v4-flash", 1000, 0, cached_tokens=9999)
-    # Should equal: full 1K cached at 10% rate = 1K × ¥0.001 × 0.1 = ¥0.0001
-    assert cost == pytest.approx(0.0001, rel=1e-9)
+    # Full 1K cached at 10% rate = 1K × ¥0.00108 × 0.1 = ¥0.000108
+    assert cost == pytest.approx(0.000108, rel=1e-9)
     assert cost > 0  # not negative
 
 
@@ -265,8 +271,8 @@ def test_usage_recorder_persists_response_tokens(tmp_path: Path) -> None:
     assert today["calls"] == 1
     assert today["prompt_tokens"] == 4500
     assert today["completion_tokens"] == 2000
-    # Cost = 4500/1000 * 0.001 + 2000/1000 * 0.002 = 0.0045 + 0.004 = 0.0085
-    assert today["cost_cny"] == pytest.approx(0.0085, rel=1e-6)
+    # Cost = 4500/1000 * 0.00108 + 2000/1000 * 0.00432 = 0.00486 + 0.00864
+    assert today["cost_cny"] == pytest.approx(0.0135, rel=1e-6)
 
 
 def test_usage_recorder_no_op_when_sink_missing() -> None:
@@ -306,8 +312,10 @@ def test_usage_recorder_swallows_sink_errors(tmp_path: Path) -> None:
 
 
 def test_usage_recorder_handles_response_without_usage(tmp_path: Path) -> None:
-    """Some providers (e.g. older models, partial failures) may return
-    LLMResponse without a usage dict. Record 0 tokens / 0 cost."""
+    """A usage-less response is charged a conservative fallback estimate.
+
+    Recording 0 would let a gateway that rejects stream_options bypass the
+    daily cap indefinitely (Codex acceptance finding)."""
     db = Database(tmp_path / "usage.db")
     db.initialize()
     recorder = UsageRecorder(sink=db)
@@ -321,8 +329,8 @@ def test_usage_recorder_handles_response_without_usage(tmp_path: Path) -> None:
     rows = db.query_llm_usage_by_day(days=7)
     assert len(rows) == 1
     assert rows[0]["calls"] == 1
-    assert rows[0]["prompt_tokens"] == 0
-    assert rows[0]["cost_cny"] == 0.0
+    assert rows[0]["prompt_tokens"] >= 2048
+    assert rows[0]["cost_cny"] > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -349,17 +357,17 @@ def test_usage_recorder_persists_cached_input_tokens(tmp_path: Path) -> None:
 
     # Cost should reflect 90% off on the 4000 cached tokens.
     # Manual:
-    #   non-cached input: 1000 × 0.001 = 0.001
-    #   cached input:     4000 × 0.001 × 0.1 = 0.0004
-    #   output:           1000 × 0.002 = 0.002
-    #   total: 0.0034 (vs 0.007 without cache discount)
+    #   non-cached input: 1000 × 0.00108 = 0.00108
+    #   cached input:     4000 × 0.00108 × 0.1 = 0.000432
+    #   output:           1000 × 0.00432 = 0.00432
+    #   total: 0.005832 (vs 0.00972 without cache discount)
     by_caller = db.query_llm_usage_by_caller(days=7)
     assert len(by_caller) == 1
     row = by_caller[0]
     assert row["caller"] == "discovery.evaluate_batch"
     assert row["prompt_tokens"] == 5000
     assert row["cached_input_tokens"] == 4000
-    assert row["cost_cny"] == pytest.approx(0.0034, rel=1e-6)
+    assert row["cost_cny"] == pytest.approx(0.005832, rel=1e-6)
 
 
 def test_query_llm_usage_by_caller_returns_cache_field(tmp_path: Path) -> None:
@@ -398,3 +406,297 @@ def test_query_llm_usage_by_caller_returns_cache_field(tmp_path: Path) -> None:
     assert hit_rate == pytest.approx(0.75, rel=1e-9)
     # 0% on recommendation
     assert by_caller["recommendation.write_expression"]["cached_input_tokens"] == 0
+
+
+def test_usage_recorder_uses_rate_catalog_and_records_confidence(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {
+                    "models": {
+                        "deepseek-v4-flash": {
+                            "input": 0.15,
+                            "output": 0.6,
+                            "cache_read": 0.003,
+                            "currency": "USD",
+                            "source": "models.dev",
+                        }
+                    }
+                }
+            },
+            "fx": {"usd_cny": 7.2},
+        }
+    )
+    recorder = UsageRecorder(sink=db, catalog=catalog)
+    response = _FakeResponse(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_tokens=1000,
+        completion_tokens=1000,
+    )
+    recorder.record(response, caller="soul.preference")
+
+    row = db.conn.execute(
+        "SELECT estimated_cost_cny, cost_confidence FROM llm_usage ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    # 1k × $0.15/M + 1k × $0.60/M = $0.00075 → ×7.2 = ¥0.0054
+    assert float(row["estimated_cost_cny"]) == pytest.approx(0.0054, rel=1e-6)
+    assert row["cost_confidence"] == "exact"
+
+
+def test_today_query_sums_low_confidence_spend(tmp_path: Path) -> None:
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    db.insert_llm_usage(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_tokens=1000,
+        completion_tokens=1000,
+        estimated_cost_cny=0.01,
+        caller="soul.preference",
+        cost_confidence="exact",
+    )
+    db.insert_llm_usage(
+        provider="openai_compatible",
+        model="glm-5.3-flash",
+        prompt_tokens=1000,
+        completion_tokens=1000,
+        estimated_cost_cny=0.02,
+        caller="discovery.evaluate_batch",
+        cost_confidence="derived_relay",
+    )
+
+    today = db.query_llm_usage_today()
+    assert today["cost_cny"] == pytest.approx(0.03)
+    assert today["low_confidence_cost_cny"] == pytest.approx(0.02)
+
+
+def test_usage_recorder_charges_claude_cache_writes(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "anthropic": {
+                    "models": {
+                        "claude-test": {
+                            "input": 15.0,
+                            "output": 75.0,
+                            "cache_read": 1.5,
+                            "cache_write": 18.75,
+                            "currency": "USD",
+                            "source": "test",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    recorder = UsageRecorder(sink=db, catalog=catalog)
+    response = _FakeResponse(
+        provider="claude",
+        model="claude-test",
+        prompt_tokens=50,
+        completion_tokens=100,
+    )
+    response.usage["cached_input_tokens"] = 16000
+    response.usage["cache_creation_input_tokens"] = 16000
+    response.content = "cached reply"
+
+    recorder.record(response, caller="e2e.claude")
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    # 50 uncached @15 + 16k read @1.5 + 16k write @18.75 + 100 out @75
+    # = $0.33225 × 7.2 = ¥2.3922
+    assert today["cost_cny"] == pytest.approx(2.3922, rel=1e-4)
+
+
+def test_usage_recorder_estimates_when_stream_usage_is_missing(tmp_path: Path) -> None:
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    recorder = UsageRecorder(sink=db)
+    response = _FakeResponse(
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
+    response.usage = {}
+    response.content = "a" * 400
+
+    recorder.record(response, caller="e2e.stream")
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["calls"] == 1
+    assert today["cost_cny"] > 0
+    assert today["prompt_tokens"] >= 2048
+
+
+def test_partial_stream_settlement_charges_the_ledger(tmp_path: Path) -> None:
+    from openbiliclaw.llm.service import LLMService
+
+    class _StubRegistry:
+        default_provider = "openai"
+
+        def instance_route(self, _name: str) -> tuple[str, str]:
+            return "openai", "gpt-4o-mini"
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    service = LLMService(
+        registry=_StubRegistry(),
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db),
+    )
+
+    service._settle_partial_stream(caller="e2e.stream", delta_text="partial answer")
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["calls"] == 1
+    assert today["cost_cny"] > 0
+
+
+def test_partial_stream_picks_paid_fallback_over_free_ollama(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+    from openbiliclaw.llm.service import LLMService
+
+    class _Registry:
+        default_provider = "local"
+        fallback_chain = ["local", "paid"]
+        fallback_provider = "paid"
+
+        def instance_route(self, name: str) -> tuple[str, str]:
+            return {
+                "local": ("ollama", "glm-4.7-flash"),
+                "paid": ("openrouter", "glm-4.7-flash"),
+            }[name]
+
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {
+                        "glm-4.7-flash": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "currency": "USD",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    service = LLMService(
+        registry=_Registry(),
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db, catalog=catalog),
+    )
+
+    assert service._stream_identity("e2e.stream") == ("openrouter", "glm-4.7-flash")
+
+
+def test_partial_stream_uses_actual_free_route_without_overcharging(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+    from openbiliclaw.llm.service import LLMService
+
+    class _Registry:
+        default_provider = "local"
+        fallback_chain = ["local", "paid"]
+        fallback_provider = "paid"
+
+        def instance_route(self, name: str) -> tuple[str, str]:
+            return {"local": ("ollama", "glm-4.7-flash"), "paid": ("openrouter", "glm-4.7-flash")}[
+                name
+            ]
+
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {"glm-4.7-flash": {"input": 1.0, "output": 2.0, "currency": "USD"}}
+                }
+            }
+        }
+    )
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    service = LLMService(
+        registry=_Registry(),
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db, catalog=catalog),
+    )
+
+    service._settle_partial_stream(
+        caller="e2e.stream",
+        delta_text="local",
+        provider="ollama",
+        model="glm-4.7-flash",
+    )
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["cost_cny"] == 0.0
+
+
+async def test_public_stream_early_close_settles_with_route_metadata(tmp_path: Path) -> None:
+    import asyncio
+
+    from openbiliclaw.llm.base import LLMRegistry, LLMStreamChunk
+    from openbiliclaw.llm.rate_card import RateCatalog
+    from openbiliclaw.llm.service import LLMService
+
+    class _StreamingProvider:
+        model = "glm-4.7-flash"
+
+        async def stream_complete(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            yield LLMStreamChunk(delta="hello")
+            await asyncio.sleep(0.2)
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {
+                        "glm-4.7-flash": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "currency": "USD",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    registry = LLMRegistry()
+    registry.register(_StreamingProvider(), name="paid", provider_type="openrouter")
+    registry.configure_chain(["paid"])
+    service = LLMService(
+        registry=registry,
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db, catalog=catalog),
+    )
+
+    stream = service.stream_complete_with_core_memory(
+        system_instruction="sys",
+        user_input="user",
+        caller="e2e.stream",
+        inject_core_memory=False,
+    )
+    async for chunk in stream:
+        if chunk.delta:
+            break
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["calls"] == 1
+    assert today["cost_cny"] > 0
+    assert db.query_llm_usage_by_provider(days=7)[0]["provider"] == "openrouter"

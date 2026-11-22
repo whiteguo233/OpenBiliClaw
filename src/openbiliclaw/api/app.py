@@ -17,6 +17,7 @@ import inspect
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -22226,6 +22227,13 @@ def create_app(
                 enabled=cfg.scheduler.enabled,
                 llm_budget_max_calls=cfg.scheduler.llm_budget_max_calls,
                 llm_budget_window_seconds=cfg.scheduler.llm_budget_window_seconds,
+                daily_budget_cny=cfg.scheduler.daily_budget_cny,
+                budget_on_exceed=cfg.scheduler.budget_on_exceed,
+                daily_budget_reserve_cny=cfg.scheduler.daily_budget_reserve_cny,
+                peak_policy=cfg.scheduler.peak_policy,
+                peak_hours=cfg.scheduler.peak_hours,
+                peak_timezone_offset_minutes=cfg.scheduler.peak_timezone_offset_minutes,
+                peak_refill_floor=cfg.scheduler.peak_refill_floor,
                 pause_on_extension_disconnect=cfg.scheduler.pause_on_extension_disconnect,
                 extension_disconnect_grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
                 discovery_cron=cfg.scheduler.discovery_cron,
@@ -24111,11 +24119,14 @@ def create_app(
             _MIN_COPY_READY_TARGET_COUNT,
             _MIN_EVAL_MAX_WAIT_SECONDS,
             _MIN_EVAL_MIN_BATCH_SIZE,
+            BUDGET_ON_EXCEED_MODES,
+            PEAK_POLICIES,
             ConfigError,
             ConfigIssue,
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
+            _normalize_peak_hours,
             _normalize_pool_source_shares,
             _normalize_probability,
             _normalize_scheduler_float,
@@ -25599,6 +25610,8 @@ def create_app(
                 ),
                 "llm_budget_max_calls": (_DEFAULT_LLM_BUDGET_MAX_CALLS, 0, None),
                 "llm_budget_window_seconds": (_DEFAULT_LLM_BUDGET_WINDOW_SECONDS, 60, None),
+                "peak_timezone_offset_minutes": (480, -720, 840),
+                "peak_refill_floor": (30, 0, None),
                 "speculator_idle_interval_minutes": (
                     _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES,
                     5,
@@ -25644,6 +25657,13 @@ def create_app(
                 "proactive_push_interval_seconds",
                 "llm_budget_max_calls",
                 "llm_budget_window_seconds",
+                "daily_budget_cny",
+                "budget_on_exceed",
+                "daily_budget_reserve_cny",
+                "peak_policy",
+                "peak_hours",
+                "peak_timezone_offset_minutes",
+                "peak_refill_floor",
                 "speculator_idle_interval_minutes",
                 "speculation_interval_minutes",
                 "speculation_ttl_days",
@@ -25736,6 +25756,66 @@ def create_app(
                                 max_value=_MAX_EVAL_MAX_WAIT_SECONDS,
                             ),
                         )
+                    elif key == "daily_budget_cny":
+                        raw_budget = sdata[key]
+                        try:
+                            budget_value = float(raw_budget)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_cny must be a number in 0..100000",
+                            ) from exc
+                        if (
+                            isinstance(raw_budget, bool)
+                            or not math.isfinite(budget_value)
+                            or budget_value < 0
+                            or budget_value > 100000
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_cny must be in 0..100000",
+                            )
+                        setattr(cfg.scheduler, key, budget_value)
+                    elif key == "budget_on_exceed":
+                        mode = str(sdata[key] or "").strip().lower()
+                        if mode not in BUDGET_ON_EXCEED_MODES:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="budget_on_exceed must be one of: "
+                                + ", ".join(sorted(BUDGET_ON_EXCEED_MODES)),
+                            )
+                        setattr(cfg.scheduler, key, mode)
+                    elif key == "daily_budget_reserve_cny":
+                        raw_reserve = sdata[key]
+                        try:
+                            reserve_value = float(raw_reserve)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_reserve_cny must be a number in 0..100",
+                            ) from exc
+                        if (
+                            isinstance(raw_reserve, bool)
+                            or not math.isfinite(reserve_value)
+                            or reserve_value < 0
+                            or reserve_value > 100
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_reserve_cny must be in 0..100",
+                            )
+                        setattr(cfg.scheduler, key, reserve_value)
+                    elif key == "peak_policy":
+                        policy = str(sdata[key] or "").strip().lower()
+                        if policy not in PEAK_POLICIES:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="peak_policy must be one of: "
+                                + ", ".join(sorted(PEAK_POLICIES)),
+                            )
+                        setattr(cfg.scheduler, key, policy)
+                    elif key == "peak_hours":
+                        setattr(cfg.scheduler, key, _normalize_peak_hours(sdata[key]))
                     elif key in scheduler_int_limits:
                         default, min_value, max_value = scheduler_int_limits[key]
                         setattr(

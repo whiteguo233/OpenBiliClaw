@@ -147,6 +147,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| LLM 每日预算预留（issue #353） | ✅ | 共享 SQLite `background_llm_budget_reservations`（id / amount_cny / created_at / expires_at，30 分钟 TTL）；`DailySpendLedger.try_reserve()` 在 `BEGIN IMMEDIATE` 内原子检查“已花 + 在途 + 本次 ≤ 上限”并插入，`release()` 删除；跨进程/热重载可见，过期行由下一次访问清理。`llm_usage.cost_confidence` 记录 exact/user/derived_relay/fallback 置信度。 |
 | 相对惊喜与精确占位 | ✅ | `get_ranked_delight_candidates()` 先过滤后取前 10%，与普通推荐、库存和整理共享具体身份；支持单条冷启动、同分、已读后补位和旧快照回填。 |
 | 动态来源注册与多来源证据 | ✅ | `custom_sources` 管理实例与份额；候选/cache 新增 `source_id/source_name`，`content_source_provenance` 保留同一 canonical 内容的多来源发现证据。相同 URL 仅占一份库存与反馈身份。公开平台库存合并到 canonical `web`，内部实例配额仍独立。 |
 | 待确认列表批量可见性读取 | ✅ | `get_chat_confirmation_refs(session=...)` 用一次连接/查询读取当前 surface 已打开的活动对象，过滤条件与逐 ref 的 `get_chat_confirmation_turn()` 一致；避免数百个待聊对象每次轮询都创建数百个 SQLite 连接 |
@@ -616,6 +617,26 @@ rows = db.query_temporal_ranking_shadow_audit(limit=100)
 - `temporal_ranking_shadow_audit` 使用固定策略版本 `temporal-ranking-shadow-v1`。顶层 count map 必须精确合计到候选总数，TopK 只接受 10 / 50 / 100 及固定 before/after/entered/exited schema；非法、非有限或不一致输入直接拒绝。
 - 表中没有 BVID、`item_key`、内容 ID、标题、作者、URL、query、理由或画像字段。来源先净化为短枚举 token，年龄只保留 `<=1d / 1-7d / 7-30d / 30-180d / >180d / unknown` 桶，无法从记录反查单条候选。
 - 每次 insert 后清理 30 天前记录，并只保留最新 5,000 行。RecommendationEngine 把它作为 best-effort observer；写库或校验失败只记录 WARNING，排序、MMR、admission 和 serving 均继续使用已经算出的分数。
+
+### LLM 用量与每日花费
+
+`llm_usage` 每行是一次成功 LLM 响应的 token / cache / `estimated_cost_cny` 记录，`UsageRecorder` 在 provider 返回后写入（失败调用不写，因此它是最小偏低的账单下界）。
+
+```python
+db.insert_llm_usage(provider="deepseek", model="deepseek-v4-flash",
+                    prompt_tokens=5000, completion_tokens=3000,
+                    estimated_cost_cny=0.011, caller="discovery.evaluate_batch")
+today = db.query_llm_usage_today()      # 本地日历日：calls / tokens / cost_cny / day
+daily = db.query_llm_usage_by_day(days=7)
+total = db.query_llm_usage_total(days=7)
+```
+
+- 每日预算的跨进程预留放在 `background_llm_budget_reservations`（`id` / `amount_cny` / `created_at` / `expires_at`，30 分钟 TTL）。`DailySpendLedger.try_reserve()` 与 `release()` 在 `BEGIN IMMEDIATE` 内完成“已花 + 在途预留 + 本次 ≤ 上限”的检查和插入，daemon / API / CLI 共享同一份在途额度；进程崩溃后过期的预留由下一次访问清理。表由 ledger 懒创建，不参与业务 schema 迁移。
+- `query_llm_usage_today()` 用 `local_day_window()` 把本地零点换算成 UTC 文本区间，`timestamp >= ? AND timestamp < ?` 走 `idx_llm_usage_timestamp`；这是 `scheduler.daily_budget_cny` 的资金口径，和 `query_llm_usage_by_day(days=1)` 的滚动 24h 语义不同。
+- `query_llm_usage_by_day` 保留 `date(timestamp,'localtime')` 分组，只用于报表；不要用它做预算判断（无法走索引，且窗口是滚动的）。
+- `max_llm_usage_id()` / `query_llm_usage_since_id()` 把一次 init / discovery 的 cost summary 限定在该阶段新写入的行。
+- `llm.cost_multiplier` 在写入前缩放估算；历史行不重算，`openbiliclaw cost` 与每日上限读到的都是落库值。
+- `llm_usage.cost_confidence`（v0.3.24x+）记录估算来源：`exact` / `derived_relay` / `user` / `fallback`，空值表示迁移前旧行。`query_llm_usage_today()` 额外返回 `low_confidence_cost_cny`，供 CLI / UI 提示“中转/回退估算”占比；预算仍按落库的 `estimated_cost_cny` 求和。
 
 ### Bangumi Producer Ledger
 

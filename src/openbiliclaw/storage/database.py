@@ -68,6 +68,7 @@ from openbiliclaw.discovery.temporal import (
     parse_temporal_evaluation,
     schedule_temporal_evaluation,
 )
+from openbiliclaw.local_day import local_day_window
 from openbiliclaw.published_time import normalize_published_time
 from openbiliclaw.saved_sync.identity import (
     canonical_source_platform,
@@ -1418,6 +1419,10 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     -- caching. Used to compute cache hit rate per caller.
     cached_input_tokens INTEGER NOT NULL DEFAULT 0,
     estimated_cost_cny REAL NOT NULL DEFAULT 0.0,
+    -- v0.3.24x+ price provenance (issue #353 follow-up): how the estimate was
+    -- obtained. "exact"/"derived_relay"/"user" come from the bundled rate
+    -- catalog; "fallback" means the static table; "" = pre-migration row.
+    cost_confidence TEXT NOT NULL DEFAULT '',
     success INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
@@ -5290,6 +5295,7 @@ class Database:
         caller: str = "",
         success: bool = True,
         cached_input_tokens: int = 0,
+        cost_confidence: str = "",
     ) -> int:
         """Append one LLM-call usage record.
 
@@ -5298,14 +5304,19 @@ class Database:
         always ``<= prompt_tokens``. 0 means no cache use. Used by
         ``cost --by caller`` to compute hit rates and by
         ``estimate_cost`` to discount cached tokens correctly.
+
+        ``cost_confidence`` (v0.3.24x+, issue #353 follow-up) records how the
+        estimate was obtained: ``exact`` / ``derived_relay`` / ``user`` from
+        the rate catalog, or ``fallback`` from the static table. Empty on
+        pre-migration rows.
         """
         total = max(0, prompt_tokens) + max(0, completion_tokens)
         cursor = self._execute_write(
             """INSERT INTO llm_usage
                (provider, model, caller, prompt_tokens, completion_tokens,
                 total_tokens, cached_input_tokens, estimated_cost_cny,
-                success)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                cost_confidence, success)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 provider or "",
                 model or "",
@@ -5315,6 +5326,7 @@ class Database:
                 int(total),
                 int(max(0, cached_input_tokens)),
                 float(estimated_cost_cny),
+                str(cost_confidence or ""),
                 1 if success else 0,
             ),
         )
@@ -5791,6 +5803,49 @@ class Database:
             row["top_k_metrics"] = json.loads(str(row.pop("top_k_metrics_json")))
             results.append(row)
         return results
+
+    def query_llm_usage_today(self) -> dict[str, Any]:
+        """Return spend + call volume for the current local calendar day.
+
+        Unlike ``query_llm_usage_by_day(days=1)`` (a rolling 24h window), this
+        uses local midnight boundaries, matching the ``scheduler.daily_budget_cny``
+        reset semantics. The UTC text bounds keep the query on
+        ``idx_llm_usage_timestamp`` instead of scanning with
+        ``date(timestamp, 'localtime')``.
+        """
+
+        day, start_utc, end_utc = local_day_window()
+        cursor = self.conn.execute(
+            """
+            SELECT COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny,
+                   COALESCE(SUM(
+                       CASE WHEN cost_confidence IN ('derived_relay', 'fallback')
+                            THEN estimated_cost_cny ELSE 0 END
+                   ), 0) AS low_confidence_cost_cny
+            FROM llm_usage
+            WHERE timestamp >= ? AND timestamp < ?
+            """,
+            (start_utc, end_utc),
+        )
+        row = cursor.fetchone()
+        result = (
+            dict(row)
+            if row
+            else {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_cny": 0.0,
+                "low_confidence_cost_cny": 0.0,
+            }
+        )
+        result["day"] = day
+        return result
 
     def query_llm_usage_by_day(
         self,
@@ -14066,6 +14121,7 @@ class Database:
         }
         required_columns = {
             "cached_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "cost_confidence": "TEXT NOT NULL DEFAULT ''",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:

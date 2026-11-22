@@ -143,6 +143,17 @@ _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
 # enough headroom (a full all-platform refresh wave is typically tens of calls).
 _DEFAULT_LLM_BUDGET_MAX_CALLS = 120
 _DEFAULT_LLM_BUDGET_WINDOW_SECONDS = 3600
+# Money cap (issue #353). Off by default: spend depends entirely on the user's
+# provider and model mix, so any nonzero default would surprise upgrades. The
+# mode default is the safe one — stop automatic work, keep the UI/chat alive.
+_DEFAULT_DAILY_BUDGET_CNY = 0.0
+_DEFAULT_BUDGET_ON_EXCEED = "pause"
+# Peak-hour deferral (issue #353 follow-up). Off by default: it changes when
+# background work runs, so it must be an explicit opt-in. Manual ``peak_hours``
+# is only for providers the catalog cannot price; catalog windows are UTC.
+_DEFAULT_PEAK_POLICY = "off"
+_DEFAULT_PEAK_REFILL_FLOOR = 30
+_DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES = 480
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
 # Cognition-cycle context knobs (issue #169). Keep the defaults in sync with
 # the module constants in ``openbiliclaw/soul/cognition_cycle.py``:
@@ -645,12 +656,51 @@ class ModuleLLMConfig:
 
 
 @dataclass
+class PriceOverrideConfig:
+    """One user-supplied per-provider/model price (issue #353 follow-up).
+
+    Values are per 1M tokens in ``currency``. Overrides always win over the
+    bundled catalog and are never touched by sync.
+    """
+
+    provider: str = ""
+    model: str = ""
+    input: float = 0.0
+    output: float = 0.0
+    cache_read: float | None = None
+    cache_write: float | None = None
+    currency: str = "USD"
+
+
+@dataclass
+class PricingConfig:
+    """Price-catalog settings layered over the static pricing table."""
+
+    # USD/CNY snapshot used to convert catalog prices. Kept explicit so a
+    # historical cost row never changes when the rate does.
+    usd_cny_rate: float = 7.2
+    # Empty = bundled ``openbiliclaw/llm/pricing_catalog.json``.
+    catalog_path: str = ""
+    overrides: list[PriceOverrideConfig] = field(default_factory=list)
+
+
+@dataclass
 class LLMConfig:
     """LLM configuration with global defaults and per-module overrides."""
 
     default_provider: str = "deepseek"
     concurrency: int = DEFAULT_LLM_CONCURRENCY
     timeout: int = _DEFAULT_LLM_TIMEOUT
+    # Calibration factor between the static ``llm.pricing`` table and the
+    # provider invoice (issue #353). 1.0 = trust the table; 2.0 = the real
+    # bill is ~2x the estimate. Applied when writing ``llm_usage`` so the
+    # daily spend cap and ``openbiliclaw cost`` agree with each other.
+    cost_multiplier: float = 1.0
+    # Reorder same-model instances in the chain by their current catalog
+    # price (issue #353 follow-up). Off by default: model order/quality stays
+    # exactly as configured, and different models are never swapped.
+    cost_aware_routing: bool = False
+    pricing: PricingConfig = field(default_factory=PricingConfig)
     # Non-empty = chat fallback on. There is no separate enable flag: the
     # legacy ``fallback_enabled`` bool was never consulted by the fallback
     # chain and has been removed (stale keys in old config.toml are ignored).
@@ -1321,6 +1371,30 @@ class SchedulerConfig:
     # the cap / restarts the daemon). ``0`` disables the guard.
     llm_budget_max_calls: int = _DEFAULT_LLM_BUDGET_MAX_CALLS
     llm_budget_window_seconds: int = _DEFAULT_LLM_BUDGET_WINDOW_SECONDS
+    # Money-side cap (issue #353). Call count cannot bound spend: 120 short
+    # evaluations and 120 long generations differ by ~10x. Checked against
+    # today's ``llm_usage.estimated_cost_cny`` before every LLM call.
+    # ``<= 0`` disables the guard. ``budget_on_exceed``:
+    #   pause — refuse background (auto) calls, keep interactive chat working
+    #   stop  — refuse every call, including user-initiated ones
+    #   warn  — allow everything, log + event once per day
+    daily_budget_cny: float = _DEFAULT_DAILY_BUDGET_CNY
+    budget_on_exceed: str = _DEFAULT_BUDGET_ON_EXCEED
+    # Worst-case slice reserved per in-flight call so concurrent calls do not
+    # all read the same accrued spend and pass the cap together.
+    daily_budget_reserve_cny: float = 0.10
+    # Peak-hour policy, driven by the rate catalog's tariff windows (or a
+    # manual ``peak_hours`` override). ``off`` keeps the legacy always-run
+    # behaviour; ``defer`` pauses maintenance and refill above the floor;
+    # ``prefer`` pauses maintenance but always keeps refill fresh.
+    peak_policy: str = _DEFAULT_PEAK_POLICY
+    # Manual override "HH:MM-HH:MM,HH:MM-HH:MM" in
+    # ``peak_timezone_offset_minutes`` local time. Empty = use the catalog.
+    peak_hours: str = ""
+    peak_timezone_offset_minutes: int = _DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES
+    # Servable pool count at/above which refill is deferred during peak.
+    # 0 defers refill regardless of inventory (not recommended).
+    peak_refill_floor: int = _DEFAULT_PEAK_REFILL_FLOOR
     discovery_cron: str = "0 */8 * * *"
     pool_target_count: int = 300
     copy_ready_target_count: int = _DEFAULT_COPY_READY_TARGET_COUNT
@@ -2516,6 +2590,70 @@ def _build_network_config(raw: dict[str, Any]) -> NetworkConfig:
     return NetworkConfig(mode=mode, proxy=proxy)
 
 
+def _optional_non_negative_float(value: object) -> float | None:
+    if not isinstance(value, int | float | str):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
+def _build_pricing_config(raw: object) -> PricingConfig:
+    """Parse ``[llm.pricing]`` (rate catalog + user price overrides)."""
+
+    if not isinstance(raw, dict):
+        return PricingConfig()
+    usd_cny_rate = _normalize_scheduler_float(
+        raw.get("usd_cny_rate"),
+        default=7.2,
+        min_value=1.0,
+        max_value=50.0,
+    )
+    catalog_path = str(raw.get("catalog_path") or "").strip()
+    overrides: list[PriceOverrideConfig] = []
+    raw_overrides = raw.get("overrides")
+    if isinstance(raw_overrides, list):
+        for item in raw_overrides:
+            if not isinstance(item, dict):
+                continue
+            provider = str(item.get("provider") or "").strip()
+            model = str(item.get("model") or "").strip()
+            if not provider or not model:
+                continue
+            input_rate = _optional_non_negative_float(item.get("input"))
+            output_rate = _optional_non_negative_float(item.get("output"))
+            if input_rate is None or output_rate is None:
+                logger.warning(
+                    "config: [llm.pricing.overrides] %s/%s 缺少合法 input/output，已忽略",
+                    provider,
+                    model,
+                )
+                continue
+            currency = str(item.get("currency") or "USD").strip().upper()
+            if currency not in {"USD", "CNY"}:
+                currency = "USD"
+            overrides.append(
+                PriceOverrideConfig(
+                    provider=provider,
+                    model=model,
+                    input=input_rate,
+                    output=output_rate,
+                    cache_read=_optional_non_negative_float(item.get("cache_read")),
+                    cache_write=_optional_non_negative_float(item.get("cache_write")),
+                    currency=currency,
+                )
+            )
+    return PricingConfig(
+        usd_cny_rate=usd_cny_rate,
+        catalog_path=catalog_path,
+        overrides=overrides,
+    )
+
+
 def _build_config(
     raw: dict[str, Any],
     *,
@@ -2703,6 +2841,14 @@ def _build_config(
         default_provider=llm_raw.get("default_provider", "deepseek"),
         concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
         timeout=_normalize_llm_timeout(llm_raw.get("timeout")),
+        cost_multiplier=_normalize_scheduler_float(
+            llm_raw.get("cost_multiplier"),
+            default=1.0,
+            min_value=0.1,
+            max_value=20.0,
+        ),
+        pricing=_build_pricing_config(llm_raw.get("pricing")),
+        cost_aware_routing=_coerce_bool(llm_raw.get("cost_aware_routing"), default=False),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         instance_routing=instance_routing,
         builtin_providers_version=(2 if llm_raw.get("builtin_providers_version") == 2 else 0),
@@ -3248,6 +3394,34 @@ def _build_config(
                         sched_raw.get("llm_budget_window_seconds"),
                         default=_DEFAULT_LLM_BUDGET_WINDOW_SECONDS,
                         min_value=60,
+                    ),
+                    "daily_budget_cny": _normalize_scheduler_float(
+                        sched_raw.get("daily_budget_cny"),
+                        default=_DEFAULT_DAILY_BUDGET_CNY,
+                        min_value=0.0,
+                        max_value=100000.0,
+                    ),
+                    "budget_on_exceed": _normalize_budget_on_exceed(
+                        sched_raw.get("budget_on_exceed")
+                    ),
+                    "daily_budget_reserve_cny": _normalize_scheduler_float(
+                        sched_raw.get("daily_budget_reserve_cny"),
+                        default=0.10,
+                        min_value=0.0,
+                        max_value=100.0,
+                    ),
+                    "peak_policy": _normalize_peak_policy(sched_raw.get("peak_policy")),
+                    "peak_hours": _normalize_peak_hours(sched_raw.get("peak_hours")),
+                    "peak_timezone_offset_minutes": _normalize_scheduler_int(
+                        sched_raw.get("peak_timezone_offset_minutes"),
+                        default=_DEFAULT_PEAK_TIMEZONE_OFFSET_MINUTES,
+                        min_value=-720,
+                        max_value=840,
+                    ),
+                    "peak_refill_floor": _normalize_scheduler_int(
+                        sched_raw.get("peak_refill_floor"),
+                        default=_DEFAULT_PEAK_REFILL_FLOOR,
+                        min_value=0,
                     ),
                     "profile_consolidation_enabled": _coerce_bool(
                         sched_raw.get("profile_consolidation_enabled"),
@@ -4855,11 +5029,14 @@ def _normalize_scheduler_int(
 ) -> int:
     """Normalize scheduler tuning values into bounded positive ints."""
     if isinstance(value, int | float):
-        normalized = int(value)
+        try:
+            normalized = int(value)
+        except (OverflowError, ValueError):
+            return default
     elif isinstance(value, str):
         try:
             normalized = int(value.strip())
-        except ValueError:
+        except (ValueError, OverflowError):
             return default
     else:
         return default
@@ -4934,20 +5111,73 @@ def _normalize_scheduler_float(
 ) -> float:
     """Normalize scheduler tuning values into bounded floats."""
     if isinstance(value, int | float):
-        normalized = float(value)
+        try:
+            normalized = float(value)
+        except OverflowError:
+            return default
     elif isinstance(value, str):
         try:
             normalized = float(value.strip())
-        except ValueError:
+        except (ValueError, OverflowError):
             return default
     else:
         return default
 
+    if not math.isfinite(normalized):
+        return default
     if normalized < min_value:
         return default
     if max_value is not None and normalized > max_value:
         return default
     return normalized
+
+
+# Accepted ``scheduler.budget_on_exceed`` values (issue #353). Kept next to the
+# normalizer so the API save path can reject invalid values with a 400 instead
+# of silently writing a mode the gate does not implement.
+BUDGET_ON_EXCEED_MODES = frozenset({"pause", "stop", "warn"})
+
+
+def _normalize_budget_on_exceed(value: object) -> str:
+    """Normalize the daily-budget breach mode; unknown values fall back to pause."""
+    if isinstance(value, str):
+        mode = value.strip().lower()
+        if mode in BUDGET_ON_EXCEED_MODES:
+            return mode
+    return _DEFAULT_BUDGET_ON_EXCEED
+
+
+PEAK_POLICIES = frozenset({"off", "defer", "prefer"})
+
+
+def _normalize_peak_policy(value: object) -> str:
+    """Normalize ``scheduler.peak_policy``; unknown values disable deferral."""
+
+    if isinstance(value, str):
+        policy = value.strip().lower()
+        if policy in PEAK_POLICIES:
+            return policy
+    return _DEFAULT_PEAK_POLICY
+
+
+def _normalize_peak_hours(value: object) -> str:
+    """Validate the optional manual peak-window override.
+
+    Empty is valid (use the catalog). Malformed values fall back to empty
+    instead of silently deferring at arbitrary times.
+    """
+
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    from openbiliclaw.runtime.presence import parse_peak_windows
+
+    if not parse_peak_windows(text, offset_minutes=0):
+        logger.warning("config: [scheduler].peak_hours 非法，已回退为 catalog 窗口: %s", text)
+        return ""
+    return text
 
 
 def _normalize_auto_update_allowed_remotes(value: object) -> list[str]:
@@ -6900,6 +7130,8 @@ def _render_config_toml(
                 f"default_chain = {_toml_str_list(config.llm.default_chain)}",
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
+                f"cost_multiplier = {config.llm.cost_multiplier}",
+                f"cost_aware_routing = {_toml_bool(config.llm.cost_aware_routing)}",
                 "",
             ]
         )
@@ -6913,6 +7145,8 @@ def _render_config_toml(
                 f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
                 f"timeout = {_normalize_llm_timeout(config.llm.timeout)}",
                 f"fallback_provider = {_toml_string(config.llm.fallback_provider)}",
+                f"cost_multiplier = {config.llm.cost_multiplier}",
+                f"cost_aware_routing = {_toml_bool(config.llm.cost_aware_routing)}",
                 "",
             ]
         )
@@ -6927,6 +7161,33 @@ def _render_config_toml(
         lines.extend(_render_provider_section("requesty", config.llm.requesty))
         lines.extend(_render_provider_section("api_route", config.llm.api_route))
         lines.extend(_render_provider_section("cheaperinference", config.llm.cheaperinference))
+    pricing_lines = [
+        "[llm.pricing]",
+        f"usd_cny_rate = {config.llm.pricing.usd_cny_rate}",
+        f"catalog_path = {_toml_string(config.llm.pricing.catalog_path)}",
+        "",
+    ]
+    for price_override in config.llm.pricing.overrides:
+        pricing_lines.extend(
+            [
+                "[[llm.pricing.overrides]]",
+                f"provider = {_toml_string(price_override.provider)}",
+                f"model = {_toml_string(price_override.model)}",
+                f"input = {price_override.input}",
+                f"output = {price_override.output}",
+            ]
+        )
+        if price_override.cache_read is not None:
+            pricing_lines.append(f"cache_read = {price_override.cache_read}")
+        if price_override.cache_write is not None:
+            pricing_lines.append(f"cache_write = {price_override.cache_write}")
+        pricing_lines.extend(
+            [
+                f"currency = {_toml_string(price_override.currency)}",
+                "",
+            ]
+        )
+    lines.extend(pricing_lines)
     lines.extend(
         [
             "[llm.sponsored]",
@@ -7210,6 +7471,13 @@ def _render_config_toml(
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             f"llm_budget_max_calls = {config.scheduler.llm_budget_max_calls}",
             f"llm_budget_window_seconds = {config.scheduler.llm_budget_window_seconds}",
+            f"daily_budget_cny = {config.scheduler.daily_budget_cny}",
+            f"budget_on_exceed = {_toml_string(config.scheduler.budget_on_exceed)}",
+            f"daily_budget_reserve_cny = {config.scheduler.daily_budget_reserve_cny}",
+            f"peak_policy = {_toml_string(config.scheduler.peak_policy)}",
+            f"peak_hours = {_toml_string(config.scheduler.peak_hours)}",
+            f"peak_timezone_offset_minutes = {config.scheduler.peak_timezone_offset_minutes}",
+            f"peak_refill_floor = {config.scheduler.peak_refill_floor}",
             "pause_on_extension_disconnect = "
             f"{_toml_bool(config.scheduler.pause_on_extension_disconnect)}",
             "extension_disconnect_grace_seconds = "

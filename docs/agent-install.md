@@ -320,7 +320,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 
 | 选项 | 默认模型 | 适合谁 | 是否需要 API Key | 钱 / 速度 |
 |---|---|---|---|---|
-| 1. **DeepSeek** ★第一推荐(极便宜 / 国内可直连) | `deepseek-v4-flash`(可选 `deepseek-v4-pro`;旧 `deepseek-chat`/`deepseek-reasoner` **2026/07/24 弃用**) | 想几毛钱体验完整功能 | ✅ 需要 | ¥0.001 / 千 token,几乎免费 |
+| 1. **DeepSeek** ★第一推荐(极便宜 / 国内可直连) | `deepseek-v4-flash`(可选 `deepseek-v4-pro`;旧 `deepseek-chat`/`deepseek-reasoner` **2026/07/24 弃用**) | 想几块钱体验完整功能 | ✅ 需要 | 输入 ¥0.00108 / 输出 ¥0.00432 每千 token;高峰时段 2x |
 | 2. **★ 中转站 / OpenAI 协议兼容服务** ★第二推荐 | 选 preset 后自动填 | **国内买中转站 / OneAPI Key 的人走这个**;也覆盖 Kimi / MiniMax / 通义 / 智谱 / 商汤日日新 / Yi 官方 + Azure / vLLM / LMStudio | 看服务 | 看服务(日日新 / 智谱 GLM-4.7-Flash 有免费额度) |
 | 3. **OpenAI 官方** | `gpt-5-nano`(最便宜的 GPT-5;可选 gpt-5.4-nano / -mini / gpt-5.5 旗舰) | 已有 sk- 开头 Key | ✅ 需要 | $0.05/M(nano) ~ $30/M(5.5-pro) |
 | 4. **Gemini 官方** | `gemini-2.5-flash`(稳定;可选 gemini-3-flash-preview / gemini-3.1-pro-preview 旗舰 Public Preview 需付费项目) | Google AI Studio 申请 Key | ✅ 需要 | 免费档每天 1500 次 |
@@ -402,8 +402,9 @@ python3 scripts/agent_bootstrap.py --llm-preset self-hosted \
 **Why DeepSeek default, not Ollama**: previous versions called Ollama
 "推荐新手 / 白嫖" but in practice CPU inference on a 16 GB Mac is slow
 enough that users think the install is broken. DeepSeek charges roughly
-¥0.001 per thousand tokens — running OpenBiliClaw for a month costs
-under ¥1 for most users. That's the actual zero-friction path. Ollama
+¥0.00108 per thousand input tokens and ¥0.00432 per thousand output
+tokens (peak hours 2x) — running OpenBiliClaw for a month typically
+costs a few yuan, not under ¥1. That's the actual zero-friction path. Ollama
 remains a first-class option for people who genuinely want offline /
 no-key setups, but should not be sold as "新手友好".
 

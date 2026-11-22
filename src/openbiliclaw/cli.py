@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -855,7 +855,13 @@ def _build_registry() -> Any:
     from openbiliclaw.config import load_config
     from openbiliclaw.llm import build_llm_registry
 
-    return build_llm_registry(load_config())
+    config = load_config()
+    registry = build_llm_registry(config)
+    if bool(getattr(config.llm, "cost_aware_routing", False)):
+        from openbiliclaw.llm.rate_card import build_cost_ranker, catalog_for_runtime
+
+        registry.route_ranker = build_cost_ranker(registry, catalog_for_runtime(config))
+    return registry
 
 
 def _build_llm_concurrency_gate() -> Any:
@@ -1648,9 +1654,16 @@ def _build_usage_recorder() -> Any:
     if cached is not None:
         return cached
 
+    from openbiliclaw.config import load_config
+    from openbiliclaw.llm.rate_card import catalog_for_runtime
     from openbiliclaw.llm.usage_recorder import UsageRecorder
 
-    recorder = UsageRecorder(sink=_get_runtime_database())
+    runtime_config = load_config()
+    recorder = UsageRecorder(
+        sink=_get_runtime_database(),
+        cost_multiplier=float(getattr(runtime_config.llm, "cost_multiplier", 1.0) or 1.0),
+        catalog=catalog_for_runtime(runtime_config),
+    )
     _RUNTIME_COMPONENTS["usage_recorder"] = recorder
     return recorder
 
@@ -3565,6 +3578,9 @@ async def _run_init_discovery_backfill_async(
         from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 
         config = load_config()
+        from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
+        peak_predicate = peak_predicate_for_config(config)
         soul_engine = _build_soul_engine()
         pipeline = _build_discovery_candidate_pipeline(
             config=config, database=database, discovery_engine=discovery_engine
@@ -3594,6 +3610,7 @@ async def _run_init_discovery_backfill_async(
             pool_target_count=target,
             pool_source_shares=effective_pool_source_shares(config),
             llm_concurrency_gate=gate,
+            peak_tariff_predicate=peak_predicate,
         )
         async with AsyncExitStack() as resources:
             if "github" in selected_sources:
@@ -6566,8 +6583,9 @@ def cost(
     """显示本机 LLM 调用花费(按天 + 按 provider/model + 按 caller 模块)。
 
     数据来源:每次成功的 LLM 调用都会写一条到 ``llm_usage`` 表(v0.3.26+)。
-    费用按 ``llm.pricing`` 里的官方单价估算,允许 ±20% 误差。本地 Ollama
-    调用单价 0,只统计调用次数。
+    费用按 ``llm.pricing`` 的静态单价估算;若实测账单与估算有稳定偏差,可用
+    ``llm.cost_multiplier`` 校准(issue #353)。本地 Ollama 调用单价 0,只统计
+    调用次数。
 
     ``--by caller`` 显示按模块(discovery / recommendation / soul / api 等)
     拆分的占比,这是排查"钱花在哪一层"最有用的视图。
@@ -6580,6 +6598,35 @@ def cost(
     by_provider = db.query_llm_usage_by_provider(days=days)
     by_caller = db.query_llm_usage_by_caller(days=days)
     total = db.query_llm_usage_total(days=days)
+
+    today = db.query_llm_usage_today()
+    today_spend = float(today.get("cost_cny") or 0.0)
+    try:
+        from openbiliclaw.config import load_config
+
+        runtime_config = load_config()
+        daily_limit = float(runtime_config.scheduler.daily_budget_cny or 0.0)
+        budget_mode = str(runtime_config.scheduler.budget_on_exceed or "pause")
+        multiplier = float(runtime_config.llm.cost_multiplier or 1.0)
+    except Exception:
+        daily_limit, budget_mode, multiplier = 0.0, "pause", 1.0
+    if daily_limit > 0:
+        state = "[red]已超限[/red]" if today_spend >= daily_limit else "[green]正常[/green]"
+        console.print(
+            f"今日（{today.get('day', '')}）已花 ¥{today_spend:.4f} / "
+            f"上限 ¥{daily_limit:.2f}（{budget_mode}，{state}）"
+        )
+    else:
+        console.print(f"今日（{today.get('day', '')}）已花 ¥{today_spend:.4f}（未设上限）")
+    if abs(multiplier - 1.0) > 1e-9:
+        console.print(f"[dim]估算已按 llm.cost_multiplier={multiplier:g} 校准[/dim]")
+    low_confidence_cost = float(today.get("low_confidence_cost_cny") or 0.0)
+    if low_confidence_cost > 1e-9:
+        console.print(
+            f"[yellow]其中 ¥{low_confidence_cost:.4f} 来自中转/静态回退的低置信估算；"
+            "可在 \\[llm.pricing.overrides] 填实际单价。[/yellow]"
+        )
+    console.print()
 
     if total["calls"] == 0:
         _print_status_panel(
@@ -6735,6 +6782,210 @@ def _fetch_pending_confirmation_snapshot() -> dict[str, Any]:
     if len(items) != len(raw_items):
         raise RuntimeError("待聊确认端点返回了无效条目。")
     return {"count": raw_count, "items": items}
+
+
+@app.command()
+def price(
+    provider: str = typer.Option(
+        "", "--provider", help="Provider 类型，如 deepseek / openai_compatible"
+    ),
+    model: str = typer.Option("", "--model", help="模型 ID，如 deepseek-v4-flash"),
+    at: str = typer.Option("", "--at", help="评估时刻(ISO8601)，默认当前 UTC"),
+    sync: bool = typer.Option(
+        False,
+        "--sync",
+        help="联网拉取 models.dev + OpenRouter，原子写入 data/pricing_catalog.json",
+    ),
+    output: str = typer.Option("", "--output", help="--sync 的输出路径（默认 data 目录）"),
+    timeout: float = typer.Option(60.0, "--timeout", help="--sync 的 HTTP 超时秒数"),
+) -> None:
+    """查看/同步 LLM 价格目录：基础价、置信度、当前峰谷档位与下一次切换。
+
+    数据来自随包 catalog（models.dev 价目 + OpenRouter 峰谷窗口），可用
+    ``[llm.pricing]`` 覆盖。未配置或价格未知时明确显示低置信，不把 0 当免费。
+    ``--sync`` 会联网刷新到 data 目录，旧文件在失败时保持不变。
+    """
+    from pathlib import Path
+
+    from openbiliclaw.config import load_config
+
+    _print_page_title("LLM 价格目录", "价格来源 / 峰谷档位 / 置信度")
+    config = load_config()
+
+    if sync:
+        from openbiliclaw.llm.price_catalog import sync_price_catalog
+
+        destination = (
+            Path(output).expanduser() if output else Path(config.data_path) / "pricing_catalog.json"
+        )
+        try:
+            sync_summary = sync_price_catalog(destination, timeout=timeout)
+        except Exception as exc:
+            _print_status_panel(
+                "error",
+                "价格目录同步失败",
+                f"{exc}\n旧目录未改动；请检查网络或代理设置后重试。",
+            )
+            raise typer.Exit(code=1) from exc
+        console.print(
+            f"已写入 [bold]{sync_summary['path']}[/bold]："
+            f"{sync_summary['providers']} providers / {sync_summary['offers']} models / "
+            f"{sync_summary['tariffs']} 个峰谷模型 / {sync_summary['tiers']} 个档位模型"
+        )
+        console.print(
+            "[dim]运行中的 daemon 在下一次配置热重载或重启后使用新目录；"
+            "也可以把路径写进 \\[llm.pricing].catalog_path。[/dim]"
+        )
+        return
+
+    from openbiliclaw.llm.rate_card import catalog_for_runtime
+
+    catalog = catalog_for_runtime(config)
+
+    summary = Table(show_header=False, box=None)
+    summary.add_column(style="cyan", no_wrap=True)
+    summary.add_column()
+    summary.add_row("生成时间", catalog.generated_at or "未知")
+    summary.add_row("覆盖", f"{catalog.provider_count} providers / {catalog.model_count} models")
+    summary.add_row("USD/CNY", f"{catalog.usd_cny:g}")
+    summary.add_row("目录", str(catalog.source_path))
+    for name, source in catalog.sources.items():
+        if not isinstance(source, dict):
+            continue
+        if "with_tariffs" in source:
+            detail = (
+                f"{source['with_tariffs']} 个峰谷模型 / {source.get('with_tiers', 0)} 个档位模型"
+            )
+        else:
+            detail = (
+                f"{source.get('providers', '-')} providers / {source.get('models', '-')} models"
+            )
+        summary.add_row(f"来源 {name}", f"{source.get('url', '')}（{detail}）")
+    console.print(summary)
+    console.print()
+
+    if not provider and not model:
+        console.print("[dim]用 --provider 与 --model 查询具体模型；例如：[/dim]")
+        console.print(
+            "[dim]  openbiliclaw price --provider deepseek --model deepseek-v4-flash[/dim]"
+        )
+        return
+    if not provider or not model:
+        _print_status_panel("warning", "参数不完整", "--provider 与 --model 需要同时提供。")
+        return
+
+    moment = None
+    if at:
+        try:
+            moment = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        except ValueError:
+            _print_status_panel("error", "时间格式错误", f"无法解析 --at={at!r}。")
+            return
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+
+    effective = catalog.resolve(
+        provider,
+        model,
+        now=moment,
+        prompt_tokens=0,
+        include_next_change=True,
+    )
+    if effective is None:
+        _print_status_panel(
+            "warning",
+            "未找到价格",
+            f"{provider}/{model} 不在随包 catalog 中，运行时会回退静态价目表并标为低置信。\n"
+            "如果是中转站，可在 \\[llm.pricing.overrides] 里填写实际单价。",
+        )
+        return
+
+    confidence_label = {
+        "exact": "exact（provider/model 精确匹配）",
+        "user": "user（用户覆盖）",
+        "derived_relay": "derived_relay（同模型跨 provider 最高价，保守上界）",
+        "fallback": "fallback（provider 默认价）",
+    }.get(effective.confidence, effective.confidence)
+    rates = effective.rates
+    fx_note = (
+        f"（¥{rates.input_per_mtok * catalog.usd_cny:.4g} / "
+        f"¥{rates.output_per_mtok * catalog.usd_cny:.4g}）"
+        if effective.currency == "USD"
+        else ""
+    )
+
+    rate_table = Table(show_header=False, box=None)
+    rate_table.add_column(style="cyan", no_wrap=True)
+    rate_table.add_column()
+    rate_table.add_row("模型", f"{effective.provider}/{effective.model}")
+    rate_table.add_row("置信度", confidence_label)
+    rate_table.add_row(
+        "当前单价",
+        f"${rates.input_per_mtok:g} / ${rates.output_per_mtok:g} 每百万 token{fx_note}",
+    )
+    rate_table.add_row(
+        "当前档位",
+        f"{effective.tariff_label} ×{effective.tariff_multiplier:g}",
+    )
+    if effective.tier_label:
+        rate_table.add_row("上下文档位", effective.tier_label)
+    if effective.next_change_at is not None:
+        rate_table.add_row("下一次切换", effective.next_change_at.strftime("%Y-%m-%d %H:%M UTC"))
+    scheduler = config.scheduler
+    rate_table.add_row(
+        "峰谷策略",
+        f"{scheduler.peak_policy}（补货水位 {scheduler.peak_refill_floor}）",
+    )
+    manual_spec = str(getattr(scheduler, "peak_hours", "") or "").strip()
+    if manual_spec:
+        from openbiliclaw.runtime.presence import manual_peak_active
+
+        manual_now = manual_peak_active(scheduler, now_utc=moment)
+        rate_table.add_row(
+            "手动窗口",
+            f"{manual_spec}（当前{'高峰' if manual_now else '非高峰'}，"
+            f"偏移 {scheduler.peak_timezone_offset_minutes} 分钟）",
+        )
+    next_off_peak = catalog.next_off_peak(provider, model, now=moment)
+    if next_off_peak is not None:
+        rate_table.add_row("谷时开始", next_off_peak.strftime("%Y-%m-%d %H:%M UTC"))
+    rate_table.add_row(
+        "示例费用",
+        f"5k 输入 + 3k 输出 ≈ ¥{effective.cost(prompt_tokens=5000, completion_tokens=3000):.6f}",
+    )
+    console.print(rate_table)
+
+    card = catalog.card(provider, model)
+    if card is not None and card.tariffs:
+        console.print()
+        window_table = Table(show_header=True, header_style="bold cyan", title="峰谷窗口（UTC）")
+        window_table.add_column("星期")
+        window_table.add_column("时间")
+        window_table.add_column("档位")
+        window_table.add_column("倍数", justify="right")
+        day_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        for window in card.tariffs:
+            days = (
+                "每天"
+                if not window.days
+                else "、".join(day_names[day] for day in sorted(window.days))
+            )
+            window_table.add_row(
+                days,
+                f"{window.start_minute // 60:02d}:{window.start_minute % 60:02d}"
+                f"–{window.end_minute // 60:02d}:{window.end_minute % 60:02d}",
+                window.label,
+                f"×{window.multiplier:g}",
+            )
+        console.print(window_table)
+
+    if effective.confidence in {"derived_relay", "fallback"}:
+        _print_status_panel(
+            "info",
+            "低置信估算",
+            "这个价格不是 provider 官方精确匹配，预算判断按保守上界处理。\n"
+            "如已知实际单价，写入 \\[llm.pricing.overrides] 可获得 exact 置信度。",
+        )
 
 
 @app.command()
@@ -18866,6 +19117,14 @@ def config_show() -> None:
             tr("cli.config_show.row.stop_background_llm"),
             tr(
                 "cli.config_show.value.no" if cfg.scheduler.enabled else "cli.config_show.value.yes"
+            ),
+        ),
+        (
+            tr("cli.config_show.row.daily_budget"),
+            (
+                tr("cli.config_show.value.unlimited")
+                if cfg.scheduler.daily_budget_cny <= 0
+                else f"¥{cfg.scheduler.daily_budget_cny:g} ({cfg.scheduler.budget_on_exceed})"
             ),
         ),
         (

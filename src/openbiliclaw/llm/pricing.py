@@ -5,7 +5,10 @@ USD-priced models (OpenAI, Claude, etc.) are pre-multiplied by an
 approximate exchange rate so the entire pricing surface is a single
 currency — keeps daily-spend reports straightforward and avoids burying
 fx conversions inside hot paths. Rates drift, so treat results as
-estimates (typically within ±20% of actual billing).
+estimates, not invoices: a measured relay / aggregator case was ~2x under
+the real bill (issue #353). ``llm.cost_multiplier`` exists to calibrate
+that gap once per install; direct-provider rows are within ~±20% unless a
+model's list price changed after this table's refresh.
 
 Source notes (last refreshed 2026-05):
 
@@ -36,6 +39,14 @@ non-cached portion at the full ``input_rate``, output unchanged.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+# (provider, model) pairs already warned about, so an unpriced relay model
+# logs once per process instead of on every call. Bounded by config size.
+_UNPRICED_WARNED: set[tuple[str, str]] = set()
+
 # Per-provider cache-hit discount multipliers. 0.1 means cached tokens
 # are billed at 10% of the full input rate (i.e. 90% off). When a
 # provider isn't in this map we use 0.5 (conservative — half off).
@@ -43,7 +54,9 @@ CACHE_HIT_DISCOUNT: dict[str, float] = {
     "deepseek": 0.10,
     "openai": 0.50,
     "claude": 0.10,
+    "anthropic": 0.10,
     "gemini": 0.25,
+    "google": 0.25,
     "openrouter": 0.50,
     "orcarouter": 0.50,
     "requesty": 0.50,
@@ -63,11 +76,18 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # ``deepseek-reasoner`` rows stay so existing configs keep
         # producing accurate estimates until those models reach the
         # 2026/07/24 deprecation date.
-        "deepseek-v4-flash": (0.001, 0.002),
-        "deepseek-v4-pro": (0.004, 0.012),
+        # 2026-11-21: re-checked against models.dev (`deepseek` provider) and
+        # the OpenRouter `deepseek/deepseek-v4.1-flash-1017` route:
+        # $0.15 / $0.60 per M tokens × 7.2 = ¥1.08 / ¥4.32 per M. The old
+        # output row (¥2/M) under-counted a real bill by ~2.16x, which is the
+        # drift reported in issue #353. Peak windows (UTC 01-04 / 06-10,
+        # Mon-Fri = Beijing 09-12 / 14-18) bill this route at 2x; the table
+        # stores the off-peak base until the rate-card layer lands.
+        "deepseek-v4-flash": (0.00108, 0.00432),  # $0.15/$0.60 per M
+        "deepseek-v4-pro": (0.004752, 0.014256),  # $0.66/$1.98 per M
         "deepseek-chat": (0.0007, 0.0014),
         "deepseek-reasoner": (0.004, 0.016),
-        "default": (0.001, 0.002),
+        "default": (0.00108, 0.00432),
     },
     "openai": {
         # USD × ~7.2 (USD/CNY post-2024). GPT-5 family is current as of
@@ -104,6 +124,14 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
     "openai_compatible": {
         # Direct MiniMax list-price estimate; custom gateways may charge differently.
         "MiniMax-M3.1-Flash": (0.00108, 0.00432),
+        # Generic OpenAI-protocol relays (SenseNova, BigModel, …) host
+        # arbitrary models at arbitrary list prices. Without a row, the
+        # unknown-provider fallback silently priced every relay call at the
+        # same placeholder — one measured case under-counted the real bill by
+        # ~2x (issue #353). Keep an explicit default so the hole is documented,
+        # warn once per (provider, model) when it is used, and let
+        # ``llm.cost_multiplier`` absorb a measured calibration.
+        "default": (0.001, 0.003),
     },
     "claude": {
         # USD × 7.2; matches platform.claude.com 2026-05 pricing.
@@ -181,6 +209,9 @@ def estimate_cost(
     prompt_tokens: int,
     completion_tokens: int,
     cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    *,
+    cost_multiplier: float = 1.0,
 ) -> float:
     """Estimate the CNY cost of a single LLM call.
 
@@ -194,34 +225,70 @@ def estimate_cost(
     ``input_rate * CACHE_HIT_DISCOUNT[provider]`` (typically 10-50% of
     the full rate). Pass 0 (default) for cache-miss / unknown.
 
+    ``cost_multiplier`` (v0.3.24x+, issue #353) scales the whole estimate.
+    The table is a static list-price snapshot; a user who measured that the
+    real bill is ~2x the estimate sets ``llm.cost_multiplier = 2.0`` so the
+    daily budget gate and ``openbiliclaw cost`` speak the same (calibrated)
+    currency as the provider invoice. Unknown models are warned once per
+    provider/model so the fallback is never silent.
+
     >>> estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
-    0.011
+    0.01836
     >>> estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000)
-    0.0074
+    0.014472
     >>> estimate_cost("ollama", "llama3", 10000, 5000)
     0.0
     """
     provider_rates = PRICING.get(provider, {})
     rates = provider_rates.get(model)
+    default_rates = provider_rates.get("default")
     if rates is None:
-        rates = provider_rates.get("default")
+        if model and default_rates != (0.0, 0.0):
+            # Warn even when the provider has a ``default`` row: a relay
+            # hosting an unlisted model is exactly the case that silently
+            # under-counted the real bill in issue #353. Free providers
+            # (ollama / sponsored) are exempt — their default is exact.
+            _warn_unpriced_once(provider, model)
+        rates = default_rates
     if rates is None:
         # Unknown provider — pick a midrange rate so the user notices
         # the unexpected provider in the bill rather than seeing 0.
+        _warn_unpriced_once(provider, model)
         rates = (0.001, 0.003)
 
     input_rate, output_rate = rates
     prompt_tokens = max(0, prompt_tokens)
     completion_tokens = max(0, completion_tokens)
     cached_tokens = max(0, min(cached_tokens, prompt_tokens))
-    non_cached = prompt_tokens - cached_tokens
+    cache_write_tokens = max(0, min(cache_write_tokens, prompt_tokens - cached_tokens))
+    non_cached = prompt_tokens - cached_tokens - cache_write_tokens
 
     discount = CACHE_HIT_DISCOUNT.get(provider, 0.5)
     if model in {"MiniMax-M3.1-Flash", "minimax/minimax-m3.1-flash"}:
         discount = 0.10  # $0.015 per M cached input on the direct and OpenRouter list prices.
-    return round(
+    estimate = (
         (non_cached / 1000.0) * input_rate
         + (cached_tokens / 1000.0) * input_rate * discount
-        + (completion_tokens / 1000.0) * output_rate,
-        6,
+        + (cache_write_tokens / 1000.0) * input_rate * 1.25
+        + (completion_tokens / 1000.0) * output_rate
+    )
+    return round(estimate * max(0.0, float(cost_multiplier)), 6)
+
+
+def _warn_unpriced_once(provider: str, model: str) -> None:
+    """Log one WARNING per unknown provider/model in this process.
+
+    Called from the LLM hot path, so it must stay O(1) and never raise.
+    """
+
+    key = (provider or "", model or "")
+    if key in _UNPRICED_WARNED:
+        return
+    _UNPRICED_WARNED.add(key)
+    logger.warning(
+        "No pricing row for provider=%r model=%r; falling back to the "
+        "provider/default estimate (cost tracking is approximate). Set "
+        "llm.cost_multiplier to match your invoice, or add a PRICING entry.",
+        key[0] or "(empty)",
+        key[1] or "(empty)",
     )

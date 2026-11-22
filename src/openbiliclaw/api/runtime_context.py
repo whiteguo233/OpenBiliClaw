@@ -48,7 +48,7 @@ from openbiliclaw.runtime.source_policy import (
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from openbiliclaw.config import Config
     from openbiliclaw.fish.engine import FishCandidate
@@ -777,6 +777,7 @@ class RuntimeContext:
     # built runtime for SQLite writes / LLM tokens.
     task_registry: BackgroundTaskRegistry = field(default_factory=BackgroundTaskRegistry)
     llm_concurrency_gate: Any = None
+    _peak_tariff_predicate: Callable[[], bool] | None = None
     pool_inventory_commit_callback: Any = field(init=False, repr=False, compare=False)
     _pool_inventory_commit_subscribers: list[Any] = field(
         default_factory=list,
@@ -1127,7 +1128,53 @@ class RuntimeContext:
             # available because its explicit calls bypass this predicate.
             return False
         scheduler = getattr(getattr(self, "config", None), "scheduler", None)
-        return _gate(scheduler, self.presence)
+        return _gate(
+            scheduler,
+            self.presence,
+            peak_active=self._peak_active_now(),
+        )
+
+    def _peak_active_now(self) -> bool | None:
+        """Return the catalog tariff verdict for account-sync/worker gates.
+
+        Account sync does profile maintenance, so it must pause during a
+        catalog peak just like the controller's maintenance loops. ``None``
+        means "no known tariff"; presence/budget gating still applies.
+        """
+
+        config = getattr(self, "config", None)
+        if config is None:
+            return None
+        scheduler = getattr(config, "scheduler", None)
+        policy = str(getattr(scheduler, "peak_policy", "off") or "off").strip().lower()
+        if policy not in {"defer", "prefer"}:
+            return None
+        # Manual windows have precedence over the catalog, matching the
+        # controller's ``_peak_active_now``. Without this, account sync could
+        # run while a manual-window peak defers every refresh loop.
+        if str(getattr(scheduler, "peak_hours", "") or "").strip():
+            from openbiliclaw.runtime.presence import manual_peak_active
+
+            return manual_peak_active(scheduler)
+        predicate = getattr(self, "_peak_tariff_predicate", None)
+        if predicate is None:
+            from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
+            predicate = peak_predicate_for_config(config)
+            if predicate is None:
+                # Cache the "unpriced route" answer too; otherwise every
+                # status/controller tick reloads the 350 KB catalog.
+                def _no_peak() -> bool:
+                    return False
+
+                predicate = _no_peak
+            self._peak_tariff_predicate = predicate
+        if callable(predicate):
+            try:
+                return bool(predicate())
+            except Exception:
+                return None
+        return None
 
     @staticmethod
     def full_worker_expected() -> bool:
@@ -1280,6 +1327,7 @@ class RuntimeContext:
             return False
         registry.configure_chain(chain)
         self.config = new_config
+        self._peak_tariff_predicate = None
         if self.agent_tool_context is not None:
             self.agent_tool_context.config = new_config
         return True
@@ -1335,6 +1383,7 @@ class RuntimeContext:
             approval_gate=self.chat_approval_store,
         )
         self.config = new_config
+        self._peak_tariff_predicate = None
         self.agent_tool_context.config = new_config
         self.agent_loop = new_loop
         return True
@@ -1467,11 +1516,25 @@ class RuntimeContext:
 
         # 1. LLM layer (with usage ledger so ``openbiliclaw cost`` has data)
         new_registry = build_llm_registry(new_config)
-        new_usage_recorder = UsageRecorder(sink=self.database)
+        from openbiliclaw.llm.rate_card import (
+            build_cost_ranker,
+            catalog_for_runtime,
+        )
+
+        new_rate_catalog = catalog_for_runtime(new_config)
+        new_llm_config = getattr(new_config, "llm", None)
+        if new_llm_config is not None and bool(
+            getattr(new_llm_config, "cost_aware_routing", False)
+        ):
+            new_registry.route_ranker = build_cost_ranker(new_registry, new_rate_catalog)
+        new_usage_recorder = UsageRecorder(
+            sink=self.database,
+            cost_multiplier=float(getattr(new_llm_config, "cost_multiplier", 1.0) or 1.0),
+            catalog=new_rate_catalog,
+        )
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_gate = self.llm_concurrency_gate or LLMConcurrencyGate(llm_concurrency)
-        apply_background_budget_config(new_llm_gate, new_config)
         new_inventory_available: int | None = None
         count_pool = getattr(self.database, "count_pool_candidates", None)
         if callable(count_pool):
@@ -2425,6 +2488,9 @@ class RuntimeContext:
             init_active_check=lambda: self.init_coordinator.init_active(),
             task_registry=self.task_registry,
             llm_concurrency_gate=new_llm_gate,
+            # Bound method, not the snapshot predicate: a later default-chain
+            # switch must change the controller's peak schedule too.
+            peak_tariff_predicate=lambda: bool(self._peak_active_now()),
         )
 
         from openbiliclaw.runtime.candidate_eval import (
@@ -2732,9 +2798,14 @@ class RuntimeContext:
         # actual Task and synchronously registers its permit before any new
         # runtime attribute is published.
         new_settlement_queue.start()
+        # Mutate the shared gate only after every new component constructed
+        # successfully; a late failure must not leave the old config paired
+        # with the rejected one's daily cap.
+        apply_background_budget_config(new_llm_gate, new_config)
         new_llm_gate.reconfigure(llm_concurrency)
         self.llm_concurrency_gate = new_llm_gate
         self.config = new_config
+        self._peak_tariff_predicate = None
         self.llm_registry = new_registry
         self.llm_service = new_llm_service
         self.bilibili_client = new_bilibili_client

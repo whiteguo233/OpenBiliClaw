@@ -36,6 +36,19 @@
 
 - **猜测卡在 PC 与插件收小**：桌面 Web 的 `hypothesis` 猜测卡宽度上限 760→680px、标题 27→16px、内边距 22/24→14/16、动作按钮 40→32px；插件卡内边距 13→10px、标题 13→12px、动作间距收紧。依据展开/收起、四动作、结算态和共享 renderer 不变。
 
+- 每日 LLM 花费上限（issue #353）：新增 `[scheduler].daily_budget_cny`（本地日历日，0 = 不限）与 `budget_on_exceed`（`pause` 只停后台 / `stop` 连交互一起拒绝 / `warn` 只告警）。`DailySpendLedger` 汇总 `llm_usage.estimated_cost_cny` 的当日累计（区间走 `idx_llm_usage_timestamp`），`LLMConcurrencyGate.slot()` 在次数准入前检查，超限抛 `LLMDailyBudgetExceededError`（诊断码 `budget_exceeded`，不再误报成 provider 限流），每天最多写一条 `budget_exceeded` 事件；`/api/runtime-status` 暴露今日花费与状态，桌面设置页、插件设置页与 `openbiliclaw cost` 顶部都显示“今日已花 / 上限”。同时补上计价口径：`openai_compatible` 增加显式 `default` 价，未命中 provider/model 的估算只 WARN 一次，新增 `[llm].cost_multiplier`（0.1..20）在写库时把静态价目表校准到真实账单。移动 Web 没有调度设置页，本轮不暴露该开关（后端字段对所有端可用）。
+
+- DeepSeek 价目校准（issue #353 后续）：按 models.dev / OpenRouter 的 2026-11-21 实测价，`deepseek-v4-flash` 为 `$0.15/$0.60` 每百万 token（¥1.08/¥4.32），旧表的输出价 ¥2/M 低估 2.16 倍，正好对上 issue 里“自估 0.85 / 实际 1.91”的偏差。`deepseek-v4-pro` 同步改为 `$0.66/$1.98`，安装文档与 CLI 引导里的“¥0.001/千 token 几乎免费”改成输入/输出分列（高峰 2x）。这不是最终方案——价目表长期由随包 catalog + 用户覆盖取代，见 [价格目录与峰谷调度设计](plans/2026-11-21-llm-price-catalog-and-peak-scheduling.md)。
+
+- 价格目录与逐时计价（issue #353 后续 P1/P2）：新增 `llm/rate_card.py` 与随包 `pricing_catalog.json`（由 `scripts/build_llm_price_catalog.py` 从 models.dev 的 16 providers / 2,007 models 价目、OpenRouter 的 4 个 UTC 峰谷模型与 54 个长上下文档位生成）。解析优先级为用户覆盖 > provider/model 精确价 > 同模型跨 provider 最高价（未知中转站的保守上界）> 静态表；`0`/缺失价不当免费。`UsageRecorder` 改走 `EffectiveRate`（含 cache、档位、峰谷 2x），`llm_usage` 新增 `cost_confidence` 列（自动迁移），`openbiliclaw cost` 提示低置信花费；新增 `openbiliclaw price --provider … --model …` 查看当前档位、下一次切换与 CNY 换算，`[llm.pricing]` 支持汇率、catalog 路径与 `[[llm.pricing.overrides]]`。峰谷调度已接线（PR #191，感谢 @bibibifive）：`scheduler.peak_policy=off|defer|prefer` + `peak_refill_floor`，控制器用 catalog 的 `is_peak()`（或手动 `peak_hours`）判断高峰；`defer` 暂停维护、补货低于水位时放行，`prefer` 只暂停维护，交互对话永不错峰。桌面与插件设置页新增策略/水位控件；默认 `off`，不改变现有费用曲线。
+
+- 价格目录刷新、预算预留与同模型选价（issue #353 后续 P4/P5）：`openbiliclaw price --sync` 联网拉取 models.dev + OpenRouter 并原子写入 `data/pricing_catalog.json`（失败保留旧文件）；`catalog_for_runtime` 在 `catalog_path` 为空时优先读该文件。每日上限准入新增 `scheduler.daily_budget_reserve_cny`（默认 0.10）的 per-call 预留，并发请求不再同时读到同一份已花金额。`llm.cost_aware_routing`（默认关）只重排相同归一化 model 的实例，不同模型永不互换，未知价格排最后、排序异常回退配置顺序。
+
+- 价格/预算验收修复：峰谷窗口与长上下文档位改为 **provider + model** 作用域，用户覆盖与中转不再继承官方窗口；每日预留改为共享 SQLite `background_llm_budget_reservations`（跨进程、30 分钟 TTL、原子 reserve/release），热重载不再丢失在途预留；本地日边界按每个午夜各自的 DST 偏移计算；预算耗尽不再被公开错误分类/文案伪装成 provider 429；account sync 同样接入 peak predicate；cost-aware routing 读取各 adapter 的 `_model` 且跨模型位置保持不变；手动窗口拒绝 `08:99` 这类越界分钟。
+
+- 最终验收修复：Claude `cache_creation_input_tokens` 按 1.25x 输入价计入每日账本（cache read 不再被 clamp 到 uncached 数）；流式网关拒绝 `stream_options` 时缺失 usage 改为按保守 prompt/completion 估算并标记 `fallback`，不再 ¥0 绕过上限；设置页 `daily_budget_cny` / `daily_budget_reserve_cny` 越界/非有限值返回 HTTP 400 而不是静默写 0；cost-aware routing 将已知免费 provider（ollama/sponsored/siliconflow_free）评为 0，排在付费路由前；峰谷下一次切换按 1 分钟粒度采样，短窗口不再漏报。
+- 第三轮验收修复：OpenRouter `:batch` 路由不再混入标准长上下文档位；OpenRouter 卡片不再继承其他 provider 的 tariff/tier；非有限（NaN/Inf）报价与缓存价拒绝落账；SQLite 恢复后共享准入仍扣减进程内 fallback 预留；审计事件使用未四舍五入花费、失败可重试；原生工具调用只记一次 usage，流式在槽内结算后才释放预留；popup 状态白名单补齐 `llm_daily_budget_reserved_cny` / `llm_daily_budget_remaining_cny`。
+
 - 后台 LLM 预算改为请求级硬上限并跨进程共享（issue #344）：`LLMConcurrencyGate` 在每次后台请求前扣减额度，超限抛 `LLMBudgetExhaustedError`（请求不会发出）；计数落在 SQLite `background_llm_budget` 表，daemon / API / 桌面 worker / CLI 共用一份额度，`scheduler.llm_budget_max_calls=0` 仍可关闭。认知循环在 awareness / insight 分片之间停下、保留水位并报告 `budget_exhausted`；强信号早触发去抖为 ≥30 分钟一次、每 12h 最多 4 次。同时把 `interests` 里 `state="archived"` 的生命周期墓碑行从两条 prompt 视图里剔除（存储不删），无台账输入仍逐字节不变。
 
 - PR #351（感谢 @jjjj31）：修复桌面页聊天流缺 CSRF 头导致 `/api/chat/agent/stream` 与 `/api/chat/stream`（含 agent loop 关闭时的旧回退、探针聊天、对话结算）固定 403、气泡卡在“正在思考”且 `chat_turns` 永远 pending；`streamAgentChatTurn()` 与 `streamChatTurn()` 补 `credentials: "same-origin"` 与 `X-OBC-Auth: 1` 头，并加静态回归测试。

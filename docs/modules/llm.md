@@ -97,6 +97,7 @@ SDK 允许的 system/user/assistant 角色与末尾 user 约束。结果内容�
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 价格目录 / 每日预算 / 峰谷 / 同模型选价（issue #353） | ✅ | 16 providers / 2,007 models 的 bundled catalog（provider + model 作用域、峰谷窗口、长上下文档位、置信度、USD/CNY）；`openbiliclaw price --sync` 原子刷新 data 目录快照；`scheduler.daily_budget_cny` 用本地日历日 + 共享 SQLite 预留做 per-call 准入，`llm.cost_multiplier` 校准；`peak_policy off/defer/prefer` 只暂停后台维护；`llm.cost_aware_routing` 仅重排相同 model 的实例。恶意/损坏 catalog 降级为空目录 + 静态价目表，不阻断启动。 |
 | 免费凭据与独立向量 | 已实现 | IPC授权失败写入无凭据状态供设置/消息中心读取；本地Ollama向量不经过Rust免费凭据，云端仍默认BGE-M3。 |
 | 免费输出证据边界 | 已实现 | 被动画像限定来源支持的信息偏好；日期只纠错一次且继续严格验证；觉察拒绝批次外引用并从源事件确定日期，详见[补测](../testing/2026-11-05-sponsored-followup.md) |
 | 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
@@ -115,7 +116,7 @@ SDK 允许的 system/user/assistant 角色与末尾 user 约束。结果内容�
 | Cheaper Inference Provider 支持 | ✅ | `CheaperInferenceProvider` 使用 OpenAI 兼容协议，默认模型 `gpt-5.4-mini`，默认端点 `https://api.cheaperinference.com/v1`，模型名不带厂商前缀；沿用统一超时、重试、错误归一化、JSON mode、模型发现与 per-call model 覆盖。多模型网关不发送 `reasoning_effort`；`list_models()` 丢弃 `type` 不是 `text` 的图像 / 视频模型；embedding 需另配。仅在显式配置 API Key 和调用链时使用。 |
 | 2.2 Provider Registry | ✅ | 多端点实例注册 + 全局 / 模块有序链 + 实例级 cooldown + health check |
 | v0.3.x 原生 function calling（M1） | ✅ | `OpenAIProvider.complete_with_tools()` 走 OpenAI `tools=[{"type":"function",...}]` 原生 FC，支持单次响应多个 `tool_calls` 并行解析；`api_flavor="responses"` 实例与 Ollama 显式标 `supports_tool_calling=False`，由 service 层 prompt 模拟兜底；DeepSeek 继承原生 FC 并保留 thinking max_tokens 下限；`LLMRegistry.complete_with_tools*()` 复用 fallback 链 cooldown / 限流语义，链内跳过无 FC 能力的实例 |
-| token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()` 产出 `LLMStreamChunk`（`delta` 增量 + 终止块聚合 `LLMResponse`）；基类默认实现 = 调 `complete()` / `complete_with_tools()` 后一次性吐全文，所有现存 provider 零改动兼容。真流式只在 `OpenAIProvider`（chat-completions flavor，`stream=True` + `stream_options.include_usage`，tool_calls 增量静默聚合到终止块）实现，DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / ApiRoute / openai_compatible 子类自动继承；responses flavor 与 `json_mode` 保持一次性回退（结构化调用依赖格式拒绝重试梯），Claude / Gemini / CodexChatGPT 走基类回退。`LLMRegistry.stream_*()` 镜像 six 个非流式入口（fallback 链 / 显式链 / 精确路由 × 普通 / FC），流式专属语义：**只在首个 delta 之前允许 fallback**，已吐字后失败直接上抛避免重复文本。`LLMService.stream_complete_with_core_memory()` / `stream_socratic_dialogue()` / `stream_complete_with_native_tools()` 复用同一套路由 / provider slot / 记账；prompt 模拟工具路由保持一次性（回复是否为 tool_call JSON 要等全文才知道） |
+| token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()` 产出 `LLMStreamChunk`（`delta` 增量 + 终止块聚合 `LLMResponse`）；基类默认实现 = 调 `complete()` / `complete_with_tools()` 后一次性吐全文，所有现存 provider 零改动兼容。真流式只在 `OpenAIProvider`（chat-completions flavor，`stream=True` + `stream_options.include_usage`，tool_calls 增量静默聚合到终止块）实现，DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / ApiRoute / openai_compatible 子类自动继承；responses flavor 与 `json_mode` 保持一次性回退（结构化调用依赖格式拒绝重试梯），Claude / Gemini / CodexChatGPT 走基类回退。`LLMRegistry.stream_*()` 镜像 six 个非流式入口（fallback 链 / 显式链 / 精确路由 × 普通 / FC），流式专属语义：**只在首个 delta 之前允许 fallback**，已吐字后失败直接上抛避免重复文本。`LLMStreamChunk` 现在携带实际 `provider/model/instance_id`（fallback 链与精确路由都 stamp），提前关闭的流按实际路由结算，不再依赖配置链猜测；`LLMService.stream_complete_with_core_memory()` / `stream_socratic_dialogue()` / `stream_complete_with_native_tools()` 复用同一套路由 / provider slot / 记账；prompt 模拟工具路由保持一次性（回复是否为 tool_call JSON 要等全文才知道） |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | OpenAI-compatible 成功兼容参数复用 | ✅ | `complete()` 首次仍走既有标准请求和有界空响应回退；只有回退成功（JSON 模式还须返回合法 object/list）才在当前 provider 实例内记忆去除 `response_format` / 显式关闭 thinking。按模型、effort、是否显式传 effort、JSON 模式隔离，最多 32 组、不落盘；provider 重建即清空，已记忆参数的请求失败/仍为空时清除。默认链、模型、token 上限、429 cooldown 和业务准入不变，不保证解决上游额度或所有空响应。 |
 | Agent 聊天按需深度 | ✅ | `build_socratic_dialogue_prompt(..., socratic=False)` 让简单问题简答、复杂任务充分展开，新旧入口共享对话收敛规则，角色与语气不能要求无限追问；不新增分类调用，不覆盖实例 reasoning 或压低输出预算。默认 `True` 仅在用户主动探索时使用苏格拉底风格 |
@@ -357,6 +358,7 @@ async for chunk in provider.stream_complete([{"role": "user", "content": "hello"
 async for chunk in provider.stream_complete_with_tools(messages, tools):
     ...
 
+# 每个 chunk 带 provider/model/instance_id；提前 aclose 时 service 用这些字段结算。
 # registry 流式入口与非流式一一对应，fallback 只在首个 delta 之前发生：
 # registry.stream_complete / stream_chain / stream_provider /
 # stream_complete_with_tools / stream_with_tools_chain / stream_provider_with_tools
@@ -712,7 +714,7 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 
 #### 后台 LLM 预算：请求级准入 + 跨进程共享（issue #344）
 
-`scheduler.llm_budget_max_calls / llm_budget_window_seconds` 由 `LLMConcurrencyGate` 在**每次后台请求**上执行：`slot()` 取得并发槽后、yield 之前调用 `_admit_background_call()`，额度用尽抛 `LLMBudgetExhaustedError`（`llm/base.py`，继承 `LLMRateLimitError`，消息带 `N/M` 与配置项名），请求根本不会发到 provider；被拒绝的请求不记账，取消/排队中的请求也不消耗额度。交互 caller（`soul.dialogue`、`api.config_probe` 等）不受影响。
+`scheduler.llm_budget_max_calls / llm_budget_window_seconds` 由 `LLMConcurrencyGate` 在**每次后台请求**上执行：`slot()` 取得并发槽后、yield 之前调用 `_admit_background_call()`，额度用尽抛 `LLMBudgetExhaustedError`（`llm/base.py`，继承 `LLMRateLimitError`，消息带 `N/M` 与配置项名），请求根本不会发到 provider；被拒绝的请求不记账，取消/排队中的请求也不消耗额度。`pause` / `warn` 模式下交互 caller（`soul.dialogue`、`api.config_probe` 等）不受次数预算影响；只有 `budget_on_exceed="stop"` 会连交互调用一起拒绝（见下节）。
 
 计数落在 `background_llm_budget` 表（单行，`BackgroundBudgetLedger`，`llm/budget.py`）：`try_acquire()` 是一个 `BEGIN IMMEDIATE` 事务，窗口过期先重置、额度已满返回 False、否则 +1 放行，因此同一数据库上的 daemon / API / 桌面 worker / CLI 进程共享同一份额度。ledger 不可用时降级为进程内计数并打 WARNING（预算保护不因数据库抖动阻塞出网）。`apply_background_budget_config(gate, config)` 由 CLI、API app、runtime context 与 OpenClaw bootstrap 在构造 gate 后调用，把配置与 ledger 一起装上；`status_payload()` 新增 `llm_background_budget_{max_calls,window_seconds,calls,shared}`。
 
@@ -725,6 +727,45 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 | refill.evaluation | 2 | 候选 batch / single 评估 |
 | refill.supply | 3 | durable inventory 低于目标时动态升级的关键词 / 原料生成；包含 `discovery.explore.queries` 与 `sources.*.extract`，防止 supply 等库存、库存又等 supply 的循环 |
 | maintenance | 4 | Soul、评测、purge、`recommendation.director.preplan` 与健康库存下的 discovery；未知 caller 也落此类 |
+
+#### 每日花费上限（issue #353）
+
+次数预算管不住金额：120 次短评估和 120 次长生成的账单可以差十倍。`scheduler.daily_budget_cny` 以**本地日历日**为窗口，在每次 LLM 请求前读取 `llm_usage.estimated_cost_cny` 的当日累计；`scheduler.budget_on_exceed` 决定超限行为：
+
+- `pause`（默认）：只拒绝后台自动调用，聊天 / 设置 / 手动命令继续可用；
+- `stop`：交互调用也拒绝（`LLMDailyBudgetExceededError`，`budget_exceeded` 诊断码，不会被误报成 provider 限流）；
+- `warn`：全部放行，只记日志与事件。
+
+执行点仍是 `LLMConcurrencyGate.slot()`：后台分支在 `_admit_background_call()` **之前**调用 `_reserve_daily_budget()`，因此被金额拒绝的请求不会顺带烧掉一次次数额度；交互分支只在 `stop` 模式下检查。预留写入共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL），跨进程/热重载可见；`0` 或负数关闭 cap，`daily_budget_reserve_cny=0` 关闭预留但仍按已花金额拦截。
+
+`DailySpendLedger`（`llm/budget.py`）用 `local_day_window()`（`local_day.py`）把本地零点换算成 UTC 文本区间，查询落在 `idx_llm_usage_timestamp` 上，而不是无法走索引的 `date(timestamp,'localtime')`。读失败一律 fail-open 返回 0（新库、表未建、锁冲突都不能把估算变成全站 LLM 停机）；超限事件 `event_type='budget_exceeded'` 每天最多一条，`BEGIN IMMEDIATE` 内先查后插，跨进程不会重复。`ContinuousRefreshController._llm_budget_allowed()` 同时叠加 `_call_budget_allowed()` 与 `_daily_budget_allowed()`，在环路入口友好暂停并打 WARNING。
+
+金额来自静态价目表，因此有两个配套：
+
+1. 未命中 `PRICING` 的 provider/model 会打一次 WARNING（`_warn_unpriced_once`），不再静默按占位价记账；`openai_compatible` 现在有显式 `default` 行；
+2. `llm.cost_multiplier`（`0.1..20`，默认 `1.0`）在 `UsageRecorder` 写库时整体缩放估算。实测账单是估算的 N 倍时设成 N，`llm_usage`、`openbiliclaw cost` 和每日上限就统一到“账单口径”。校准系数只影响新写入的行，历史行不改写。
+
+**2026-11-21 价目校准**：按 models.dev / OpenRouter 的实测价，`deepseek-v4-flash` 为 `$0.15/$0.60` 每百万 token（¥1.08/¥4.32），旧表输出价 ¥2/M 低估 **2.16 倍**，正是 issue #353 里“自估 0.85 / 实际 1.91”的来源；`deepseek-v4-pro` 同步改为 `$0.66/$1.98`。这仍是静态表的止血，长期方案（models.dev + OpenRouter 峰谷窗口 + 用户覆盖 + 余额校准）见 [LLM 价格目录与峰谷调度设计](../plans/2026-11-21-llm-price-catalog-and-peak-scheduling.md)。
+
+超调说明：准入检查的是**已发生花费 + 在途预留**；`scheduler.daily_budget_reserve_cny` 的 per-call 预留放在共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL），并发/跨进程请求不再同时读到同一份余额。但预留是固定 worst-case，不是按本次 prompt 估算：并发 N 个请求各自可能超出自己的预留，极端情况下总超调可超过一个单次调用成本（长推理单次可达 ¥0.1–0.5 量级）。要做精确预扣需要预估 prompt token，收益不足以抵消误判，仍不实现。Embedding 请求不经过该 gate、也不写 `llm_usage`，因此每日上限目前只覆盖聊天 / 评估 / 生成类调用；embedding 费用仍在 `openbiliclaw cost` 之外。
+
+`status_payload()` / `/api/runtime-status` 暴露 `llm_daily_budget_cny`、`llm_daily_budget_on_exceed`、`llm_today_cost_cny`、`llm_daily_budget_state`（`disabled|ok|exceeded`）与 `llm_daily_budget_day`；桌面设置页与插件设置页各有一行“今日已花 / 上限”。
+
+#### 价格目录：按 provider / 模型 / 时刻解析（issue #353 后续）
+
+`llm/rate_card.py` 把“当前价格是多少”从静态表拆成可解析的 `RateCatalog`：
+
+- 随包 `pricing_catalog.json` 由 `scripts/build_llm_price_catalog.py` 从 models.dev（324 providers / 10,018 models 的 input/output/cache 价）与 OpenRouter（476 models 的 UTC 峰谷窗口、长上下文档位）生成；当前快照 16 providers / 2,007 models / 4 个峰谷模型 / 54 个档位模型。
+- 解析优先级：用户 `[llm.pricing.overrides]` > provider+model 精确卡 > 同模型跨 provider 的**最高价**（未知中转站的保守上界）> 静态 `pricing.py` 回退。`0` / 缺失价不会当免费；`ollama` / `sponsored` 这类显式免费 provider 单独处理。
+- `RateCard.effective(now, prompt_tokens)` 同时应用长上下文档位与 UTC 峰谷窗口；DeepSeek 的窗口来自 OpenRouter 路由（工作日 UTC 01–04、06–10 为 2x，= 北京时间 09–12、14–18），无窗口的 provider 不会被假装有谷时。
+- tariff 与长上下文档位都按 **provider + model** 绑定：同模型的其他 provider / 中转不会继承 DeepSeek 的峰谷价，用户 `[llm.pricing.overrides]` 也不会被 catalog 的窗口或档位改写。未知中转报价用同模型跨 provider 的最高价，`0`/缺失价视为 unknown。
+- `UsageRecorder.catalog` 暴露本次结算使用的 `RateCatalog`（只读）；有 catalog 时走 catalog 计费，并把 `exact` / `derived_relay` / `user` / `fallback` 写入 `llm_usage.cost_confidence`；`openbiliclaw cost` 会提示低置信花费占比。`openbiliclaw price --provider … --model …` 可查看当前档位、下一次切换与 CNY 换算。
+- 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步。
+- 目录可用 `openbiliclaw price --sync` 刷新到 `data/pricing_catalog.json`（原子写，失败保留旧文件）；`catalog_for_runtime` 在 `catalog_path` 为空时优先读该文件，否则用随包快照。
+- `llm.cost_aware_routing`（默认关）会在同模型多实例之间按当前价格重排调用链；已知免费 provider（ollama/sponsored/siliconflow_free）按 0 计，不同模型永不互换，未知价格排最后，排序器异常回退配置顺序。
+- Claude 的 cache read / cache write 分开计费（write 默认按输入价 1.25x）；流式响应缺失 usage 时按保守 prompt/completion 估算并标 `fallback`，不再记 ¥0。
+- 每日预算准入带 per-call 预留（`scheduler.daily_budget_reserve_cny`）：并发请求各自预留 worst-case 金额，避免同时读到同一份已花余额；实际费用仍在响应后按 `EffectiveRate` 落账。
+- 峰谷调度已接线（PR #191 的调度骨架）：`scheduler.peak_policy=defer|prefer` 时，`ContinuousRefreshController` 用 catalog 的 `is_peak()`（或手动 `peak_hours`）判断当前是否高峰，再交给 `background_llm_work_allowed()` 的补货水位/交互豁免逻辑；默认 `off`。
 
 导演前台补齐草稿与后台预排共用 `complete_structured_task`，有独立规划截止时间，不注入 core memory；Jev 是另一个 typed decision provider，不进入本 LLM fallback 链或共享它的配额统计。内容摘要与实际反馈不等于 Soul 全画像，详见[导演](director.md)。
 

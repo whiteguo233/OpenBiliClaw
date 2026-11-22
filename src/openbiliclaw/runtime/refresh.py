@@ -29,7 +29,11 @@ from openbiliclaw.runtime.image_cache import (
     select_prefetch_targets,
 )
 from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _KW_PLATFORM_BILIBILI
-from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
+from openbiliclaw.runtime.presence import (
+    PresenceTracker,
+    background_llm_work_allowed,
+    manual_peak_active,
+)
 from openbiliclaw.runtime.source_policy import SOURCE_ORDER as _PLATFORM_SOURCE_ORDER
 from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.speculator import (
@@ -375,6 +379,10 @@ class ContinuousRefreshController:
     # controllers leave this at zero and use CandidateEvalCoordinator instead.
     one_shot_inline_eval_limit: int = 0
     llm_concurrency_gate: Any | None = None
+    # Catalog-derived "is the routed provider in a peak window right now?"
+    # predicate. Injected by the composition root; ``None`` falls back to the
+    # manual ``scheduler.peak_hours`` override (or no deferral).
+    peak_tariff_predicate: Callable[[], bool] | None = None
     bilibili_producer: Any | None = None
     xhs_producer: Any | None = None
     douyin_producer: Any | None = None
@@ -528,6 +536,11 @@ class ContinuousRefreshController:
     _init_grace_consumed: bool = False
     _last_llm_gate_allowed: bool = field(default=True, init=False)
     _last_llm_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
+    _last_daily_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
+    # Short-TTL servable-pool snapshot for peak refill admission. Avoids a DB
+    # read on every loop tick; 30s matches the PR #191 calibration.
+    _peak_pool_available: int = field(default=0, init=False)
+    _peak_pool_available_at: float = field(default=0.0, init=False)
     _startup_maintenance_completed: bool = field(default=False, init=False)
     _last_pool_maintenance_succeeded: bool = field(default=False, init=False)
     # Recipe-driven sources can change availability without a config reload.
@@ -546,8 +559,14 @@ class ContinuousRefreshController:
         "feedback",
     ]
 
-    def _llm_work_allowed(self) -> bool:
-        """Return whether daemon-owned background LLM / embedding work can run."""
+    def _llm_work_allowed(self, *, maintenance: bool = False) -> bool:
+        """Return whether daemon-owned background LLM / embedding work can run.
+
+        ``maintenance`` marks profile/insight/push loops, which peak deferral
+        pauses entirely. Everything else is treated as refill traffic and may
+        bypass the peak block while the servable pool is below
+        ``scheduler.peak_refill_floor`` (PR #191's starvation guard).
+        """
         # Pause every background loop while a guided init is active (gui-init
         # D1) — the continuous refresh / soul-pipeline / producer ticks all gate
         # on this, so init's explicit analyze/build/backfill runs uncontended.
@@ -557,7 +576,13 @@ class ContinuousRefreshController:
                     return False
             except Exception:
                 pass
-        allowed = background_llm_work_allowed(self.scheduler_config, self.presence)
+        peak_active = self._peak_active_now()
+        allowed = background_llm_work_allowed(
+            self.scheduler_config,
+            self.presence,
+            pool_available=None if maintenance else self._peak_refill_pool_available(),
+            peak_active=peak_active,
+        )
         if allowed:
             allowed = self._llm_budget_allowed()
         if allowed != self._last_llm_gate_allowed:
@@ -568,14 +593,62 @@ class ContinuousRefreshController:
             self._last_llm_gate_allowed = allowed
         return allowed
 
-    def _llm_budget_allowed(self) -> bool:
-        """Return whether the daemon's per-window background LLM budget remains.
+    def _peak_active_now(self) -> bool:
+        """Return whether the configured peak policy is active right now.
 
-        The budget is a self-imposed quota (issue #188): scheduler-owned loops
-        count every background LLM request through ``LLMConcurrencyGate`` and
-        pause once the configured window cap is reached. ``max_calls <= 0``
-        disables the guard; a missing gate also keeps the legacy behaviour.
+        Manual ``peak_hours`` wins (for providers the catalog cannot price);
+        otherwise the injected catalog predicate answers. Policy ``off`` and
+        unknown tariffs return False — never invent a cheap window.
         """
+
+        policy = str(getattr(self.scheduler_config, "peak_policy", "off") or "off").strip().lower()
+        if policy not in {"defer", "prefer"}:
+            return False
+        if str(getattr(self.scheduler_config, "peak_hours", "") or "").strip():
+            return manual_peak_active(self.scheduler_config)
+        predicate = self.peak_tariff_predicate
+        if callable(predicate):
+            try:
+                return bool(predicate())
+            except Exception:
+                logger.debug("Peak tariff predicate failed; allowing work", exc_info=True)
+        return False
+
+    def _peak_refill_pool_available(self) -> int:
+        """Return a cached servable-pool count for peak refill admission."""
+
+        now = time.monotonic()
+        if self._peak_pool_available_at and now - self._peak_pool_available_at < 30:
+            return self._peak_pool_available
+        try:
+            counts = self._pool_readiness_counts()
+            available = int(counts.get("available", 0) or 0)
+        except Exception:
+            logger.debug("peak pool available read failed", exc_info=True)
+            available = 0
+        self._peak_pool_available = available
+        self._peak_pool_available_at = now
+        return available
+
+    def _llm_budget_allowed(self) -> bool:
+        """Return whether background LLM work may continue.
+
+        Two self-imposed quotas gate automatic loops:
+
+        - per-window call count (issue #188): ``scheduler.llm_budget_max_calls``
+          per ``llm_budget_window_seconds``;
+        - daily spend (issue #353): ``scheduler.daily_budget_cny`` measured on
+          ``llm_usage.estimated_cost_cny``.
+
+        ``<= 0`` disables either guard; a missing gate or missing spend
+        snapshot keeps the legacy behaviour (allow).
+        """
+
+        return self._call_budget_allowed() and self._daily_budget_allowed()
+
+    def _call_budget_allowed(self) -> bool:
+        """Per-window background call-count quota (issue #188)."""
+
         max_calls = int(getattr(self.scheduler_config, "llm_budget_max_calls", 0) or 0)
         window_seconds = int(
             getattr(self.scheduler_config, "llm_budget_window_seconds", 3600) or 3600
@@ -606,6 +679,45 @@ class ContinuousRefreshController:
                 count,
                 window_seconds,
                 max_calls,
+            )
+        return False
+
+    def _daily_budget_allowed(self) -> bool:
+        """Daily spend quota (issue #353); ``warn`` never pauses loops."""
+
+        gate = self.llm_concurrency_gate
+        snapshot_fn = getattr(gate, "daily_budget_snapshot", None)
+        if not callable(snapshot_fn):
+            return True
+        try:
+            snapshot = snapshot_fn()
+        except Exception:
+            logger.debug("Daily budget snapshot unavailable; allowing work", exc_info=True)
+            return True
+        if not isinstance(snapshot, dict):
+            return True
+        if snapshot.get("llm_daily_budget_state") != "exceeded":
+            return True
+        if snapshot.get("llm_daily_budget_on_exceed") == "warn":
+            return True
+        # A controller that stops before attempting a call would otherwise
+        # never reach the gate's event writer, leaving no audit trail.
+        record_exceeded = getattr(gate, "record_daily_budget_exceeded", None)
+        if callable(record_exceeded):
+            with suppress(Exception):
+                record_exceeded()
+        now = time.monotonic()
+        if now - self._last_daily_budget_warned_at >= 600:
+            self._last_daily_budget_warned_at = now
+            logger.warning(
+                "Daily LLM spend ¥%.4f reached the ¥%.2f cap (budget_on_exceed=%s). "
+                "Automatic discovery/LLM loops are paused until local midnight; "
+                "raise scheduler.daily_budget_cny or set it to 0 to disable the cap. "
+                "Today's number is an estimate — calibrate llm.cost_multiplier if "
+                "the provider invoice differs.",
+                float(snapshot.get("llm_today_cost_cny", 0.0) or 0.0),
+                float(snapshot.get("llm_daily_budget_cny", 0.0) or 0.0),
+                str(snapshot.get("llm_daily_budget_on_exceed", "pause")),
             )
         return False
 
@@ -2382,7 +2494,7 @@ class ContinuousRefreshController:
         fallback ``topic_group=title[:N]`` (the ugly "屎屎/165/三花"
         debug we saw on 2026-05-05).
         """
-        if not self._llm_work_allowed():
+        if not self._llm_work_allowed(maintenance=True):
             return
         if self._profile_ready_observed:
             return
@@ -2411,7 +2523,7 @@ class ContinuousRefreshController:
     async def _loop_soul_pipeline(self) -> None:
         """Soul profile pipeline — buffer flushes, speculator, cognition."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(maintenance=True):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2646,7 +2758,7 @@ class ContinuousRefreshController:
         contribute notification fatigue.
         """
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(maintenance=True):
                 await asyncio.sleep(self.proactive_push_interval_seconds)
                 continue
             # Score un-scored pool items even when the discovery refresh

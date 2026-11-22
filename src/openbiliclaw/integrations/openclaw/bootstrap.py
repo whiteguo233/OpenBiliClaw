@@ -118,6 +118,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     """Build the shared service bundle for the OpenClaw adapter."""
     config = load_config()
     llm_registry = build_llm_registry(config)
+    if bool(getattr(config.llm, "cost_aware_routing", False)):
+        from openbiliclaw.llm.rate_card import build_cost_ranker, catalog_for_runtime
+
+        llm_registry.route_ranker = build_cost_ranker(llm_registry, catalog_for_runtime(config))
     module_overrides = module_overrides_from_config(config)
     llm_concurrency = _llm_concurrency_from_config(config)
 
@@ -146,7 +150,13 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             target=int(config.scheduler.pool_target_count),
         )
 
-    usage_recorder = UsageRecorder(sink=database)
+    from openbiliclaw.llm.rate_card import catalog_for_runtime
+
+    usage_recorder = UsageRecorder(
+        sink=database,
+        cost_multiplier=float(getattr(config.llm, "cost_multiplier", 1.0) or 1.0),
+        catalog=catalog_for_runtime(config),
+    )
 
     # Defensive read matching the getattr(config.scheduler, ..., default)
     # convention below: test doubles (SimpleNamespace configs) may omit the
@@ -537,6 +547,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             result = await result
         return max(0, int(result or 0))
 
+    from openbiliclaw.llm.rate_card import peak_predicate_for_config
+
     runtime_controller = ContinuousRefreshController(
         memory_manager=memory_manager,
         database=database,
@@ -565,6 +577,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,
+        peak_tariff_predicate=peak_predicate_for_config(config),
         one_shot_expression_copy_callback=_drain_one_shot_expression_copy,
         one_shot_inline_eval_limit=4,
     )

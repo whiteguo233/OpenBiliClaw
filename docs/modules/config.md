@@ -446,6 +446,8 @@ LLM 评估，也不会从“本轮不合适”推导长期不喜欢。审计与�
 | `default_chain` | list[string] | `["deepseek"]` | 全局有序实例链。每一项引用一个 `[llm.instances.<id>]`；请求按从左到右的顺序尝试 |
 | `concurrency` | int | `3` | 单 runtime 的 LLM 总并发上限；后台容量派生为 `max(1, total-1)`（默认 2）。合法范围 `1..16` |
 | `timeout` | int | `1200` | 每个实例请求的超时秒数，默认 20 分钟，合法范围 `10..1200` |
+| `cost_aware_routing` | bool | `false` | 同模型多实例时，按当前价格把便宜的实例排到调用链前面（只重排相同归一化 model 的实例；不同模型永不互换）。未知价格排最后，排序器异常时回退配置顺序。默认关闭，不改变现有路由行为 |
+| `cost_multiplier` | float | `1.0` | `llm_usage.estimated_cost_cny` 的校准系数（issue #353），合法范围 `0.1..20`。静态价目表与实际账单有稳定倍差时（尤其 `openai_compatible` 中转）设成实测倍数；`UsageRecorder` 写库时整体缩放，`openbiliclaw cost`、每日预算与 `budget_exceeded` 事件随之对齐。只影响新写入行 |
 
 `default_chain` 里的元素是**实例 ID**，不是 Provider 类型。一个实例是一套完整、可独立调用的端点配置，因此可以同时存在两个 `provider_type = "openai_compatible"` 的中转渠道、两个 OpenAI 账号，或同一网关上的不同模型：
 
@@ -653,6 +655,33 @@ Cheaper Inference 适配器不发送 `reasoning_effort`，且不提供 embedding
 | vLLM 自建 | `http://localhost:8000/v1` | `(vLLM 加载的模型名)` |
 
 `[llm.embedding].provider` 也接受 `openai_compatible`：多数 OpenAI-compat 后端（Together / vLLM / Azure）都暴露 `/v1/embeddings`，可以直接挂上来，与 chat 用同一组 base_url 也行（互相独立的 provider 实例）。
+
+### `[llm.pricing]`
+
+价格目录与用户覆盖（issue #353 后续）。随包 catalog 由 `scripts/build_llm_price_catalog.py` 从 models.dev（provider/model 价目）与 OpenRouter（UTC 峰谷窗口 + 长上下文档位）生成；运行时按 provider/model/当前时刻解析，解析不到才回退 `llm.pricing` 静态表（`pricing.py`）并标 `fallback` 置信度。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `usd_cny_rate` | float | `7.2` | catalog 的 USD 报价换算成 CNY 的汇率，合法范围 `1..50`。写死在配置里，避免历史 `llm_usage` 行随汇率变化而重算 |
+| `catalog_path` | string | `""` | 自定义 catalog JSON 路径；空 = 优先 `data/pricing_catalog.json`（`openbiliclaw price --sync` 写入），否则随包 `src/openbiliclaw/llm/pricing_catalog.json` |
+| `overrides` | array | `[]` | 用户单价覆盖，优先级最高；同步/重建 catalog 不会覆盖 |
+
+覆盖示例（单价单位是**每百万 token**，币种 `USD` 或 `CNY`）：
+
+```toml
+[llm.pricing]
+usd_cny_rate = 7.2
+
+[[llm.pricing.overrides]]
+provider = "openai_compatible"
+model = "glm-5.3-flash"
+input = 0.15
+output = 0.50
+cache_read = 0.03
+currency = "USD"
+```
+
+`provider/model` 都必填，`input` / `output` 必须是有限非负数且不超过 `1e6`/百万 token；缺字段、负数、`nan/inf` 或超限的条目会被忽略并打 WARNING。`llm.cost_multiplier` 同样只接受有限正数，`nan/inf` 回退 `1.0`。`openbiliclaw price --provider … --model …` 可以查看解析结果、当前峰谷档位和置信度。目录里 `0` / 缺失价格不会被当成免费：未知中转站按同模型跨 provider 的**最高价**做保守上界。
 
 ### `[llm.embedding]`
 
@@ -1356,6 +1385,13 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `enabled` | bool | `true` | daemon 后台调度总开关；插件设置页显示为「停止后台 LLM 请求」。关闭后 runtime 的刷新、补池预计算、账户同步、猜测兴趣、主动推送和八源扩展账号周期回拉都会跳过；手动 CLI / API 请求仍按显式操作执行。若候选池为空，推荐页可能暂时没有内容 |
 | `llm_budget_max_calls` | int | `120` | daemon 后台 LLM 请求在 `llm_budget_window_seconds` 内的自设上限。v0.3.236 起是**请求级硬上限**：`LLMConcurrencyGate` 在每次后台请求发出前扣减额度，超限抛 `LLMBudgetExhaustedError`；计数落在共享 SQLite `background_llm_budget` 表，同一数据库上的多个进程（daemon / API / 桌面 worker / CLI）共用一份额度。`ContinuousRefreshController` 另在环路入口查额度以友好暂停自动循环并打 WARNING。认知循环在两个分片之间停下并保留水位。`0` 表示不启用预算。默认值按保护付费 API 额度的工程安全起点设定，正常单用户发现循环通常远低于该值 |
 | `llm_budget_window_seconds` | int | `3600` | 后台 LLM 预算窗口长度（秒），最小 `60`；与 `llm_budget_max_calls` 配合形成固定窗口配额 |
+| `daily_budget_cny` | float | `0.0` | 每日 LLM 花费上限（元，issue #353）。窗口是**本地日历日**，数据源是 `llm_usage.estimated_cost_cny` 当日累计；`LLMConcurrencyGate.slot()` 在每次调用前检查，`ContinuousRefreshController` 在环路入口暂停。`0` 或负数关闭，且不创建 spend ledger、不产生数据库读。允许 `0..100000`；设置页保存时越界/非有限值直接返回 HTTP 400，不再静默回退 0 |
+| `daily_budget_reserve_cny` | float | `0.10` | 每次调用前预留的 worst-case 金额（自动 clamp 到不超过当日上限）。并发请求各自预留，避免同时读到同一份已花金额；实际费用仍以响应后的 `llm_usage` 行为准。`0` 关闭预留 |
+| `budget_on_exceed` | string | `"pause"` | 超限行为。`pause`：只拒绝后台自动调用，聊天 / 设置 / 手动命令仍可用；`stop`：交互调用也拒绝；`warn`：全部放行，只记日志与每日一条 `budget_exceeded` 事件。非法值回退 `pause`，API 保存返回 400 |
+| `peak_policy` | string | `"off"` | 峰谷策略。`off` 保持旧行为；`defer` 在价格目录标记的高峰窗口暂停后台维护，补货只在池子低于 `peak_refill_floor` 时紧急放行；`prefer` 只暂停维护，补货保持新鲜。窗口来自 `[llm.pricing]` catalog；目录没有窗口的 provider 不会假装有谷时。非法值回退 `off`，API 保存返回 400 |
+| `peak_hours` | string | `""` | 手动峰谷窗口覆盖，格式 `"HH:MM-HH:MM,HH:MM-HH:MM"`，按 `peak_timezone_offset_minutes` 解释，**每天生效**（没有工作日维度）；空 = 使用 catalog（catalog 窗口自带工作日）。仅用于目录覆盖不到的 provider；非法值回退空并 WARNING |
+| `peak_timezone_offset_minutes` | int | `480` | 手动 `peak_hours` 的时区偏移（北京 +480）；catalog 窗口本身是 UTC，不受此字段影响。范围 `-720..840` |
+| `peak_refill_floor` | int | `30` | 可服务池数量 ≥ 该值时高峰暂停补货；低于该值时放行以免断供。`0` = 高峰完全停补货（不推荐） |
 | `pause_on_extension_disconnect` | bool | `false` | 开启后，daemon-owned 后台 LLM / embedding 工作只在浏览器插件有 `/api/runtime-stream` 连接、或刚断开仍处于宽限窗口内时运行；离线期间不会自动补新内容 |
 | `extension_disconnect_grace_seconds` | int | `90` | 插件最后一个 `runtime-stream` 连接断开后的宽限秒数；小于等于 0 或无法解析时回退到 `90` |
 | `discovery_cron` | string | `"0 */8 * * *"` | 兼容旧配置的保留字段；当前 runtime 不消费这个 cron，发现补池由轮询、候选池缺口、行为阈值和下方策略间隔驱动。插件与桌面 Web 设置页均不再暴露该字段，只能通过手改 `config.toml` 保留 |

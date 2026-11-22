@@ -408,6 +408,7 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 ├───────────────────┴───────────────────┴───────────────────┴───────────────────┤
 │  Web discovery: HTTP feeds · managed Ego Lite on macOS and Windows Beta       │
 │  LLM & Embedding Routing (Free SiliconFlow Qwen/BGE-M3 · Ollama · Failover)   │
+│  LLM Costing: catalog · daily CNY cap/reserve · peak windows · routing        │
 │  Local SQLite Store (Events · Profile · Pool · Seen Ledger · Chat · Library)  │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```

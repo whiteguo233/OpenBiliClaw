@@ -1856,7 +1856,13 @@ class RecommendationEngine:
                     continue
                 completed += int(getattr(result, "completed", 0) or 0)
                 kind = getattr(result, "kind", None) or classify_llm_failure_kind(result)
-                if kind in {"rate_limited", "timeout", "connection", "server_error"}:
+                if kind in {
+                    "rate_limited",
+                    "budget_exhausted",
+                    "timeout",
+                    "connection",
+                    "server_error",
+                }:
                     transient_kind = str(kind)
                     retry_after = max(
                         retry_after,

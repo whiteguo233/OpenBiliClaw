@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 def _classify_llm_error_code(exc: BaseException) -> str:
     """Map a provider failure to a stable diagnostics alert code."""
+    # Daily spend admission is a *budget* stop, not a provider rate limit.
+    # It subclasses LLMBudgetExhaustedError / LLMRateLimitError for the
+    # existing back-off paths, so this branch must run first — otherwise the
+    # desktop "provider rate limited" banner would hide the real cause.
+    if isinstance(exc, LLMDailyBudgetExceededError):
+        return "budget_exceeded"
     if isinstance(exc, LLMRateLimitError):
         return "rate_limited"
     if isinstance(exc, LLMAuthError):
@@ -60,6 +66,17 @@ class LLMBudgetExhaustedError(LLMRateLimitError):
     local `scheduler.llm_budget_max_calls` window instead of the provider.
     Callers that own a multi-call unit of work (e.g. the cognition cycle) catch
     it to stop between chunks instead of consuming the retry.
+    """
+
+
+class LLMDailyBudgetExceededError(LLMBudgetExhaustedError):
+    """Raised when today's estimated LLM spend has reached the daily cap.
+
+    Distinct from :class:`LLMBudgetExhaustedError` (call *count*) so diagnostics
+    can report ``budget_exceeded`` instead of ``rate_limited`` and the UI can
+    offer the money-specific fix (raise ``scheduler.daily_budget_cny`` or wait
+    for local midnight). Subclassing keeps every "stop this multi-call unit"
+    handler working unchanged.
     """
 
 
@@ -293,11 +310,14 @@ def classify_llm_failure_kind(exc: BaseException) -> str | None:
     seen: set[int] = set()
     current: BaseException | None = exc
     rate_limited = no_provider = auth_failed = model_not_found = False
+    budget_exhausted = False
     timed_out = invalid_response = connection = server_error = False
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         message = str(current).lower()
-        if isinstance(current, LLMRateLimitError) or any(
+        if isinstance(current, LLMBudgetExhaustedError):
+            budget_exhausted = True
+        elif isinstance(current, LLMRateLimitError) or any(
             marker in message for marker in _LLM_QUOTA_MARKERS
         ):
             rate_limited = True
@@ -339,6 +359,8 @@ def classify_llm_failure_kind(exc: BaseException) -> str | None:
         ):
             invalid_response = True
         current = current.__cause__ or current.__context__
+    if budget_exhausted:
+        return "budget_exhausted"
     if rate_limited:
         return "rate_limited"
     if no_provider:
@@ -427,7 +449,7 @@ def describe_llm_failure(exc: BaseException) -> str | None:
 
     seen: set[int] = set()
     current: BaseException | None = exc
-    moderation = auth_failed = rate_limited = False
+    moderation = auth_failed = rate_limited = budget_exhausted = False
     timed_out = no_provider = empty_response = False
     ssl_failed = connect_failed = model_not_found = False
     ollama_model_missing = False
@@ -451,7 +473,9 @@ def describe_llm_failure(exc: BaseException) -> str | None:
             # instance tried, which is the one the user just watched fail.
             if auth_error is None and isinstance(current, LLMAuthError):
                 auth_error = current
-        if isinstance(current, LLMRateLimitError) or any(
+        if isinstance(current, LLMBudgetExhaustedError):
+            budget_exhausted = True
+        elif isinstance(current, LLMRateLimitError) or any(
             marker in message for marker in _LLM_QUOTA_MARKERS
         ):
             rate_limited = True
@@ -486,6 +510,11 @@ def describe_llm_failure(exc: BaseException) -> str | None:
     if moderation:
         return (
             "AI 服务上游因内容合规策略拒绝了本次请求；可更换一个不带内容审查的模型 / 服务商后重试。"
+        )
+    if budget_exhausted:
+        return (
+            "本地 LLM 预算已用尽（不是 provider 限流）：请调高 scheduler.daily_budget_cny "
+            "或 scheduler.llm_budget_max_calls，设为 0 关闭，或等待本地零点 / 预算窗口滚动。"
         )
     if model_not_found:
         reason = (
@@ -579,6 +608,12 @@ class LLMStreamChunk:
 
     delta: str = ""
     response: LLMResponse | None = None
+    # Set by ``LLMRegistry._stream_chain`` so a consumer that aborts before
+    # the terminal chunk can still settle against the provider/model that
+    # actually served the delta (not a guess from the configured chain).
+    provider: str = ""
+    model: str = ""
+    instance_id: str = ""
 
 
 class LLMProvider(ABC):
@@ -800,6 +835,10 @@ class LLMRegistry:
         # fallback chain — for example a legacy/injected Ollama instance
         # registered solely for embedding diagnostics.
         self._chat_disabled: set[str] = set()
+        # Optional cost-aware reordering hook (issue #353 follow-up). It may
+        # only permute the chain; unknown/dropped names are appended back so a
+        # buggy ranker can never disable a fallback.
+        self.route_ranker: Callable[[list[str]], list[str]] | None = None
 
     def register(
         self,
@@ -841,6 +880,32 @@ class LLMRegistry:
             " (default)" if default else "",
             "" if chat_capable else " [embedding-only]",
         )
+
+    def instance_route(self, instance_id: str) -> tuple[str, str]:
+        """Return ``(provider_type, model)`` for one registered instance."""
+
+        name = str(instance_id or "").strip().lower()
+        provider = self._providers.get(name)
+        model = ""
+        if provider is not None:
+            # Production adapters keep the configured model on ``_model``;
+            # older/fake providers expose ``model``. Read both.
+            model = str(getattr(provider, "model", None) or getattr(provider, "_model", "") or "")
+        return self._provider_types.get(name, ""), model
+
+    def _apply_route_ranker(self, order: list[str]) -> list[str]:
+        """Permute a chain through ``route_ranker`` without dropping names."""
+
+        ranker = self.route_ranker
+        if ranker is None or len(order) <= 1:
+            return order
+        try:
+            ranked = [str(name) for name in ranker(list(order))]
+        except Exception:
+            logger.warning("Cost-aware route ranker failed; keeping chain order", exc_info=True)
+            return order
+        filtered = [name for name in ranked if name in order]
+        return filtered + [name for name in order if name not in filtered]
 
     def configure_chain(self, instance_ids: list[str]) -> None:
         """Set the ordered global route without silently adding providers."""
@@ -935,6 +1000,7 @@ class LLMRegistry:
                 continue
             seen.add(instance_id)
             order.append(instance_id)
+        order = self._apply_route_ranker(order)
 
         for position, provider_name in enumerate(order):
             has_next = position + 1 < len(order)
@@ -1110,6 +1176,7 @@ class LLMRegistry:
                 continue
             seen.add(instance_id)
             order.append(instance_id)
+        order = self._apply_route_ranker(order)
 
         supports_any = False
         for position, provider_name in enumerate(order):
@@ -1323,8 +1390,26 @@ class LLMRegistry:
                 reasoning_effort=reasoning_effort,
                 model=model,
             ):
+                provider_type = self._provider_types.get(target, "")
+                requested_model = str(model or "").strip()
+                configured_model = (
+                    requested_model
+                    or str(
+                        getattr(provider, "model", None) or getattr(provider, "_model", "") or ""
+                    ).strip()
+                )
                 if chunk.response is not None:
                     chunk.response.instance_id = target
+                    if not chunk.response.provider:
+                        chunk.response.provider = provider_type
+                    if not chunk.response.model:
+                        chunk.response.model = chunk.model or configured_model
+                if not chunk.provider:
+                    chunk.provider = provider_type
+                if not chunk.model:
+                    chunk.model = configured_model
+                if not chunk.instance_id:
+                    chunk.instance_id = target
                 yield chunk
         except LLMRateLimitError:
             self._mark_rate_limited(target)
@@ -1435,8 +1520,26 @@ class LLMRegistry:
                 reasoning_effort=reasoning_effort,
                 model=model,
             ):
+                provider_type = self._provider_types.get(target, "")
+                requested_model = str(model or "").strip()
+                configured_model = (
+                    requested_model
+                    or str(
+                        getattr(provider, "model", None) or getattr(provider, "_model", "") or ""
+                    ).strip()
+                )
                 if chunk.response is not None:
                     chunk.response.instance_id = target
+                    if not chunk.response.provider:
+                        chunk.response.provider = provider_type
+                    if not chunk.response.model:
+                        chunk.response.model = chunk.model or configured_model
+                if not chunk.provider:
+                    chunk.provider = provider_type
+                if not chunk.model:
+                    chunk.model = configured_model
+                if not chunk.instance_id:
+                    chunk.instance_id = target
                 yield chunk
         except LLMRateLimitError:
             self._mark_rate_limited(target)
@@ -1469,6 +1572,7 @@ class LLMRegistry:
                 continue
             seen.add(instance_id)
             order.append(instance_id)
+        order = self._apply_route_ranker(order)
 
         supports_any = False
         for position, provider_name in enumerate(order):
@@ -1490,11 +1594,25 @@ class LLMRegistry:
                 continue
             emitted_delta = False
             try:
+                provider_type = self._provider_types.get(provider_name, "")
+                configured_model = str(
+                    getattr(provider, "model", None) or getattr(provider, "_model", "") or ""
+                )
                 async for chunk in stream_fn(provider):
                     if chunk.delta:
                         emitted_delta = True
                     if chunk.response is not None:
                         chunk.response.instance_id = provider_name
+                        if not chunk.response.provider:
+                            chunk.response.provider = provider_type
+                        if not chunk.response.model:
+                            chunk.response.model = str(chunk.model or "") or configured_model
+                    if not chunk.provider:
+                        chunk.provider = provider_type
+                    if not chunk.model:
+                        chunk.model = configured_model
+                    if not chunk.instance_id:
+                        chunk.instance_id = provider_name
                     yield chunk
             except LLMRateLimitError as exc:
                 if emitted_delta:
