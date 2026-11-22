@@ -1390,8 +1390,25 @@ class LLMRegistry:
                 reasoning_effort=reasoning_effort,
                 model=model,
             ):
+                provider_type = self._provider_types.get(target, "")
+                configured_model = str(
+                    model
+                    or getattr(provider, "model", None)
+                    or getattr(provider, "_model", "")
+                    or ""
+                )
                 if chunk.response is not None:
                     chunk.response.instance_id = target
+                    if not chunk.response.provider:
+                        chunk.response.provider = provider_type
+                    if not chunk.response.model:
+                        chunk.response.model = chunk.model or configured_model
+                if not chunk.provider:
+                    chunk.provider = provider_type
+                if not chunk.model:
+                    chunk.model = configured_model
+                if not chunk.instance_id:
+                    chunk.instance_id = target
                 yield chunk
         except LLMRateLimitError:
             self._mark_rate_limited(target)
@@ -1502,8 +1519,25 @@ class LLMRegistry:
                 reasoning_effort=reasoning_effort,
                 model=model,
             ):
+                provider_type = self._provider_types.get(target, "")
+                configured_model = str(
+                    model
+                    or getattr(provider, "model", None)
+                    or getattr(provider, "_model", "")
+                    or ""
+                )
                 if chunk.response is not None:
                     chunk.response.instance_id = target
+                    if not chunk.response.provider:
+                        chunk.response.provider = provider_type
+                    if not chunk.response.model:
+                        chunk.response.model = chunk.model or configured_model
+                if not chunk.provider:
+                    chunk.provider = provider_type
+                if not chunk.model:
+                    chunk.model = configured_model
+                if not chunk.instance_id:
+                    chunk.instance_id = target
                 yield chunk
         except LLMRateLimitError:
             self._mark_rate_limited(target)
@@ -1560,9 +1594,7 @@ class LLMRegistry:
             try:
                 provider_type = self._provider_types.get(provider_name, "")
                 configured_model = str(
-                    getattr(provider, "model", None)
-                    or getattr(provider, "_model", "")
-                    or ""
+                    getattr(provider, "model", None) or getattr(provider, "_model", "") or ""
                 )
                 async for chunk in stream_fn(provider):
                     if chunk.delta:
@@ -1572,9 +1604,7 @@ class LLMRegistry:
                         if not chunk.response.provider:
                             chunk.response.provider = provider_type
                         if not chunk.response.model:
-                            chunk.response.model = (
-                                str(chunk.model or "") or configured_model
-                            )
+                            chunk.response.model = str(chunk.model or "") or configured_model
                     if not chunk.provider:
                         chunk.provider = provider_type
                     if not chunk.model:

@@ -267,3 +267,24 @@ async def test_stream_chain_stamps_actual_provider_and_model() -> None:
     assert chunks[0].provider == "openrouter"
     assert chunks[0].model == "glm-4.7-flash"
     assert chunks[0].instance_id == "paid"
+
+
+async def test_exact_provider_stream_is_stamped_with_route_metadata() -> None:
+    from openbiliclaw.llm.base import LLMStreamChunk
+
+    class _ExactStreamProvider:
+        model = "glm-4.7-flash"
+
+        async def stream_complete(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            yield LLMStreamChunk(delta="hello")
+
+    registry = LLMRegistry()
+    registry.register(_ExactStreamProvider(), name="paid", provider_type="openrouter")
+
+    chunks = [
+        chunk
+        async for chunk in registry.stream_provider("paid", [{"role": "user", "content": "hi"}])
+    ]
+    assert chunks[0].provider == "openrouter"
+    assert chunks[0].model == "glm-4.7-flash"
+    assert chunks[0].instance_id == "paid"
