@@ -1403,7 +1403,7 @@ wheels = [
 
 [[package]]
 name = "openbiliclaw"
-version = "0.3.239"
+version = "0.3.240"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

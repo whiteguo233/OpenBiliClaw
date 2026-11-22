@@ -2,6 +2,15 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## v0.3.240：每日 LLM 预算、价格目录与峰谷调度（2026-11-22）
+
+- **每日 LLM 花费上限（issue #353）**：新增 `scheduler.daily_budget_cny` 与 `budget_on_exceed=pause|stop|warn`；按本地日历日累计 `llm_usage.estimated_cost_cny`，每天一条 `budget_exceeded` 事件。共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL）做 per-call 预留，跨进程/热重载可见，usage 在 provider slot 内结算后才释放。
+- **provider/model 价格目录**：随包 16 providers / 2,007 models 的 catalog，覆盖峰谷窗口、长上下文档位、置信度与 USD/CNY；`openbiliclaw price --sync` 原子刷新 data 目录快照，损坏或空快照降级/拒绝覆盖；`llm.cost_multiplier` 校准账单。
+- **峰谷调度与成本路由**：`scheduler.peak_policy=off|defer|prefer` + 补货水位 + 手动窗口；`llm.cost_aware_routing` 仅在相同 model 的实例之间按当前价格重排，免费 provider 优先，未知价格排最后。
+- **记账与流式修复**：Claude cache read/write 分开计费；缺失 usage 的流式请求按保守 fallback 估算；中断流用实际 provider/model/instance metadata 结算；设置页非法预算值返回 HTTP 400。
+- **Windows Ego Lite Beta**：合入 main 的 Windows Ego Lite 安装检测、无窗口宿主与原生握手支持。
+- 桌面/后端/插件统一为 0.3.240；真实 Ollama 非流式、SSE 流、首 delta 提前关闭与完整终止均通过。付费 relay 因账号侧模型权限/额度不可用，未完成付费真实请求。
+
 ## v0.3.239：Windows 安装路径、画像完整性与界面收紧（2026-11-16）
 
 - **文档与项目主页优化（2026-11-21）**：精简中英文 README（`README.md` / `README_EN.md`）至核心用户导览并将 PR 级内部实现细节收敛至 `docs/architecture-overview*.md` 与模块文档；清理误混入快速开始的提示词、重复隐私段、悬空注释与过时数据，保留顶部合作伙伴与生态入口并补齐跨平台多端最新截图。同步翻新 GitHub Pages 主页（`docs/index.html`）：Hero 升级为桌面 + 移动多端叠层展示、安装区改为 4 模式 Tab 切换、15 个内容来源支持按类别筛选、更新过期 Gitee 版本与 Instagram 状态标签、移除静态过时 Star 计数，并全量校验中英 i18n 键、链接与多视口无错渲染。

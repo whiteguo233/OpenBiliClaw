@@ -194,12 +194,12 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 
 ## Recent Updates
 
-📌 Latest: **v0.3.239 (2026-11-16)**
+📌 Latest: **v0.3.240 (2026-11-22)**
 
-- **Choose the Windows install folder**. Interactive installs and upgrades both show Select Destination Location, prefilled with the previous folder.
-- **More complete free-model profiles**. Initial profiles keep the core and values layers, and unknown MBTI is marked pending.
-- **Roomier chat layout**. Desktop and popup fold non-chat chrome away, so small windows show far more conversation.
-- **Popup settings layout fixed**. The blank stretch and narrow-width clipping are gone, and saving still works at 320px.
+- **Daily LLM spend cap**. Local-calendar-day accounting with warn-only / pause-background / stop-all modes and cross-process reservations.
+- **Real price catalog**. 16 providers and 2,007 models with peak windows, long-context tiers and low-confidence warnings.
+- **Peak scheduling and same-model routing**. Pause only background maintenance at peak; pick the cheaper instance within the same model.
+- **Windows Ego Lite Beta**. Detects the official install and supports a headless host with native handshakes.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
