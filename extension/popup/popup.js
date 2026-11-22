@@ -9865,6 +9865,8 @@ function bindSettings() {
   };
 
   const getFloat = (id, fallback) => {
+    const element = document.getElementById(id);
+    if (element?.validity?.badInput) return Number.NaN;
     const raw = getVal(id);
     if (raw === "") return fallback;
     const parsed = parseFloat(raw);

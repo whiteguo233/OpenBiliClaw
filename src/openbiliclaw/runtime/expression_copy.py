@@ -230,11 +230,18 @@ class ExpressionCopyCoordinator:
         self.last_completed = completed
         now = float(self.time_fn())
         pending = self._pending_count()
-        if failure_kind in {"rate_limited", "timeout", "connection", "server_error"}:
+        if failure_kind in {
+            "rate_limited",
+            "budget_exhausted",
+            "timeout",
+            "connection",
+            "server_error",
+        }:
             self._first_pending_at = None
         elif completed <= 0 and pending > 0:
             if failure_kind not in {
                 "rate_limited",
+                "budget_exhausted",
                 "timeout",
                 "connection",
                 "server_error",

@@ -28,6 +28,7 @@ from .concurrency import (
     PrioritySemaphore,
     coerce_total_concurrency,
 )
+from .pricing import estimate_cost
 from .prompts import build_socratic_dialogue_prompt
 from .sponsored_errors import SponsoredError, is_fallback_allowed
 
@@ -890,21 +891,33 @@ class LLMService:
                 record_fn(response, caller=caller)
 
     def _stream_identity(self, caller: str) -> tuple[str, str]:
-        """Return the first routed provider/model for a partially read stream."""
+        """Pick the worst-case route for a stream that closed before terminal.
+
+        The actual fallback provider is only known from the terminal chunk. If
+        the consumer aborts after a delta, charge the most expensive configured
+        route rather than assuming the first (possibly free Ollama) one.
+        """
 
         try:
             chain = self._resolve_module_chain(caller)
         except Exception:
             chain = None
         route = getattr(self.registry, "instance_route", None)
+        candidates: list[tuple[float, str, str]] = []
         if callable(route):
-            for name in chain or []:
+            names = list(chain or getattr(self.registry, "fallback_chain", []) or [])
+            for name in names:
                 try:
                     provider_type, model = route(name)
                 except Exception:
                     continue
                 if provider_type:
-                    return provider_type, model
+                    candidates.append(
+                        (estimate_cost(provider_type, model, 1000, 0), provider_type, model)
+                    )
+        if candidates:
+            _, provider_type, model = max(candidates, key=lambda item: item[0])
+            return provider_type, model
         return str(getattr(self.registry, "default_provider", "") or ""), ""
 
     def _settle_partial_stream(self, *, caller: str, delta_text: str) -> None:

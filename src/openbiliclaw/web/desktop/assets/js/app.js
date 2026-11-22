@@ -9641,6 +9641,8 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function getFloatInput(id, fallback) {
+      const element = document.getElementById(id);
+      if (element?.validity?.badInput) return Number.NaN;
       const value = Number.parseFloat(getInput(id));
       return Number.isFinite(value) ? value : fallback;
     }
