@@ -1069,3 +1069,34 @@ def test_next_change_finds_a_fifteen_minute_window() -> None:
         include_next_change=True,
     )
     assert effective.next_change_at == _utc(2026, 11, 23, 1, 0)
+
+
+def test_next_change_finds_a_five_minute_window() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "deepseek": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "provider": "deepseek",
+                        "days": [0],
+                        "start": 60,
+                        "end": 65,
+                        "input": 2.0,
+                        "output": 4.0,
+                        "label": "peak",
+                        "multiplier": 2.0,
+                    }
+                ]
+            },
+        }
+    )
+    card = catalog.card("deepseek", "m")
+    assert card is not None
+    effective = card.effective(
+        now=_utc(2026, 11, 23, 0, 55),
+        include_next_change=True,
+    )
+    assert effective.next_change_at == _utc(2026, 11, 23, 1, 0)

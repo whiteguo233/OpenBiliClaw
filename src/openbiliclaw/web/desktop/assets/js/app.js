@@ -13398,7 +13398,7 @@ ${cardFeedbackBarHtml()}`;
           source_incremental_enabled: Boolean(document.getElementById("sourceIncrementalEnabled")?.checked),
           extension_disconnect_grace_seconds: getIntInput("extensionDisconnectGrace", 90),
           pool_target_count: getIntInput("poolTarget", 300),
-          daily_budget_cny: Math.max(0, getFloatInput("dailyBudgetCny", 0)),
+          daily_budget_cny: getFloatInput("dailyBudgetCny", 0),
           budget_on_exceed: $("#budgetOnExceed")?.value || "pause",
           peak_policy: $("#peakPolicy")?.value || "off",
           peak_refill_floor: getIntInput("peakRefillFloor", 30),

@@ -18,6 +18,7 @@ from .base import (
     LLMBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMResponse,
     LLMStreamChunk,
     LLMToolCallUnsupportedError,
 )
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
 
     from openbiliclaw.memory.manager import MemoryManager
 
-    from .base import LLMResponse
     from .sponsored_provider import SponsoredProvider
 
 
@@ -832,6 +832,7 @@ class LLMService:
                 yield chunk
 
         terminal: LLMResponse | None = None
+        delta_text = ""
         try:
             async with self._provider_slot(
                 caller=caller,
@@ -839,12 +840,16 @@ class LLMService:
             ):
                 try:
                     async for chunk in _route_stream():
+                        if chunk.delta:
+                            delta_text += chunk.delta
                         if chunk.response is not None:
                             terminal = chunk.response
                         yield chunk
                 finally:
                     if terminal is not None and terminal.content.strip():
                         self._record_usage(terminal, caller=caller)
+                    elif terminal is None:
+                        self._settle_partial_stream(caller=caller, delta_text=delta_text)
         except LLMBudgetExhaustedError:
             # Admission control, not a provider failure: keep the type so
             # callers can stop their multi-call unit instead of retrying.
@@ -883,6 +888,40 @@ class LLMService:
         if callable(record_fn):
             with suppress(Exception):
                 record_fn(response, caller=caller)
+
+    def _stream_identity(self, caller: str) -> tuple[str, str]:
+        """Return the first routed provider/model for a partially read stream."""
+
+        try:
+            chain = self._resolve_module_chain(caller)
+        except Exception:
+            chain = None
+        route = getattr(self.registry, "instance_route", None)
+        if callable(route):
+            for name in chain or []:
+                try:
+                    provider_type, model = route(name)
+                except Exception:
+                    continue
+                if provider_type:
+                    return provider_type, model
+        return str(getattr(self.registry, "default_provider", "") or ""), ""
+
+    def _settle_partial_stream(self, *, caller: str, delta_text: str) -> None:
+        """Charge a stream the consumer closed before its terminal chunk.
+
+        The provider has already seen the request. Without a settlement, an
+        aborted stream is free and can bypass the daily cap indefinitely; the
+        recorder's missing-usage path fills a conservative estimate.
+        """
+
+        if not delta_text.strip():
+            return
+        provider, model = self._stream_identity(caller)
+        self._record_usage(
+            LLMResponse(content=delta_text, provider=provider, model=model),
+            caller=caller,
+        )
 
     async def execute_sponsored_task(
         self,
@@ -1653,6 +1692,7 @@ class LLMService:
                 yield chunk
 
         terminal: LLMResponse | None = None
+        delta_text = ""
         try:
             async with self._provider_slot(
                 caller=caller,
@@ -1660,12 +1700,16 @@ class LLMService:
             ):
                 try:
                     async for chunk in _route_stream():
+                        if chunk.delta:
+                            delta_text += chunk.delta
                         if chunk.response is not None:
                             terminal = chunk.response
                         yield chunk
                 finally:
                     if terminal is not None and (terminal.content.strip() or terminal.tool_calls):
                         self._record_usage(terminal, caller=caller)
+                    elif terminal is None:
+                        self._settle_partial_stream(caller=caller, delta_text=delta_text)
         except LLMToolCallUnsupportedError:
             raise
         except LLMBudgetExhaustedError:

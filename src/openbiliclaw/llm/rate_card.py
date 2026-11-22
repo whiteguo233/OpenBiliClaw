@@ -217,8 +217,8 @@ class RateCard:
         # hourly scan reports 01:45 for a 01:00 boundary when queried at 00:45.
         low = moment
         high: datetime | None = None
-        step = timedelta(minutes=15)
-        for steps in range(1, 8 * 24 * 4):
+        step = timedelta(minutes=1)
+        for steps in range(1, 8 * 24 * 60):
             candidate = moment + step * steps
             if label_at(candidate) != current_label:
                 high = candidate

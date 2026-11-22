@@ -27,7 +27,7 @@ def test_desktop_settings_render_and_save_daily_budget_controls() -> None:
 
     assert '"dailyBudgetCny"' in DESKTOP_JS
     assert 'setSelect("budgetOnExceed", scheduler.budget_on_exceed || "pause")' in DESKTOP_JS
-    assert 'daily_budget_cny: Math.max(0, getFloatInput("dailyBudgetCny", 0))' in DESKTOP_JS
+    assert 'daily_budget_cny: getFloatInput("dailyBudgetCny", 0)' in DESKTOP_JS
     assert 'budget_on_exceed: $("#budgetOnExceed")?.value || "pause"' in DESKTOP_JS
     # Runtime whitelist must carry the fields, or the status line silently
     # shows zeros (the same class of bug as the account-sync chip).
@@ -53,7 +53,7 @@ def test_extension_settings_render_and_save_daily_budget_controls() -> None:
 
     assert '"cfgDailyBudgetCny"' in POPUP_JS
     assert 'setVal("cfgBudgetOnExceed", cfg.scheduler?.budget_on_exceed || "pause")' in POPUP_JS
-    assert 'daily_budget_cny: Math.max(0, getFloat("cfgDailyBudgetCny", 0))' in POPUP_JS
+    assert 'daily_budget_cny: getFloat("cfgDailyBudgetCny", 0)' in POPUP_JS
     assert 'budget_on_exceed: getVal("cfgBudgetOnExceed") || "pause"' in POPUP_JS
     assert "renderDailyBudgetStatus" in POPUP_JS
     # The popup normalizer is an explicit-key whitelist too; SSE events rebuild

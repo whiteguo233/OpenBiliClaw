@@ -536,3 +536,27 @@ def test_usage_recorder_estimates_when_stream_usage_is_missing(tmp_path: Path) -
     assert today["calls"] == 1
     assert today["cost_cny"] > 0
     assert today["prompt_tokens"] >= 2048
+
+
+def test_partial_stream_settlement_charges_the_ledger(tmp_path: Path) -> None:
+    from openbiliclaw.llm.service import LLMService
+
+    class _StubRegistry:
+        default_provider = "openai"
+
+        def instance_route(self, _name: str) -> tuple[str, str]:
+            return "openai", "gpt-4o-mini"
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    service = LLMService(
+        registry=_StubRegistry(),
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db),
+    )
+
+    service._settle_partial_stream(caller="e2e.stream", delta_text="partial answer")
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["calls"] == 1
+    assert today["cost_cny"] > 0

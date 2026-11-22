@@ -11734,7 +11734,7 @@ function bindSettings() {
         source_incremental_enabled: checked("cfgSourceIncrementalEnabled"),
         extension_disconnect_grace_seconds: getInt("cfgExtensionDisconnectGrace", 90),
         pool_target_count: getInt("cfgPoolTarget", 300),
-        daily_budget_cny: Math.max(0, getFloat("cfgDailyBudgetCny", 0)),
+        daily_budget_cny: getFloat("cfgDailyBudgetCny", 0),
         budget_on_exceed: getVal("cfgBudgetOnExceed") || "pause",
         peak_policy: getVal("cfgPeakPolicy") || "off",
         peak_refill_floor: getInt("cfgPeakRefillFloor", 30),
