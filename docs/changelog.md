@@ -9,7 +9,7 @@
 - **峰谷调度与成本路由**：`scheduler.peak_policy=off|defer|prefer` + 补货水位 + 手动窗口；`llm.cost_aware_routing` 仅在相同 model 的实例之间按当前价格重排，免费 provider 优先，未知价格排最后。
 - **记账与流式修复**：Claude cache read/write 分开计费；缺失 usage 的流式请求按保守 fallback 估算；中断流用实际 provider/model/instance metadata 结算；设置页非法预算值返回 HTTP 400。
 - **Windows Ego Lite Beta**：合入 main 的 Windows Ego Lite 安装检测、无窗口宿主与原生握手支持。
-- 后端与插件发布为 0.3.240；Chrome 已提交 `PENDING_REVIEW`，Firefox AMO 已受理 `0.3.240`。桌面安装包与 Docker 镜像因获批的 `sponsored-runtime-2026-11-16.1` 只兼容 0.3.239、runtime release workflow 在分配 runner 前失败，暂未发布；详见 [v0.3.240 发布记录](testing/2026-11-22-release-v0.3.240.md)。
+- 后端与插件发布为 0.3.240；Chrome 已提交 `PENDING_REVIEW`，Firefox AMO 已受理 `0.3.240`。桌面安装包与 Docker 镜像因获批的 `sponsored-runtime-2026-11-16.1` 只兼容 0.3.239、runtime release workflow 在分配 runner 前失败，暂未发布；聚合页暂标 pre-release，Latest 保留 0.3.239；详见 [v0.3.240 发布记录](testing/2026-11-22-release-v0.3.240.md)。
 - 真实 Ollama 非流式、SSE 流、首 delta 提前关闭与完整终止均通过。付费 relay 因账号侧模型权限/额度不可用，未完成付费真实请求。
 
 ## v0.3.239：Windows 安装路径、画像完整性与界面收紧（2026-11-16）
