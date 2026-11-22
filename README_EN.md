@@ -405,7 +405,7 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 │  & Probe Dialogue │   Memory Store    │  & Jev/LLM Eval   │ & Warm Reasons    │
 ├───────────────────┴───────────────────┴───────────────────┴───────────────────┤
 │  LLM & Embedding Routing (Free SiliconFlow Qwen/BGE-M3 · Ollama · Failover)   │
-│  LLM Costing: price catalog · daily CNY cap + shared reserve · peak windows · same-model routing │
+│  LLM Costing: catalog · daily CNY cap/reserve · peak windows · routing        │
 │  Local SQLite Store (Events · Profile · Pool · Seen Ledger · Chat · Library)  │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```

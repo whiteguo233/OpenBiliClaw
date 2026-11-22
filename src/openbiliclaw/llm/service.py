@@ -895,7 +895,8 @@ class LLMService:
 
         The actual fallback provider is only known from the terminal chunk. If
         the consumer aborts after a delta, charge the most expensive configured
-        route rather than assuming the first (possibly free Ollama) one.
+        route (catalog first, static table fallback) rather than assuming the
+        first / free instance.
         """
 
         try:
@@ -904,21 +905,66 @@ class LLMService:
             chain = None
         route = getattr(self.registry, "instance_route", None)
         candidates: list[tuple[float, str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(provider_type: str, model: str) -> None:
+            provider_key = str(provider_type or "").strip().lower()
+            if not provider_key or (provider_key, model) in seen:
+                return
+            seen.add((provider_key, model))
+            catalog = getattr(self.usage_recorder, "catalog", None)
+            cost = 0.0
+            if catalog is not None:
+                try:
+                    effective = catalog.resolve(provider_key, model, prompt_tokens=1000)
+                except Exception:
+                    effective = None
+                if effective is not None:
+                    cost = effective.cost(
+                        prompt_tokens=1000,
+                        completion_tokens=0,
+                        usd_cny=catalog.usd_cny,
+                    )
+            if cost <= 0:
+                cost = estimate_cost(provider_key, model, 1000, 0)
+            candidates.append((cost, provider_key, model))
+
+        names = list(chain or getattr(self.registry, "fallback_chain", []) or [])
         if callable(route):
-            names = list(chain or getattr(self.registry, "fallback_chain", []) or [])
             for name in names:
                 try:
                     provider_type, model = route(name)
                 except Exception:
                     continue
-                if provider_type:
-                    candidates.append(
-                        (estimate_cost(provider_type, model, 1000, 0), provider_type, model)
-                    )
+                add(provider_type, model)
+
+        fallback_provider = str(getattr(self.registry, "fallback_provider", "") or "")
+        if fallback_provider:
+            provider_type, model = "", ""
+            if callable(route):
+                with suppress(Exception):
+                    provider_type, model = route(fallback_provider)
+            add(provider_type or fallback_provider, model)
+
+        try:
+            override = self._resolve_module_override(caller)
+        except Exception:
+            override = None
+        if override is not None:
+            add(override[0], str(override[1] or ""))
+
+        default_provider = str(getattr(self.registry, "default_provider", "") or "")
+        if default_provider:
+            model = ""
+            if callable(route):
+                with suppress(Exception):
+                    _, model = route(default_provider)
+            add(default_provider, model)
+
         if candidates:
             _, provider_type, model = max(candidates, key=lambda item: item[0])
             return provider_type, model
-        return str(getattr(self.registry, "default_provider", "") or ""), ""
+        return "", ""
 
     def _settle_partial_stream(self, *, caller: str, delta_text: str) -> None:
         """Charge a stream the consumer closed before its terminal chunk.

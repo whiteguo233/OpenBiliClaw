@@ -560,3 +560,44 @@ def test_partial_stream_settlement_charges_the_ledger(tmp_path: Path) -> None:
     today = db.query_llm_usage_by_day(days=7)[0]
     assert today["calls"] == 1
     assert today["cost_cny"] > 0
+
+
+def test_partial_stream_picks_paid_fallback_over_free_ollama(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+    from openbiliclaw.llm.service import LLMService
+
+    class _Registry:
+        default_provider = "local"
+        fallback_chain = ["local", "paid"]
+        fallback_provider = "paid"
+
+        def instance_route(self, name: str) -> tuple[str, str]:
+            return {
+                "local": ("ollama", "glm-4.7-flash"),
+                "paid": ("openrouter", "glm-4.7-flash"),
+            }[name]
+
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {
+                        "glm-4.7-flash": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "currency": "USD",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    service = LLMService(
+        registry=_Registry(),
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db, catalog=catalog),
+    )
+
+    assert service._stream_identity("e2e.stream") == ("openrouter", "glm-4.7-flash")

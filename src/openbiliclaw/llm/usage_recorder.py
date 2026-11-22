@@ -98,6 +98,12 @@ class UsageRecorder:
         self._catalog = catalog
 
     @property
+    def catalog(self) -> RateCatalog | None:
+        """The rate catalog used for settlement, when one is wired."""
+
+        return self._catalog
+
+    @property
     def enabled(self) -> bool:
         return self._sink is not None
 
