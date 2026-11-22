@@ -121,11 +121,30 @@ class UsageRecorder:
 
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        missing_usage = prompt_tokens <= 0 and completion_tokens <= 0
+        if missing_usage:
+            # A compatible gateway can reject stream_options and then return a
+            # stream with no usage object. Recording ¥0 would let such calls
+            # bypass the daily cap indefinitely; charge a conservative fallback
+            # instead and expose the low confidence to cost/status views.
+            completion_tokens = max(1, len(str(getattr(response, "content", "") or "")) // 4)
+            prompt_tokens = max(2048, completion_tokens)
+            logger.warning(
+                "LLM usage missing for provider=%r model=%r; recording a "
+                "conservative fallback estimate",
+                provider,
+                model,
+            )
         # Normalized cache field — providers populate when their backend
         # served some input tokens from prompt cache. ``cached_input_tokens``
         # is always <= prompt_tokens. See provider docs in
         # openai_provider.py / claude_provider.py / gemini_provider.py.
         cached_tokens = int(usage.get("cached_input_tokens", 0) or 0)
+        cache_write_tokens = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        # Anthropic's ``input_tokens`` excludes both cache reads and cache
+        # writes; OpenAI/Gemini include reads in prompt_tokens.
+        if provider in {"claude", "anthropic"} and (cached_tokens or cache_write_tokens):
+            prompt_tokens += cached_tokens + cache_write_tokens
 
         cost_confidence = "fallback"
         cost: float | None = None
@@ -144,6 +163,7 @@ class UsageRecorder:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     cached_tokens=cached_tokens,
+                    cache_write_tokens=cache_write_tokens,
                     usd_cny=self._catalog.usd_cny,
                 )
                 cost_confidence = effective.confidence
@@ -155,10 +175,13 @@ class UsageRecorder:
                     prompt_tokens,
                     completion_tokens,
                     cached_tokens=cached_tokens,
+                    cache_write_tokens=cache_write_tokens,
                 )
             except Exception:
                 logger.debug("estimate_cost failed", exc_info=True)
                 return
+        if missing_usage:
+            cost_confidence = "fallback"
         cost *= self._cost_multiplier
 
         # Real-time INFO log so `journalctl -fu openbiliclaw` /

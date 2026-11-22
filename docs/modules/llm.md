@@ -761,7 +761,8 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 - `UsageRecorder` 有 catalog 时走 catalog 计费，并把 `exact` / `derived_relay` / `user` / `fallback` 写入 `llm_usage.cost_confidence`；`openbiliclaw cost` 会提示低置信花费占比。`openbiliclaw price --provider … --model …` 可查看当前档位、下一次切换与 CNY 换算。
 - 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步。
 - 目录可用 `openbiliclaw price --sync` 刷新到 `data/pricing_catalog.json`（原子写，失败保留旧文件）；`catalog_for_runtime` 在 `catalog_path` 为空时优先读该文件，否则用随包快照。
-- `llm.cost_aware_routing`（默认关）会在同模型多实例之间按当前价格重排调用链；不同模型永不互换，未知价格排最后，排序器异常回退配置顺序。
+- `llm.cost_aware_routing`（默认关）会在同模型多实例之间按当前价格重排调用链；已知免费 provider（ollama/sponsored/siliconflow_free）按 0 计，不同模型永不互换，未知价格排最后，排序器异常回退配置顺序。
+- Claude 的 cache read / cache write 分开计费（write 默认按输入价 1.25x）；流式响应缺失 usage 时按保守 prompt/completion 估算并标 `fallback`，不再记 ¥0。
 - 每日预算准入带 per-call 预留（`scheduler.daily_budget_reserve_cny`）：并发请求各自预留 worst-case 金额，避免同时读到同一份已花余额；实际费用仍在响应后按 `EffectiveRate` 落账。
 - 峰谷调度已接线（PR #191 的调度骨架）：`scheduler.peak_policy=defer|prefer` 时，`ContinuousRefreshController` 用 catalog 的 `is_peak()`（或手动 `peak_hours`）判断当前是否高峰，再交给 `background_llm_work_allowed()` 的补货水位/交互豁免逻辑；默认 `off`。
 

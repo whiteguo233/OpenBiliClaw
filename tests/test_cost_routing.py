@@ -218,3 +218,29 @@ def test_instance_route_reads_private_model_attribute() -> None:
 
     registry.register(_PrivateModelProvider("relay", "deepseek-v4-flash"), name="relay")
     assert registry.instance_route("relay") == ("relay", "deepseek-v4-flash")
+
+
+def test_ranker_prefers_known_free_ollama_over_a_paid_route() -> None:
+    registry = _RouteRegistry(
+        {
+            "local": ("ollama", "deepseek-r1"),
+            "paid": ("openrouter", "deepseek-r1"),
+        }
+    )
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {
+                        "deepseek-r1": {
+                            "input": 0.1,
+                            "output": 0.2,
+                            "currency": "USD",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    rank = build_cost_ranker(registry, catalog)
+    assert rank(["paid", "local"]) == ["local", "paid"]

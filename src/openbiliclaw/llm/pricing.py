@@ -207,6 +207,7 @@ def estimate_cost(
     prompt_tokens: int,
     completion_tokens: int,
     cached_tokens: int = 0,
+    cache_write_tokens: int = 0,
     *,
     cost_multiplier: float = 1.0,
 ) -> float:
@@ -257,7 +258,8 @@ def estimate_cost(
     prompt_tokens = max(0, prompt_tokens)
     completion_tokens = max(0, completion_tokens)
     cached_tokens = max(0, min(cached_tokens, prompt_tokens))
-    non_cached = prompt_tokens - cached_tokens
+    cache_write_tokens = max(0, min(cache_write_tokens, prompt_tokens - cached_tokens))
+    non_cached = prompt_tokens - cached_tokens - cache_write_tokens
 
     discount = CACHE_HIT_DISCOUNT.get(provider, 0.5)
     if model in {"MiniMax-M3.1-Flash", "minimax/minimax-m3.1-flash"}:
@@ -265,6 +267,7 @@ def estimate_cost(
     estimate = (
         (non_cached / 1000.0) * input_rate
         + (cached_tokens / 1000.0) * input_rate * discount
+        + (cache_write_tokens / 1000.0) * input_rate * 1.25
         + (completion_tokens / 1000.0) * output_rate
     )
     return round(estimate * max(0.0, float(cost_multiplier)), 6)

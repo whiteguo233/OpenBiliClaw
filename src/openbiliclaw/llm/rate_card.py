@@ -39,6 +39,7 @@ _BUNDLED_PATH = Path(__file__).with_name("pricing_catalog.json")
 # this; a value near float max can overflow the spend ledger to infinity.
 _MAX_RATE_PER_MTOK = 1_000_000.0
 _MAX_USD_CNY = 1_000.0
+_FREE_ROUTE_PROVIDERS = frozenset({"ollama", "sponsored", "siliconflow_free"})
 
 _PROVIDER_ALIASES = {
     "claude": "anthropic",
@@ -216,8 +217,9 @@ class RateCard:
         # hourly scan reports 01:45 for a 01:00 boundary when queried at 00:45.
         low = moment
         high: datetime | None = None
-        for hours in range(1, 8 * 24):
-            candidate = moment + timedelta(hours=hours)
+        step = timedelta(minutes=15)
+        for steps in range(1, 8 * 24 * 4):
+            candidate = moment + step * steps
             if label_at(candidate) != current_label:
                 high = candidate
                 break
@@ -255,6 +257,7 @@ class EffectiveRate:
         prompt_tokens: int,
         completion_tokens: int,
         cached_tokens: int = 0,
+        cache_write_tokens: int = 0,
         usd_cny: float = 7.2,
     ) -> float:
         """Return the estimated cost in CNY for one call.
@@ -268,14 +271,21 @@ class EffectiveRate:
         prompt = max(0, int(prompt_tokens))
         completion = max(0, int(completion_tokens))
         cached = max(0, min(int(cached_tokens), prompt))
-        non_cached = prompt - cached
+        cache_write = max(0, min(int(cache_write_tokens), prompt - cached))
+        non_cached = prompt - cached - cache_write
         cache_rate = self.rates.cache_read_per_mtok
         if cache_rate is None and cached:
             discount = CACHE_HIT_DISCOUNT.get(self.provider, 0.5)
             cache_rate = self.rates.input_per_mtok * discount
+        cache_write_rate = self.rates.cache_write_per_mtok
+        if cache_write_rate is None:
+            # Anthropic bills cache creation at 1.25x input. Charging input
+            # would undercount exactly the tokens a cache miss can generate.
+            cache_write_rate = self.rates.input_per_mtok * 1.25
         raw = (
             (non_cached / 1_000_000.0) * self.rates.input_per_mtok
             + (cached / 1_000_000.0) * (cache_rate or 0.0)
+            + (cache_write / 1_000_000.0) * cache_write_rate
             + (completion / 1_000_000.0) * self.rates.output_per_mtok
         )
         if self.currency.upper() == "USD":
@@ -915,6 +925,8 @@ def build_cost_ranker(
         def score(name: str) -> float:
             route = getattr(registry, "instance_route", None)
             provider_type, model = route(name) if callable(route) else ("", "")
+            if provider_type in _FREE_ROUTE_PROVIDERS:
+                return 0.0
             effective = catalog.resolve(provider_type, model, now=now)
             if effective is None:
                 return float("inf")

@@ -312,8 +312,10 @@ def test_usage_recorder_swallows_sink_errors(tmp_path: Path) -> None:
 
 
 def test_usage_recorder_handles_response_without_usage(tmp_path: Path) -> None:
-    """Some providers (e.g. older models, partial failures) may return
-    LLMResponse without a usage dict. Record 0 tokens / 0 cost."""
+    """A usage-less response is charged a conservative fallback estimate.
+
+    Recording 0 would let a gateway that rejects stream_options bypass the
+    daily cap indefinitely (Codex acceptance finding)."""
     db = Database(tmp_path / "usage.db")
     db.initialize()
     recorder = UsageRecorder(sink=db)
@@ -327,8 +329,8 @@ def test_usage_recorder_handles_response_without_usage(tmp_path: Path) -> None:
     rows = db.query_llm_usage_by_day(days=7)
     assert len(rows) == 1
     assert rows[0]["calls"] == 1
-    assert rows[0]["prompt_tokens"] == 0
-    assert rows[0]["cost_cny"] == 0.0
+    assert rows[0]["prompt_tokens"] >= 2048
+    assert rows[0]["cost_cny"] > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -471,3 +473,66 @@ def test_today_query_sums_low_confidence_spend(tmp_path: Path) -> None:
     today = db.query_llm_usage_today()
     assert today["cost_cny"] == pytest.approx(0.03)
     assert today["low_confidence_cost_cny"] == pytest.approx(0.02)
+
+
+def test_usage_recorder_charges_claude_cache_writes(tmp_path: Path) -> None:
+    from openbiliclaw.llm.rate_card import RateCatalog
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "anthropic": {
+                    "models": {
+                        "claude-test": {
+                            "input": 15.0,
+                            "output": 75.0,
+                            "cache_read": 1.5,
+                            "cache_write": 18.75,
+                            "currency": "USD",
+                            "source": "test",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    recorder = UsageRecorder(sink=db, catalog=catalog)
+    response = _FakeResponse(
+        provider="claude",
+        model="claude-test",
+        prompt_tokens=50,
+        completion_tokens=100,
+    )
+    response.usage["cached_input_tokens"] = 16000
+    response.usage["cache_creation_input_tokens"] = 16000
+    response.content = "cached reply"
+
+    recorder.record(response, caller="e2e.claude")
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    # 50 uncached @15 + 16k read @1.5 + 16k write @18.75 + 100 out @75
+    # = $0.33225 × 7.2 = ¥2.3922
+    assert today["cost_cny"] == pytest.approx(2.3922, rel=1e-4)
+
+
+def test_usage_recorder_estimates_when_stream_usage_is_missing(tmp_path: Path) -> None:
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    recorder = UsageRecorder(sink=db)
+    response = _FakeResponse(
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
+    response.usage = {}
+    response.content = "a" * 400
+
+    recorder.record(response, caller="e2e.stream")
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["calls"] == 1
+    assert today["cost_cny"] > 0
+    assert today["prompt_tokens"] >= 2048

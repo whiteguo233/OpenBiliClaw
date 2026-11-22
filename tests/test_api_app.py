@@ -23158,3 +23158,32 @@ async def test_delight_pending_batch_does_not_block_other_requests(blocked_stage
     assert response.status_code == 200
     assert [item["bvid"] for item in response.json()["items"]] == ["kept"]
     assert response.json()["items"][0]["state"] == "liked"
+
+
+def test_put_config_rejects_out_of_range_daily_budget(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    from openbiliclaw.config import Config, save_config
+
+    config_path = tmp_path / "config.toml"
+    cfg = Config()
+    cfg.scheduler.daily_budget_cny = 5.0
+    save_config(cfg, config_path)
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+
+    saved: list[Config] = []
+
+    def fake_save(c, path=None):
+        saved.append(c)
+        save_config(c, config_path)
+
+    monkeypatch.setattr("openbiliclaw.config.save_config", fake_save)
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
+
+    response = client.put("/api/config", json={"scheduler": {"daily_budget_cny": 100001}})
+
+    assert response.status_code == 400
+    assert cfg.scheduler.daily_budget_cny == pytest.approx(5.0)
+    assert saved == []

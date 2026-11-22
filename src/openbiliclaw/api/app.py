@@ -17,6 +17,7 @@ import inspect
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -25756,16 +25757,25 @@ def create_app(
                             ),
                         )
                     elif key == "daily_budget_cny":
-                        setattr(
-                            cfg.scheduler,
-                            key,
-                            _normalize_scheduler_float(
-                                sdata[key],
-                                default=0.0,
-                                min_value=0.0,
-                                max_value=100000.0,
-                            ),
-                        )
+                        raw_budget = sdata[key]
+                        try:
+                            budget_value = float(raw_budget)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_cny must be a number in 0..100000",
+                            ) from exc
+                        if (
+                            isinstance(raw_budget, bool)
+                            or not math.isfinite(budget_value)
+                            or budget_value < 0
+                            or budget_value > 100000
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_cny must be in 0..100000",
+                            )
+                        setattr(cfg.scheduler, key, budget_value)
                     elif key == "budget_on_exceed":
                         mode = str(sdata[key] or "").strip().lower()
                         if mode not in BUDGET_ON_EXCEED_MODES:
@@ -25776,16 +25786,25 @@ def create_app(
                             )
                         setattr(cfg.scheduler, key, mode)
                     elif key == "daily_budget_reserve_cny":
-                        setattr(
-                            cfg.scheduler,
-                            key,
-                            _normalize_scheduler_float(
-                                sdata[key],
-                                default=0.10,
-                                min_value=0.0,
-                                max_value=100.0,
-                            ),
-                        )
+                        raw_reserve = sdata[key]
+                        try:
+                            reserve_value = float(raw_reserve)
+                        except (TypeError, ValueError, OverflowError) as exc:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_reserve_cny must be a number in 0..100",
+                            ) from exc
+                        if (
+                            isinstance(raw_reserve, bool)
+                            or not math.isfinite(reserve_value)
+                            or reserve_value < 0
+                            or reserve_value > 100
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="daily_budget_reserve_cny must be in 0..100",
+                            )
+                        setattr(cfg.scheduler, key, reserve_value)
                     elif key == "peak_policy":
                         policy = str(sdata[key] or "").strip().lower()
                         if policy not in PEAK_POLICIES:
