@@ -643,3 +643,60 @@ def test_partial_stream_uses_actual_free_route_without_overcharging(tmp_path: Pa
 
     today = db.query_llm_usage_by_day(days=7)[0]
     assert today["cost_cny"] == 0.0
+
+
+async def test_public_stream_early_close_settles_with_route_metadata(tmp_path: Path) -> None:
+    import asyncio
+
+    from openbiliclaw.llm.base import LLMRegistry, LLMStreamChunk
+    from openbiliclaw.llm.rate_card import RateCatalog
+    from openbiliclaw.llm.service import LLMService
+
+    class _StreamingProvider:
+        model = "glm-4.7-flash"
+
+        async def stream_complete(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            yield LLMStreamChunk(delta="hello")
+            await asyncio.sleep(0.2)
+
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {
+                    "models": {
+                        "glm-4.7-flash": {
+                            "input": 1.0,
+                            "output": 2.0,
+                            "currency": "USD",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    registry = LLMRegistry()
+    registry.register(_StreamingProvider(), name="paid", provider_type="openrouter")
+    registry.configure_chain(["paid"])
+    service = LLMService(
+        registry=registry,
+        memory=object(),
+        usage_recorder=UsageRecorder(sink=db, catalog=catalog),
+    )
+
+    stream = service.stream_complete_with_core_memory(
+        system_instruction="sys",
+        user_input="user",
+        caller="e2e.stream",
+        inject_core_memory=False,
+    )
+    async for chunk in stream:
+        if chunk.delta:
+            break
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    today = db.query_llm_usage_by_day(days=7)[0]
+    assert today["calls"] == 1
+    assert today["cost_cny"] > 0
+    assert db.query_llm_usage_by_provider(days=7)[0]["provider"] == "openrouter"

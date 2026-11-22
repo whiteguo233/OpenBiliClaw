@@ -1391,11 +1391,12 @@ class LLMRegistry:
                 model=model,
             ):
                 provider_type = self._provider_types.get(target, "")
-                configured_model = str(
-                    model
-                    or getattr(provider, "model", None)
-                    or getattr(provider, "_model", "")
-                    or ""
+                requested_model = str(model or "").strip()
+                configured_model = (
+                    requested_model
+                    or str(
+                        getattr(provider, "model", None) or getattr(provider, "_model", "") or ""
+                    ).strip()
                 )
                 if chunk.response is not None:
                     chunk.response.instance_id = target
@@ -1520,11 +1521,12 @@ class LLMRegistry:
                 model=model,
             ):
                 provider_type = self._provider_types.get(target, "")
-                configured_model = str(
-                    model
-                    or getattr(provider, "model", None)
-                    or getattr(provider, "_model", "")
-                    or ""
+                requested_model = str(model or "").strip()
+                configured_model = (
+                    requested_model
+                    or str(
+                        getattr(provider, "model", None) or getattr(provider, "_model", "") or ""
+                    ).strip()
                 )
                 if chunk.response is not None:
                     chunk.response.instance_id = target
