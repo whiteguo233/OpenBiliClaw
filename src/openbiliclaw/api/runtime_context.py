@@ -1522,11 +1522,14 @@ class RuntimeContext:
         )
 
         new_rate_catalog = catalog_for_runtime(new_config)
-        if bool(getattr(new_config.llm, "cost_aware_routing", False)):
+        new_llm_config = getattr(new_config, "llm", None)
+        if new_llm_config is not None and bool(
+            getattr(new_llm_config, "cost_aware_routing", False)
+        ):
             new_registry.route_ranker = build_cost_ranker(new_registry, new_rate_catalog)
         new_usage_recorder = UsageRecorder(
             sink=self.database,
-            cost_multiplier=float(getattr(new_config.llm, "cost_multiplier", 1.0) or 1.0),
+            cost_multiplier=float(getattr(new_llm_config, "cost_multiplier", 1.0) or 1.0),
             catalog=new_rate_catalog,
         )
         new_module_overrides = module_overrides_from_config(new_config)

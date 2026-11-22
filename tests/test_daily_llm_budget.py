@@ -66,12 +66,33 @@ def _insert_spend(db: Database, *, when: datetime, cost: float) -> int:
 
 
 def test_local_day_window_uses_local_calendar_midnight() -> None:
-    day, start_utc, end_utc = local_day_window(_FIXED_NOW)
+    """Pin the process timezone so UTC CI and UTC+8 dev agree."""
 
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = (
+        "from datetime import datetime, timedelta, timezone\n"
+        "from openbiliclaw.local_day import local_day_window\n"
+        "print(*local_day_window(datetime(2026, 3, 1, 12, tzinfo=timezone(timedelta(hours=8)))))\n"
+    )
+    env = dict(os.environ)
+    env["TZ"] = "Asia/Shanghai"
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    day, start_date, start_time, end_date, end_time = result.stdout.split()
     assert day == "2026-03-01"
     # UTC+8 midnight == 16:00 UTC the previous day.
-    assert start_utc == "2026-02-28 16:00:00"
-    assert end_utc == "2026-03-01 16:00:00"
+    assert f"{start_date} {start_time}" == "2026-02-28 16:00:00"
+    assert f"{end_date} {end_time}" == "2026-03-01 16:00:00"
 
 
 def test_local_day_window_is_not_a_rolling_24h_window() -> None:
