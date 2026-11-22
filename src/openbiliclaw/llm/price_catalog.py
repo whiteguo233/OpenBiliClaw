@@ -480,6 +480,8 @@ def sync_price_catalog(
     models_dev = dict(fetch(models_dev_url))
     openrouter = dict(fetch(openrouter_url))
     catalog = build_catalog(models_dev, openrouter, usd_cny_rate=usd_cny_rate)
+    if not (catalog.get("providers") or catalog.get("offers")):
+        raise ValueError("refusing to replace the price catalog with an empty snapshot")
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(

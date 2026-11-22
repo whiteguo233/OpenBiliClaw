@@ -434,6 +434,16 @@ class RateCatalog:
                 tariff_groups.setdefault((provider, model_key), []).append(window)
         for key, windows in tariff_groups.items():
             self._tariffs[key] = tuple(windows)
+        # OpenRouter bills the upstream route; when a normalized model has a
+        # single tariff provider, expose that window to an ``openrouter`` card
+        # too. Ambiguous multi-provider models stay flat (no wrong peak).
+        tariff_providers: dict[str, set[str]] = {}
+        for provider, model in tariff_groups:
+            if provider:
+                tariff_providers.setdefault(model, set()).add(provider)
+        for (provider, model), windows in tariff_groups.items():
+            if provider and len(tariff_providers.get(model, ())) == 1:
+                self._tariffs[("openrouter", model)] = tuple(windows)
 
         self._tiers: dict[tuple[str, str], tuple[RateTier, ...]] = {}
         tier_groups: dict[tuple[str, str], list[RateTier]] = {}
@@ -453,6 +463,15 @@ class RateCatalog:
                 tier_groups.setdefault((provider, model_key), []).append(tier)
         for key, parsed_tiers in tier_groups.items():
             self._tiers[key] = tuple(sorted(parsed_tiers, key=lambda tier: tier.min_prompt_tokens))
+        tier_providers: dict[str, set[str]] = {}
+        for provider, model in tier_groups:
+            if provider:
+                tier_providers.setdefault(model, set()).add(provider)
+        for (provider, model), parsed_tiers in tier_groups.items():
+            if provider and len(tier_providers.get(model, ())) == 1:
+                self._tiers[("openrouter", model)] = tuple(
+                    sorted(parsed_tiers, key=lambda tier: tier.min_prompt_tokens)
+                )
         self._override_cards: dict[tuple[str, str], RateCard] = {}
         self._install_overrides(overrides)
 

@@ -1524,7 +1524,6 @@ class RuntimeContext:
         new_module_overrides = module_overrides_from_config(new_config)
         llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_gate = self.llm_concurrency_gate or LLMConcurrencyGate(llm_concurrency)
-        apply_background_budget_config(new_llm_gate, new_config)
         new_inventory_available: int | None = None
         count_pool = getattr(self.database, "count_pool_candidates", None)
         if callable(count_pool):
@@ -2788,6 +2787,10 @@ class RuntimeContext:
         # actual Task and synchronously registers its permit before any new
         # runtime attribute is published.
         new_settlement_queue.start()
+        # Mutate the shared gate only after every new component constructed
+        # successfully; a late failure must not leave the old config paired
+        # with the rejected one's daily cap.
+        apply_background_budget_config(new_llm_gate, new_config)
         new_llm_gate.reconfigure(llm_concurrency)
         self.llm_concurrency_gate = new_llm_gate
         self.config = new_config

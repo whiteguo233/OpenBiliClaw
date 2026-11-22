@@ -677,7 +677,13 @@ def test_openrouter_card_does_not_inherit_another_providers_tiers() -> None:
                         "min_prompt_tokens": 272000,
                         "input": 2.5,
                         "output": 11.25,
-                    }
+                    },
+                    {
+                        "provider": "azure",
+                        "min_prompt_tokens": 200000,
+                        "input": 3.0,
+                        "output": 12.0,
+                    },
                 ]
             },
         }
@@ -994,3 +1000,30 @@ def test_fx_setter_rejects_overflowing_integers() -> None:
     catalog = RateCatalog.from_dict({"fx": {"usd_cny": 7.2}})
     catalog.set_usd_cny(10**400)
     assert catalog.usd_cny == 7.2
+
+
+def test_openrouter_inherits_a_unique_providers_tariff() -> None:
+    catalog = RateCatalog.from_dict(
+        {
+            "providers": {
+                "openrouter": {"models": {"m": {"input": 1.0, "output": 2.0, "currency": "USD"}}}
+            },
+            "tariffs": {
+                "m": [
+                    {
+                        "provider": "deepseek",
+                        "days": [0],
+                        "start": 60,
+                        "end": 240,
+                        "input": 2.0,
+                        "output": 4.0,
+                        "label": "peak",
+                        "multiplier": 2.0,
+                    }
+                ]
+            },
+        }
+    )
+    effective = catalog.resolve("openrouter", "m", now=_utc(2026, 11, 23, 2, 0))
+    assert effective is not None
+    assert effective.tariff_label == "peak"

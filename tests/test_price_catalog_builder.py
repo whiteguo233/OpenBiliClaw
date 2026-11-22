@@ -460,3 +460,18 @@ def test_overflowing_openrouter_tier_threshold_is_skipped() -> None:
         ]
     }
     assert builder.build_tiers(payload) == {}
+
+
+def test_sync_refuses_an_empty_upstream_snapshot(tmp_path) -> None:
+    destination = tmp_path / "catalog.json"
+    destination.write_text("previous", encoding="utf-8")
+    try:
+        builder.sync_price_catalog(
+            destination,
+            fetcher=lambda _url: {},
+        )
+    except ValueError:
+        pass
+    else:  # pragma: no cover - defensive
+        raise AssertionError("empty snapshot should be rejected")
+    assert destination.read_text(encoding="utf-8") == "previous"
