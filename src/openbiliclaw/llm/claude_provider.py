@@ -12,6 +12,7 @@ from anthropic import AsyncAnthropic
 from .base import (
     DEFAULT_REASONING_EFFORT,
     LLMAuthError,
+    LLMInvalidRequestError,
     LLMProvider,
     LLMProviderError,
     LLMRateLimitError,
@@ -334,20 +335,34 @@ class ClaudeProvider(LLMProvider):
         message = str(exc).lower()
         if "rate limit" in message or "too many requests" in message:
             return LLMRateLimitError("claude rate limit exceeded")
-        if getattr(exc, "status_code", None) == 401:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 401:
             logger.warning("claude rejected our credentials with HTTP 401: %s", exc)
             return LLMAuthError(
                 f"claude authentication failed: HTTP 401: {exc}",
                 provider_name="claude",
                 endpoint=self.base_url,
             )
+        # 4xx other than 408/409/429 means the request itself is wrong
+        # (bad model id, deprecated parameter, context too long). Retrying
+        # the identical body cannot succeed, so keep it terminal instead of
+        # burning three round trips. 429 is already handled above; 408/409
+        # stay transient.
+        if (
+            isinstance(status_code, int)
+            and 400 <= status_code < 500
+            and status_code not in {408, 409, 429}
+        ):
+            logger.warning("claude rejected the request with HTTP %s: %s", status_code, exc)
+            return LLMInvalidRequestError(f"claude rejected the request: HTTP {status_code}: {exc}")
 
         return LLMProviderError(f"claude request failed: {exc}")
 
     def _is_retryable(self, exc: LLMProviderError) -> bool:
         """Whether a mapped exception should be retried."""
         # See OpenAIProvider._is_retryable: a 401 is terminal until the user
-        # fixes their key, so retrying only delays the actionable error.
-        if isinstance(exc, (LLMRateLimitError, LLMAuthError)):
+        # fixes their key, and a 4xx means the request body is wrong, so
+        # retrying only delays the actionable error.
+        if isinstance(exc, (LLMRateLimitError, LLMAuthError, LLMInvalidRequestError)):
             return False
         return isinstance(exc, (LLMProviderError, LLMTimeoutError))

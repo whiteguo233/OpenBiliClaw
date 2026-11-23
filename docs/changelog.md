@@ -13,6 +13,8 @@
 - 真实 Ollama 非流式、SSE 流、首 delta 提前关闭与完整终止均通过。付费 relay 因账号侧模型权限/额度不可用，未完成付费真实请求。
 - **Claude 5.5 采样参数门控（issue #355，2026-11-23）**：5.5 世代拒收 `temperature`，而 `complete()` 与重试路径各自重建请求体、两处都无条件带上，导致新模型上设置页测试实例 / 对话 / 发现 / 推荐解释固定 HTTP 400。改为 `_supports_sampling()` 模型能力表 + `_build_request_kwargs()` 单一构造；能力表未覆盖的模型首次 400 后自动剥掉采样参数重试一次并记住，`top_p` / `top_k` 本就不发送。新增 provider 测试覆盖代际门控、老模型透传、学习式降级与「首调与重试请求体一致」守卫。
 
+- **Claude 非瞬态 4xx 终态化（2026-11-23）**：Claude 适配器此前只对 401 终态，其余 4xx 仍重试 3 次，一个写错的请求要等三次往返才把可操作的错误交给用户。现把 OpenAI 系私有的 `_NonRetryableRequestError` 提升为共享的 `llm.base.LLMInvalidRequestError`：Claude 的 400/403/404/413/422 等映射到它并零重试，文案保留原 HTTP 状态与响应体；408/409/429 保持可重试，5xx / timeout / 传输错误仍有界重试。采样参数 400 仍先在 `_create_message()` 内剥参数降级重试，不会被终态化吞掉。
+
 ## v0.3.239：Windows 安装路径、画像完整性与界面收紧（2026-11-16）
 
 - **文档与项目主页优化（2026-11-21）**：精简中英文 README（`README.md` / `README_EN.md`）至核心用户导览并将 PR 级内部实现细节收敛至 `docs/architecture-overview*.md` 与模块文档；清理误混入快速开始的提示词、重复隐私段、悬空注释与过时数据，保留顶部合作伙伴与生态入口并补齐跨平台多端最新截图。同步翻新 GitHub Pages 主页（`docs/index.html`）：Hero 升级为桌面 + 移动多端叠层展示、安装区改为 4 模式 Tab 切换、15 个内容来源支持按类别筛选、更新过期 Gitee 版本与 Instagram 状态标签、移除静态过时 Star 计数，并全量校验中英 i18n 键、链接与多视口无错渲染。
