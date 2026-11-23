@@ -107,6 +107,21 @@ class LLMAuthError(LLMProviderError):
         self.endpoint = endpoint
 
 
+class LLMInvalidRequestError(LLMProviderError):
+    """Raised when the provider rejects the request itself (HTTP 4xx).
+
+    A 400/404/422 means the body, the model id, or a parameter is
+    unacceptable to the provider; resending the identical request cannot
+    succeed. Provider retry loops therefore treat it as terminal, for the
+    same reason :class:`LLMAuthError` is terminal: three identical failed
+    requests per shard only clutter the provider console and stretch the
+    perceived hang.
+
+    Transient 4xx statuses (408 timeout, 409 conflict, 429 rate limit) are
+    deliberately excluded by the adapters that raise this.
+    """
+
+
 class LLMTimeoutError(LLMProviderError):
     """Raised when a provider request times out."""
 

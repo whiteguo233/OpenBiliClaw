@@ -17,6 +17,7 @@ from openbiliclaw.llm.api_route_provider import ApiRouteProvider
 from openbiliclaw.llm.base import (
     LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
     LLMAuthError,
+    LLMInvalidRequestError,
     LLMProviderError,
     LLMRateLimitError,
     LLMResponseError,
@@ -1001,18 +1002,22 @@ async def test_claude_unrelated_400_is_not_retried_without_temperature(
     provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-6")
     calls: list[dict[str, object]] = []
 
+    class FakeBadRequestError(Exception):
+        status_code = 400
+
     async def fake_create(**kwargs: object) -> SimpleNamespace:
         calls.append(dict(kwargs))
-        raise RuntimeError("Error code: 400 - max_tokens: too large for this model")
+        raise FakeBadRequestError("Error code: 400 - max_tokens: too large for this model")
 
     monkeypatch.setattr(provider._client.messages, "create", fake_create)
 
-    with pytest.raises(LLMProviderError):
+    with pytest.raises(LLMInvalidRequestError):
         await provider.complete([{"role": "user", "content": "hi"}])
 
-    # Not a sampling rejection: every attempt keeps the sampling controls.
-    assert calls
-    assert all("temperature" in call for call in calls)
+    # Not a sampling rejection: the request body is never rewritten, and the
+    # 4xx is terminal so there is exactly one attempt.
+    assert len(calls) == 1
+    assert "temperature" in calls[0]
 
 
 @pytest.mark.parametrize(
@@ -1028,6 +1033,46 @@ async def test_claude_unrelated_400_is_not_retried_without_temperature(
 def test_claude_sampling_rejection_detection(message: str, expected: bool) -> None:
     """Relays word the same 400 differently; only sampling wording may match."""
     assert ClaudeProvider._is_sampling_rejection(RuntimeError(message)) is expected
+
+
+@pytest.mark.asyncio
+async def test_claude_sampling_rejection_wins_over_terminal_4xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The drop-and-retry must still fire now that 4xx is terminal.
+
+    ``_create_message`` handles the sampling 400 before ``_map_error`` sees
+    it, so the terminal classification applies to every *other* 4xx only.
+    """
+    from openbiliclaw.llm import claude_provider as claude_provider_mod
+
+    monkeypatch.setattr(claude_provider_mod, "_SAMPLING_UNSUPPORTED_MODELS", set())
+    provider = ClaudeProvider(api_key="test-key", model="claude-haiku-5-6")
+    calls: list[dict[str, object]] = []
+
+    class FakeBadRequestError(Exception):
+        status_code = 400
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if "temperature" in kwargs:
+            raise FakeBadRequestError(
+                "Error code: 400 - `temperature` is deprecated for this model."
+            )
+        return SimpleNamespace(
+            model="claude-haiku-5-6",
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+
+    response = await provider.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "ok"
+    assert len(calls) == 2
+    assert "temperature" in calls[0]
+    assert "temperature" not in calls[1]
 
 
 @pytest.mark.asyncio
@@ -1170,6 +1215,88 @@ async def test_claude_provider_does_not_retry_rate_limit(
         await provider.complete([{"role": "user", "content": "hi"}])
 
     assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 404, 422])
+async def test_claude_provider_does_not_retry_client_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+) -> None:
+    """A 4xx means the request itself is wrong; resending it is pure noise."""
+    provider = ClaudeProvider(api_key="test-key")
+    calls = {"count": 0}
+
+    class FakeClientError(Exception):
+        def __init__(self, message: str, *, code: int) -> None:
+            super().__init__(message)
+            self.status_code = code
+
+    async def fake_sleep(_: float) -> None:
+        pytest.fail("4xx responses should not sleep for provider retries")
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        calls["count"] += 1
+        raise FakeClientError(
+            f"Error code: {status_code} - invalid_request_error: bad parameter",
+            code=status_code,
+        )
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+    monkeypatch.setattr("openbiliclaw.llm.claude_provider.asyncio.sleep", fake_sleep)
+
+    with pytest.raises(LLMInvalidRequestError) as excinfo:
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    assert calls["count"] == 1
+    assert f"HTTP {status_code}" in str(excinfo.value)
+
+
+def test_claude_keeps_transient_client_statuses_retryable() -> None:
+    """408/409 are 4xx but still transient; only body-level errors are terminal."""
+    provider = ClaudeProvider(api_key="test-key")
+
+    class FakeClientError(Exception):
+        def __init__(self, message: str, *, code: int) -> None:
+            super().__init__(message)
+            self.status_code = code
+
+    for status_code in (408, 409):
+        mapped = provider._map_error(FakeClientError("try again", code=status_code))
+        assert not isinstance(mapped, LLMInvalidRequestError)
+        assert provider._is_retryable(mapped) is True
+
+
+@pytest.mark.asyncio
+async def test_claude_provider_still_retries_server_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ClaudeProvider(api_key="test-key")
+    calls = {"count": 0}
+
+    class FakeServerError(Exception):
+        status_code = 500
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise FakeServerError("Error code: 500 - overloaded")
+        return SimpleNamespace(
+            model="claude-sonnet-4-6",
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+    monkeypatch.setattr("openbiliclaw.llm.claude_provider.asyncio.sleep", fake_sleep)
+
+    response = await provider.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "ok"
+    assert calls["count"] == 2
 
 
 def test_deepseek_provider_defaults() -> None:

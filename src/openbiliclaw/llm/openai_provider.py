@@ -19,6 +19,7 @@ from openai import AsyncOpenAI
 from .base import (
     DEFAULT_REASONING_EFFORT,
     LLMAuthError,
+    LLMInvalidRequestError,
     LLMProvider,
     LLMProviderError,
     LLMRateLimitError,
@@ -57,10 +58,6 @@ if TYPE_CHECKING:
 # above 32K).
 _LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens"})
 _LENGTH_RETRY_MAX_TOKENS_CAP = 32768
-
-
-class _NonRetryableRequestError(LLMProviderError):
-    """A request/configuration failure that cannot heal through immediate retry."""
 
 
 def _generic_json_schema_response_format() -> dict[str, Any]:
@@ -1028,7 +1025,7 @@ class OpenAIProvider(LLMProvider):
                 body_excerpt,
             )
             error_type = (
-                _NonRetryableRequestError
+                LLMInvalidRequestError
                 if status_code_int in _NON_RETRYABLE_REQUEST_STATUS_CODES
                 else LLMProviderError
             )
@@ -1083,7 +1080,7 @@ class OpenAIProvider(LLMProvider):
         # A 401 stays a 401 until the user edits config. Retrying only
         # multiplies rejected requests in the provider console and drags out
         # the wait before the actionable error reaches the user.
-        if isinstance(exc, (LLMRateLimitError, LLMAuthError, _NonRetryableRequestError)):
+        if isinstance(exc, (LLMRateLimitError, LLMAuthError, LLMInvalidRequestError)):
             return False
         return isinstance(exc, (LLMProviderError, LLMTimeoutError))
 
