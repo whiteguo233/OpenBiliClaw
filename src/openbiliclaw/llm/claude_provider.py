@@ -25,6 +25,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Claude's 5.5 generation dropped sampling controls (``temperature`` /
+# ``top_p`` / ``top_k``): sending ``temperature`` fails with HTTP 400
+# "``temperature`` is deprecated for this model" and the whole call is lost
+# (issue #355). Markers rather than an allowlist, so every legacy model keeps
+# its historical request body. A model missing here is learned at call time —
+# see ``ClaudeProvider._create_message``.
+_SAMPLING_UNSUPPORTED_MARKERS: tuple[str, ...] = (
+    "claude-haiku-5-5",
+    "claude-sonnet-5-5",
+    "claude-opus-5-5",
+    "claude-fable-5-5",
+    "claude-mythos-5-5",
+)
+# Normalized model names that already answered 400 for sampling parameters in
+# this process. Bounded by the number of distinct models a user configures.
+_SAMPLING_UNSUPPORTED_MODELS: set[str] = set()
+
 
 class ClaudeProvider(LLMProvider):
     """Anthropic Claude provider."""
@@ -107,6 +124,8 @@ class ClaudeProvider(LLMProvider):
             "max_tokens": max_tokens,
             "system": system_param,
             "messages": chat_messages,
+            # Portable intent only: ``_build_request_kwargs`` drops it for
+            # models whose generation rejects sampling controls (issue #355).
             "temperature": temperature,
         }
         effort = self._claude_effort(effective_model, reasoning_effort)
@@ -186,8 +205,13 @@ class ClaudeProvider(LLMProvider):
         return DEFAULT_REASONING_EFFORT
 
     @staticmethod
+    def _normalized_model_name(model: str) -> str:
+        """Normalize provider model ids before capability lookups."""
+        return model.strip().lower().replace(".", "-")
+
+    @staticmethod
     def _supports_effort(model: str) -> bool:
-        name = model.strip().lower().replace(".", "-")
+        name = ClaudeProvider._normalized_model_name(model)
         return any(
             marker in name
             for marker in (
@@ -203,22 +227,41 @@ class ClaudeProvider(LLMProvider):
             )
         )
 
+    @staticmethod
+    def _supports_sampling(model: str) -> bool:
+        """Whether ``temperature`` may be sent for this model.
+
+        The 5.5 generation rejects sampling controls outright (issue #355).
+        Unknown names keep the historical behaviour — temperature is sent —
+        and a 400 at call time flips the model off for the rest of the
+        process, so a brand-new family only pays one failed request.
+        """
+        name = ClaudeProvider._normalized_model_name(model)
+        if name in _SAMPLING_UNSUPPORTED_MODELS:
+            return False
+        return not any(marker in name for marker in _SAMPLING_UNSUPPORTED_MARKERS)
+
+    @staticmethod
+    def _is_sampling_rejection(exc: Exception) -> bool:
+        """Whether ``exc`` is Anthropic's 400 for deprecated sampling params."""
+        message = str(exc).lower()
+        if "temperature" not in message and "sampling" not in message:
+            return False
+        # Official wording is "deprecated"; relays (LiteLLM and friends)
+        # often say "unsupported parameter" instead.
+        return any(
+            marker in message
+            for marker in ("deprecated", "unsupported", "not supported", "does not support")
+        )
+
     async def _request_with_retry(self, **kwargs: Any) -> Any:
         """Send a request with bounded retry for transient failures."""
         last_error: Exception | None = None
+        model = cast("str", kwargs["model"])
 
         for attempt in range(1, self._MAX_RETRIES + 1):
             try:
-                request_kwargs: dict[str, Any] = {
-                    "model": cast("str", kwargs["model"]),
-                    "max_tokens": cast("int", kwargs["max_tokens"]),
-                    "system": kwargs["system"],
-                    "messages": cast("list[MessageParam]", kwargs["messages"]),
-                    "temperature": cast("float", kwargs["temperature"]),
-                }
-                if "output_config" in kwargs:
-                    request_kwargs["output_config"] = kwargs["output_config"]
-                return await self._client.messages.create(**request_kwargs)
+                return await self._create_message(kwargs, model=model)
             except Exception as exc:
                 mapped = self._map_error(exc)
                 last_error = mapped
@@ -230,6 +273,56 @@ class ClaudeProvider(LLMProvider):
         if last_error is None:
             raise LLMProviderError("claude request failed")
         raise last_error
+
+    def _build_request_kwargs(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        include_temperature: bool,
+    ) -> dict[str, Any]:
+        """Assemble one Anthropic request body.
+
+        Single source of truth for the first attempt and the retry path:
+        they used to be rebuilt in two places, which is how ``temperature``
+        stayed unconditional on both of them (issue #355).
+        """
+        request_kwargs: dict[str, Any] = {
+            "model": cast("str", kwargs["model"]),
+            "max_tokens": cast("int", kwargs["max_tokens"]),
+            "system": kwargs["system"],
+            "messages": cast("list[MessageParam]", kwargs["messages"]),
+        }
+        if include_temperature:
+            request_kwargs["temperature"] = cast("float", kwargs["temperature"])
+        if "output_config" in kwargs:
+            request_kwargs["output_config"] = kwargs["output_config"]
+        return request_kwargs
+
+    async def _create_message(self, kwargs: dict[str, Any], *, model: str) -> Any:
+        """Send one Messages request, dropping sampling controls if refused.
+
+        ``_supports_sampling`` covers the documented generations; this
+        fallback covers a model released after this build. The rejection is
+        remembered in ``_SAMPLING_UNSUPPORTED_MODELS`` so later calls skip
+        the doomed first attempt entirely.
+        """
+        include_temperature = self._supports_sampling(model)
+        try:
+            return await self._client.messages.create(
+                **self._build_request_kwargs(kwargs, include_temperature=include_temperature)
+            )
+        except Exception as exc:
+            if not include_temperature or not self._is_sampling_rejection(exc):
+                raise
+            _SAMPLING_UNSUPPORTED_MODELS.add(self._normalized_model_name(model))
+            logger.warning(
+                "claude model %r rejected sampling parameters; retrying without temperature: %s",
+                model,
+                exc,
+            )
+            return await self._client.messages.create(
+                **self._build_request_kwargs(kwargs, include_temperature=False)
+            )
 
     def _map_error(self, exc: Exception) -> LLMProviderError:
         """Map Anthropic or network errors into shared provider errors."""

@@ -906,6 +906,162 @@ async def test_claude_supported_model_defaults_to_medium_and_channel_empty_maps_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5.5"],
+)
+async def test_claude_5_5_models_omit_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+) -> None:
+    """Issue #355: sending ``temperature`` to the 5.5 generation is a 400."""
+    provider = ClaudeProvider(api_key="test-key", model=model)
+    captured: dict[str, object] = {}
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            model=model,
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+
+    await provider.complete([{"role": "user", "content": "hi"}], temperature=0.2)
+
+    assert "temperature" not in captured
+
+
+@pytest.mark.asyncio
+async def test_claude_legacy_models_still_send_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fix must not silently drop temperature for older generations."""
+    provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-6")
+    captured: dict[str, object] = {}
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            model="claude-sonnet-4-6",
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+
+    await provider.complete([{"role": "user", "content": "hi"}], temperature=0.2)
+
+    assert captured["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_claude_rejected_temperature_is_retried_once_and_remembered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model missing from the capability table is learned after one 400."""
+    from openbiliclaw.llm import claude_provider as claude_provider_mod
+
+    monkeypatch.setattr(claude_provider_mod, "_SAMPLING_UNSUPPORTED_MODELS", set())
+    provider = ClaudeProvider(api_key="test-key", model="claude-haiku-5-6")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if "temperature" in kwargs:
+            raise RuntimeError(
+                "Error code: 400 - {'type': 'error', 'error': {'type': "
+                "'invalid_request_error', 'message': '`temperature` is deprecated "
+                "for this model.'}}"
+            )
+        return SimpleNamespace(
+            model="claude-haiku-5-6",
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+
+    await provider.complete([{"role": "user", "content": "hi"}], temperature=0.3)
+    await provider.complete([{"role": "user", "content": "again"}])
+
+    assert "temperature" in calls[0]
+    assert "temperature" not in calls[1]
+    assert len(calls) == 3, "second completion must skip the doomed first attempt"
+    assert "temperature" not in calls[2]
+    assert "claude-haiku-5-6" in claude_provider_mod._SAMPLING_UNSUPPORTED_MODELS
+
+
+@pytest.mark.asyncio
+async def test_claude_unrelated_400_is_not_retried_without_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the sampling-parameter rejection may drop temperature."""
+    provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-6")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        raise RuntimeError("Error code: 400 - max_tokens: too large for this model")
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+
+    with pytest.raises(LLMProviderError):
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    # Not a sampling rejection: every attempt keeps the sampling controls.
+    assert calls
+    assert all("temperature" in call for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Error code: 400 - `temperature` is deprecated for this model.", True),
+        ("Unsupported parameter: temperature", True),
+        ("sampling params are not supported by claude-haiku-5-6", True),
+        ("Error code: 400 - max_tokens: too large for this model", False),
+        ("connection reset by peer", False),
+    ],
+)
+def test_claude_sampling_rejection_detection(message: str, expected: bool) -> None:
+    """Relays word the same 400 differently; only sampling wording may match."""
+    assert ClaudeProvider._is_sampling_rejection(RuntimeError(message)) is expected
+
+
+@pytest.mark.asyncio
+async def test_claude_transient_retry_reuses_the_same_request_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retries must not rebuild the body by hand — that drift caused #355."""
+    provider = ClaudeProvider(api_key="test-key", model="claude-sonnet-4-6")
+    calls: list[dict[str, object]] = []
+
+    async def fake_create(**kwargs: object) -> SimpleNamespace:
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise ConnectionError("connection reset")
+        return SimpleNamespace(
+            model="claude-sonnet-4-6",
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
+    monkeypatch.setattr("openbiliclaw.llm.claude_provider.asyncio.sleep", fake_sleep)
+
+    await provider.complete([{"role": "user", "content": "hi"}], temperature=0.3)
+
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert calls[1]["temperature"] == 0.3
+
+
+@pytest.mark.asyncio
 async def test_claude_provider_marks_system_with_ephemeral_cache_control(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

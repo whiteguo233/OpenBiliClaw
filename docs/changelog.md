@@ -11,6 +11,7 @@
 - **Windows Ego Lite Beta**：合入 main 的 Windows Ego Lite 安装检测、无窗口宿主与原生握手支持。
 - 后端与插件发布为 0.3.240；Chrome 已提交 `PENDING_REVIEW`，Firefox AMO 已受理 `0.3.240`。桌面安装包与 Docker 镜像因获批的 `sponsored-runtime-2026-11-16.1` 只兼容 0.3.239、runtime release workflow 在分配 runner 前失败，暂未发布；聚合页暂标 pre-release，Latest 保留 0.3.239；详见 [v0.3.240 发布记录](testing/2026-11-22-release-v0.3.240.md)。
 - 真实 Ollama 非流式、SSE 流、首 delta 提前关闭与完整终止均通过。付费 relay 因账号侧模型权限/额度不可用，未完成付费真实请求。
+- **Claude 5.5 采样参数门控（issue #355，2026-11-23）**：5.5 世代拒收 `temperature`，而 `complete()` 与重试路径各自重建请求体、两处都无条件带上，导致新模型上设置页测试实例 / 对话 / 发现 / 推荐解释固定 HTTP 400。改为 `_supports_sampling()` 模型能力表 + `_build_request_kwargs()` 单一构造；能力表未覆盖的模型首次 400 后自动剥掉采样参数重试一次并记住，`top_p` / `top_k` 本就不发送。新增 provider 测试覆盖代际门控、老模型透传、学习式降级与「首调与重试请求体一致」守卫。
 
 ## v0.3.239：Windows 安装路径、画像完整性与界面收紧（2026-11-16）
 
