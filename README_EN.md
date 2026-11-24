@@ -194,12 +194,10 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 
 ## Recent Updates
 
-📌 Latest: **v0.3.240 (2026-11-22)**
+📌 Latest: **v0.3.241 (2026-11-25, release candidate)**
 
-- **Daily LLM spend cap**. Local-calendar-day accounting with warn-only / pause-background / stop-all modes and cross-process reservations.
-- **Real price catalog**. 16 providers and 2,007 models with peak windows, long-context tiers and low-confidence warnings.
-- **Peak scheduling and same-model routing**. Pause only background maintenance at peak; pick the cheaper instance within the same model.
-- **Windows Ego Lite Beta**. Detects the official install and supports a headless host with native handshakes.
+- Installers cannot ship with a SiliconFlow free-model component signed for a different app version. This candidate is not published.
+- When a model service rejects an invalid request, the app reports the error without resending the same request.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
