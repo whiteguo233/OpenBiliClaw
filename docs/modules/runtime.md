@@ -1051,3 +1051,7 @@ Core0.3.234固定SDK目录为 `sponsored-runtime-2026-11-06.2`，用于应用安
 ### 2026-11-09 默认链热切换边界
 
 `RuntimeContext.try_apply_llm_instance_config(new_config)` 对完整配置比较时，将 `data_dir` 解析为相同绝对路径，并通过 `normalize_locale` 比较语言；只有同一语言别名规范化与默认实例链变化可原地应用。真实语言、Embedding、端点及模块路由变化继续完整重建，不跳过后台写入安全交接。PC 真实保存暴露的 `zh` → `zh-Hans` 误排空由此修复；模型调用保持同一稳定 registry/gate，活动任务不被取消。
+
+### 免费 SDK 与 Core 的联合发布（2026-11-24）
+
+`runtime.sponsored_bundle.unpack_bundle_archive(archive, destination_dir)` 只负责向新目录解包有界的常规成员，不激活或执行。原生安装及跨平台发版门禁复用这一步；安装仍须经过正式 `verify_bundle()`、原生自检、原子切换。对外的 `ensure_runtime()`、配置及签名信任根均未改变。见[发布流程](packaging.md#免费模型组件发版门禁)。

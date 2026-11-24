@@ -37,6 +37,9 @@ jobs:
                   f"backend source tag {release_tag} does not match pyproject version {actual_version}"
               )
 
+      - name: Verify free runtime for Core promotion
+        uses: ./.github/actions/verify-free-runtime
+
       - name: Update aggregate latest release
         env:
           GH_TOKEN: ${{ github.token }}

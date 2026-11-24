@@ -3,6 +3,9 @@ name: Sponsored runtime installation
 on:
   pull_request:
     paths:
+      - src/openbiliclaw/__init__.py
+      - src/openbiliclaw/llm/sponsored*py
+      - src/openbiliclaw/llm/prompt_contracts.py
       - src/openbiliclaw/runtime/sponsored_release.json
       - src/openbiliclaw/runtime/sponsored_bundle.py
       - scripts/sponsored_install_smoke.py

@@ -33,6 +33,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Verify free runtime for Core promotion
+        uses: ./.github/actions/verify-free-runtime
+
       - name: Resolve version and tags
         id: meta
         shell: python

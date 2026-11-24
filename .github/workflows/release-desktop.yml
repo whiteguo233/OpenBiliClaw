@@ -362,6 +362,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify free runtime for Core promotion
+        uses: ./.github/actions/verify-free-runtime
+
       - name: Download built installers
         uses: actions/download-artifact@v8
         with:

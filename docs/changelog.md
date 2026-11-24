@@ -4,6 +4,8 @@
 
 ## v0.3.240：每日 LLM 预算、价格目录与峰谷调度（2026-11-22）
 
+- 待发布修复：Core/镜像/桌面与聚合发布前校验五平台硅基流动免费组件；防止新版引用仅签给旧 Core 的包。此项不改写已发布标签，也不代表 0.3.240 的签名组件已补发。[流程](modules/packaging.md#免费模型组件发版门禁) · [实测](verification/2026-11-24-sdk-and-director.md)
+
 - **每日 LLM 花费上限（issue #353）**：新增 `scheduler.daily_budget_cny` 与 `budget_on_exceed=pause|stop|warn`；按本地日历日累计 `llm_usage.estimated_cost_cny`，每天一条 `budget_exceeded` 事件。共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL）做 per-call 预留，跨进程/热重载可见，usage 在 provider slot 内结算后才释放。
 - **provider/model 价格目录**：随包 16 providers / 2,007 models 的 catalog，覆盖峰谷窗口、长上下文档位、置信度与 USD/CNY；`openbiliclaw price --sync` 原子刷新 data 目录快照，损坏或空快照降级/拒绝覆盖；`llm.cost_multiplier` 校准账单。
 - **峰谷调度与成本路由**：`scheduler.peak_policy=off|defer|prefer` + 补货水位 + 手动窗口；`llm.cost_aware_routing` 仅在相同 model 的实例之间按当前价格重排，免费 provider 优先，未知价格排最后。

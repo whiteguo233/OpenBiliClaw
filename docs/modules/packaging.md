@@ -133,3 +133,13 @@ Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runn
 ### Intel 已验证产物发布
 
 `publish-intel-installer.yml` 手动接收版本、成功的 `build-installers.yml` run ID 和已复核 DMG SHA-256。先确认构建提交等于对应 desktop tag，再下载该次 Intel 产物、校验版本／架构／提交后缀与字节摘要，将同一包附到 desktop 和 aggregate release。不会重新构建，不替换已有不同摘要的资产；仅移除文件名的构建 SHA 后缀，包内签名、公证和字节保持。脚本接口是 `.github/scripts/promote-intel-installer.py verify-source|publish`，仅供发布 CI 使用，不新增用户 CLI／配置。
+
+## 免费模型组件发版门禁
+
+每次提升 Core 版本，先推送含目标版本的已审查提交，不先打产品标签。默认免费方案使用独立签名 SDK；仅更新 Python 版本、通过插件打包或发起私有 CI，都不能证明 SDK 可用。
+
+1. 对已推送的完整 Core SHA 启动 `whiteguo233/OpenBiliClaw-sponsored-runtime` 的受保护 `release.yml`。传入已批准的 `core_sha / key_id / not_before / not_after`；不在公开仓库放签名私钥或模型 Key。保持原授权窗口，除非维护者另行批准轮换。
+2. 确认五个构建作业成功；按私有发布流程完成 macOS 公证及最终签名，核对五个包，使用私有工具 `tools/export_catalog.py` 生成 Core 的固定清单。签名作业失败或跳过就停止，先处理错误（包括 Actions 账单、额度及审批），不继续切标签。
+3. 发布已批准的组件资产，提交 `src/openbiliclaw/runtime/sponsored_release.json`。从最终 Core checkout 运行 `PYTHONPATH=src python scripts/verify_release_sdk.py`：五个官方归档的文件和 manifest 摘要、签名、平台、Core 兼容范围、策略有效期、任务合同和 macOS 公证声明全部通过，再发产品标签。使用 `--archives DIR` 可先对同一批包离线验收；原生安装与离线自检仍由 native smoke 覆盖，不发模型请求。
+
+后端聚合、Docker 推镜像、桌面分发及同版本插件更新聚合页均必须过此门禁。单独发不同版本的插件不要求重新签后端 SDK。已发布源标签携带不可变清单；补建组件不会让指向老摘要的 checkout 自动恢复，应通过新修订交付正确的清单，不覆盖旧标签。

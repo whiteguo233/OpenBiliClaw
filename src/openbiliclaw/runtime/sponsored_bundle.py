@@ -241,47 +241,50 @@ def bundle_status() -> dict[str, Any]:
     }
 
 
+def unpack_bundle_archive(archive: Path, destination_dir: Path) -> None:
+    """Extract only bounded, flat release files to a fresh directory without executing them."""
+    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise BundleError("runtime archive too large")
+    destination_dir.mkdir(mode=0o700)
+    total = 0
+    allowed = {
+        "obc-sponsored-runtime",
+        "obc-sponsored-runtime.exe",
+        "sponsored-policy.json",
+        "sponsored-policy.sig",
+        "release-public-key.bin",
+        "manifest.json",
+        "manifest.sig",
+    }
+    with tarfile.open(archive, "r:gz") as tar:
+        seen: set[str] = set()
+        for member in tar:
+            total += member.size
+            if (
+                member.name not in allowed
+                or member.name in seen
+                or not member.isfile()
+                or total > MAX_UNPACKED_BYTES
+            ):
+                raise BundleError("unsafe runtime archive")
+            seen.add(member.name)
+            source = tar.extractfile(member)
+            if source is None:
+                raise BundleError("missing archive member")
+            destination = destination_dir / member.name
+            with source, destination.open("xb") as target:
+                shutil.copyfileobj(source, target)
+            destination.chmod(0o700 if member.name.startswith("obc-sponsored-runtime") else 0o600)
+
+
 def install_archive(archive: Path, *, catalog: dict[str, Any] | None = None) -> Path:
     """Safely unpack, verify and atomically activate an archive (also used by packagers)."""
     root = _root()
     bundles = root / "bundles"
     bundles.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
-        raise BundleError("runtime archive too large")
     with tempfile.TemporaryDirectory(prefix="install-", dir=root) as scratch:
         temporary = Path(scratch) / "bundle"
-        temporary.mkdir()
-        total = 0
-        allowed = {
-            "obc-sponsored-runtime",
-            "obc-sponsored-runtime.exe",
-            "sponsored-policy.json",
-            "sponsored-policy.sig",
-            "release-public-key.bin",
-            "manifest.json",
-            "manifest.sig",
-        }
-        with tarfile.open(archive, "r:gz") as tar:
-            seen: set[str] = set()
-            for member in tar:
-                total += member.size
-                if (
-                    member.name not in allowed
-                    or member.name in seen
-                    or not member.isfile()
-                    or total > MAX_UNPACKED_BYTES
-                ):
-                    raise BundleError("unsafe runtime archive")
-                seen.add(member.name)
-                source = tar.extractfile(member)
-                if source is None:
-                    raise BundleError("missing archive member")
-                destination = temporary / member.name
-                with source, destination.open("xb") as target:
-                    shutil.copyfileobj(source, target)
-                destination.chmod(
-                    0o700 if member.name.startswith("obc-sponsored-runtime") else 0o600
-                )
+        unpack_bundle_archive(archive, temporary)
         verify_bundle(temporary, catalog=catalog)
         binary = temporary / (
             "obc-sponsored-runtime.exe" if os.name == "nt" else "obc-sponsored-runtime"

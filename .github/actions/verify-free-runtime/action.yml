@@ -1,0 +1,28 @@
+name: Verify free runtime for this Core
+description: Check all five signed release assets before publishing a backend or aggregate.
+inputs:
+  extension-tag:
+    description: A standalone extension release does not publish a Core.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Verify pinned release assets
+      shell: bash
+      env:
+        EXTENSION_TAG: ${{ inputs.extension-tag }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$EXTENSION_TAG" ]]; then
+          core=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if [[ "$EXTENSION_TAG" != "extension-v$core" ]]; then
+            echo "Standalone extension: no Core promotion."
+            exit 0
+          fi
+        fi
+        python -m pip install .
+        PYTHONPATH=src python scripts/verify_release_sdk.py
