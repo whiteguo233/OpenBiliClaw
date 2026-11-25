@@ -348,6 +348,11 @@ jobs:
             done
           done
 
+      - name: Verify free runtime for Core promotion
+        uses: ./.github/actions/verify-free-runtime
+        with:
+          extension-tag: ${{ inputs.release_tag || github.ref_name }}
+
       - name: Update aggregate latest release
         env:
           GH_TOKEN: ${{ github.token }}

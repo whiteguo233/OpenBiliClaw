@@ -290,6 +290,8 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 免费服务预置为普通 LLM 实例与独立 Embedding Provider，使用现有调用链与选择入口。图片能力可选，BGE-M3 仅生成文本向量；受保护传输封装在 adapter 内。
 
 ```text
+SDK release: local private build → signed public SDK input commit → Core release checks (ABI, pins, policy, Cargo audit) → same archive in every app release with the same SDK contract
+
 admitted copy-ready content → unread / current dislikes / temporal / history filters
                            → exact Top 10% identities (ceil; nonempty min 1) → delight queue
                            └ remaining identities → ordinary feed / shared inventory

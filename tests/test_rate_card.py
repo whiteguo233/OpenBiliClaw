@@ -346,15 +346,25 @@ def test_invalid_pricing_overrides_are_ignored(tmp_path) -> None:
     assert config.llm.pricing.overrides == []
 
 
-def test_bundled_catalog_loads_and_covers_deepseek() -> None:
+@pytest.mark.parametrize(
+    ("moment", "tariff", "input_rate", "output_rate"),
+    [
+        (_utc(2026, 11, 22, 9, 0), "base", 0.15, 0.6),  # Sunday
+        (_utc(2026, 11, 25, 9, 0), "peak", 0.30, 1.2),  # Wednesday
+    ],
+)
+def test_bundled_catalog_loads_and_covers_deepseek(
+    moment: datetime, tariff: str, input_rate: float, output_rate: float
+) -> None:
     catalog = RateCatalog.load()
     assert catalog.provider_count > 0
     assert catalog.model_count > 0
-    effective = catalog.resolve("deepseek", "deepseek-v4-flash")
+    effective = catalog.resolve("deepseek", "deepseek-v4-flash", now=moment)
     assert effective is not None
     assert effective.confidence == "exact"
-    assert effective.rates.input_per_mtok == pytest.approx(0.15)
-    assert effective.rates.output_per_mtok == pytest.approx(0.6)
+    assert effective.tariff_label == tariff
+    assert effective.rates.input_per_mtok == pytest.approx(input_rate)
+    assert effective.rates.output_per_mtok == pytest.approx(output_rate)
 
 
 def test_primary_route_reads_v2_chain_and_legacy_provider() -> None:

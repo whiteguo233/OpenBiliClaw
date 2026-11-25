@@ -133,3 +133,17 @@ Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runn
 ### Intel 已验证产物发布
 
 `publish-intel-installer.yml` 手动接收版本、成功的 `build-installers.yml` run ID 和已复核 DMG SHA-256。先确认构建提交等于对应 desktop tag，再下载该次 Intel 产物、校验版本／架构／提交后缀与字节摘要，将同一包附到 desktop 和 aggregate release。不会重新构建，不替换已有不同摘要的资产；仅移除文件名的构建 SHA 后缀，包内签名、公证和字节保持。脚本接口是 `.github/scripts/promote-intel-installer.py verify-source|publish`，仅供发布 CI 使用，不新增用户 CLI／配置。
+
+## 免费模型组件发版门禁
+
+每次提升 Core 版本，先推送含目标版本的已审查提交，不先打产品标签。默认免费方案使用独立签名 SDK；仅更新 Python 版本、通过插件打包或发起私有 CI，都不能证明 SDK 可用。
+
+1. 首先用目标 Core 验证已固定的五个 SDK。若契约、有效期、来源和依赖审计仍匹配，则复用原包；仅应用版本变化不要求重编格式 2 的 SDK。
+2. 如需新包，可在本机检出已审查的私库和 Core 提交，按批准的授权窗口编译五平台、签名并公证两个 Mac 归档。用干净安装的原生组件完成关闭回退的真实模型请求，然后按下节将五个成品传给主仓。此路线不触发私有 Actions。受保护的私库发行流水线是另一个可选来源，不是本机发布的前置条件。
+3. 发布已批准的组件资产，提交 `src/openbiliclaw/runtime/sponsored_release.json`。从最终 Core checkout 运行 `PYTHONPATH=src python scripts/verify_release_sdk.py`：五个官方归档的文件和 manifest 摘要、签名、平台、Core 兼容范围、策略有效期、任务合同和 macOS 公证声明全部通过，再发产品标签。使用 `--archives DIR` 可先对同一批包离线验收；原生安装与离线自检仍由 native smoke 覆盖，不发模型请求。
+
+后端聚合、Docker 推镜像、桌面分发及同版本插件更新聚合页均必须过此门禁。单独发不同版本的插件不要求重新签后端 SDK。已发布源标签携带不可变清单；补建组件不会让指向老摘要的 checkout 自动恢复，应通过新修订交付正确的清单，不覆盖旧标签。
+
+## 本地 SDK 输入分支
+
+五个 Rust 归档由私库在本机编译、封装后交付。公共仓的 `sdk-input/<commit>` 是纯数据分支，不运行其中的脚本。发布分支更新目录即可触发 `sponsored-runtime-smoke.yml`：先独立验签全部输入并审计锁文件，再在五个原生系统和两个 Linux 镜像验收。正常应用打包继续从同一组 SHA 固定的归档取件，不读取私库，不接收赞助 Key 或签名私钥。见 [交付命令](runtime.md#免费-sdk-按契约复用)。

@@ -23,10 +23,10 @@ from openbiliclaw.runtime import sponsored_bundle as bundle
 
 
 def signed_bundle(
-    directory: Path, *, platform: str | None = None
+    directory: Path, *, platform: str | None = None, key: Ed25519PrivateKey | None = None
 ) -> tuple[dict[str, Any], Ed25519PrivateKey]:
     directory.mkdir()
-    key = Ed25519PrivateKey.generate()
+    key = key or Ed25519PrivateKey.generate()
     public = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     policy = build_unsigned_policy(
         approved_registry(),

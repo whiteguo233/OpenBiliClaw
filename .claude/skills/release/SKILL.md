@@ -53,9 +53,17 @@ Then verify every mechanical field and both user-facing version headers:
 .venv/bin/python scripts/release.py --check
 ```
 
-## 5. Commit and push tags individually
+## 5. Verify the signed SDK, then push tags individually
 
-Review the release-only diff, stage only those files, and commit:
+Every Core bump includes a matching five-platform SiliconFlow SDK. First commit/push the
+reviewed Core version to a reachable branch **without tags**. Follow the
+[SDK release gate](../../../docs/modules/packaging.md#免费模型组件发版门禁) to dispatch
+the private build for that exact SHA, finalize the artifacts, and pin their catalog.
+Proceed to tags only when `python scripts/verify_release_sdk.py` verifies all five public
+archives from the release checkout. A queued/skipped build or billing failure stops here.
+Extension-only releases with a different version skip this Core gate.
+
+Review the release-only diff, including the verified pins, and commit any remaining changes:
 
 ```bash
 git commit -m "chore: release X.Y.Z" -- <release-paths>

@@ -194,12 +194,10 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 
 ## Recent Updates
 
-📌 Latest: **v0.3.240 (2026-11-22)**
+📌 Latest: **v0.3.241 (2026-11-25)**
 
-- **Daily LLM spend cap**. Local-calendar-day accounting with warn-only / pause-background / stop-all modes and cross-process reservations.
-- **Real price catalog**. 16 providers and 2,007 models with peak windows, long-context tiers and low-confidence warnings.
-- **Peak scheduling and same-model routing**. Pause only background maintenance at peak; pick the cheaper instance within the same model.
-- **Windows Ego Lite Beta**. Detects the official install and supports a headless host with native handshakes.
+- Select the built-in SiliconFlow provider to use Qwen without your own API key. Compatible app updates can reuse the same signed component.
+- When a model service rejects an invalid request, the app reports the error without resending the same request.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -389,6 +387,8 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 </details>
 
 ## 🏛️ Architecture Overview
+
+Free-model releases: the local private build seals the SDK → the public repo receives five signed archives → Core verifies them → app-only releases can ship the identical archive, regardless of version number. [Reuse requirements](docs/modules/runtime.md#免费-sdk-按契约复用)
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────────┐

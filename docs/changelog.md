@@ -2,7 +2,23 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## v0.3.241：恢复内置硅基流动免费模型（2026-11-25）
+
+- 支持本机私库五平台编译、主项目独立输入分支交付；五个签名 SDK 由同一个不可变提交提供，应用 Action 不需要私有 Actions 额度或上游 Key。
+- 主仓先验全套输入再启动原生及镜像验收；本地 Git 集成测试覆盖重复交付、拒绝篡改、无父提交且只含五个归档。[本地交付验收](verification/2026-11-25-local-sdk-handoff.md)
+- 修复发版 CI 随运行时间偶发失败：内置 DeepSeek 费率分别按固定的峰时、谷时验证，不改实际计费。
+- 中英文 README 保留发布工具识别的版本标记，随版本清单一同核验。
+
+- 增加已签 SDK 原包复用：只改应用版本（包括跨大版本）时，五平台核验通过即可沿用原归档。Rust 构建输入、IPC、任务/配额、凭据有效期或目录指纹不匹配仍会阻止发行。旧版签名不追溯放宽。
+- 安装入口的五平台负例确认：篡改、过期和不兼容的归档在执行前被拒绝，不会激活。[验收记录](verification/2026-11-25-sponsored-sdk-reuse.md)
+
+- 固定新版本后，以正式 Core 验签逻辑逐个检查五个平台的免费组件；签名、版本或摘要不符时停止发布。历史 `0.3.239` 标签和已发布资产不变。
+- 模型服务返回不可重试的 HTTP 4xx 时，不再重复发送同一请求。
+- 固定本机编译并签名的五个正式归档（[输入提交](https://github.com/whiteguo233/OpenBiliClaw/commit/1797f53bef457601be753909163e7281b951ccf0)）。Intel Mac 隔离新装后通过正式 Rust 组件访问硅基流动 Qwen3-8B，获得预期回答与非零用量，不使用备用模型或用户 Key。
+
 ## v0.3.240：每日 LLM 预算、价格目录与峰谷调度（2026-11-22）
+
+- 待发布修复：Core/镜像/桌面与聚合发布前校验五平台硅基流动免费组件；防止新版引用仅签给旧 Core 的包。此项不改写已发布标签，也不代表 0.3.240 的签名组件已补发。[流程](modules/packaging.md#免费模型组件发版门禁) · [实测](verification/2026-11-24-sdk-and-director.md)
 
 - **每日 LLM 花费上限（issue #353）**：新增 `scheduler.daily_budget_cny` 与 `budget_on_exceed=pause|stop|warn`；按本地日历日累计 `llm_usage.estimated_cost_cny`，每天一条 `budget_exceeded` 事件。共享 SQLite `background_llm_budget_reservations`（30 分钟 TTL）做 per-call 预留，跨进程/热重载可见，usage 在 provider slot 内结算后才释放。
 - **provider/model 价格目录**：随包 16 providers / 2,007 models 的 catalog，覆盖峰谷窗口、长上下文档位、置信度与 USD/CNY；`openbiliclaw price --sync` 原子刷新 data 目录快照，损坏或空快照降级/拒绝覆盖；`llm.cost_multiplier` 校准账单。
