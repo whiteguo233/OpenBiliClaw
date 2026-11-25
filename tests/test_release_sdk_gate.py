@@ -154,9 +154,10 @@ def test_reuse_of_exact_archive_across_app_releases(
             assert not (install_root / "active").exists()
 
 
+@pytest.mark.parametrize("delivery", ["release", "commit"])
 @pytest.mark.parametrize("stale_windows", [False, True])
 def test_offline_release_candidate_requires_every_signed_platform(
-    tmp_path: Path, stale_windows: bool
+    tmp_path: Path, stale_windows: bool, delivery: str
 ) -> None:
     catalog, key = signed_bundle(tmp_path / "issuer")
     for platform in gate.PLATFORMS:
@@ -176,9 +177,13 @@ def test_offline_release_candidate_requires_every_signed_platform(
         (folder / "manifest.sig").write_bytes(key.sign(manifest.read_bytes()))
         name = f"obc-sponsored-runtime-{platform}.tar.gz"
         artifact = archive(folder, tmp_path / name)
+        prefix = (
+            "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-fixture/"
+            if delivery == "release"
+            else "https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/" + "a" * 40 + "/"
+        )
         catalog["releases"][platform] = {
-            "url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-fixture/"
-            + name,
+            "url": prefix + name,
             "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
             "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         }

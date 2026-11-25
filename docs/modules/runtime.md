@@ -2,6 +2,8 @@
 
 ## 免费 SDK 按契约复用（候选）
 
+本地私库构建也能交付：`PYTHONPATH=src python scripts/handoff_local_sdk.py --archives DIR --catalog DIR/catalog.json --core-sha SHA --runtime-sha SHA --output new-catalog.json`。默认仅离线预览；加 `--push` 才推送到主仓 `sdk-input/<commit>`。输入分支是无父提交，只包含五个已签 tar.gz，不包含构建脚本、私库源码或密钥文件。将生成的目录审查后更新至 `src/openbiliclaw/runtime/sponsored_release.json`，主仓现有五平台及 Docker CI 进行原生验收，随后按正常流程打应用包。下载地址固定 40 位提交 SHA，不使用浮动分支；必须保留该输入分支使资产可下载。
+
 | 公开入口 | 规则 |
 | --- | --- |
 | `scripts/verify_release_sdk.py [--archives DIR]` | 直接核验本 Core 固定的五个已签归档；新格式额外对比赞助 IPC 客户端源码摘要。全过可直接发应用，无需编 Rust、重签或重新上传 SDK。 |

@@ -72,17 +72,26 @@ def verify_catalog(
     releases = catalog["releases"]
     if set(releases) != set(PLATFORMS):
         raise sdk.BundleError("expected the five supported SDK platforms")
+    deliveries = set()
+    for platform, entry in releases.items():
+        name = re.escape(f"obc-sponsored-runtime-{platform}.tar.gz")
+        match = re.fullmatch(
+            r"(https://github\.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-[\w.-]+"
+            r"|https://raw\.githubusercontent\.com/whiteguo233/OpenBiliClaw/[0-9a-f]{40})/" + name,
+            entry["url"],
+        )
+        if not match:
+            raise sdk.BundleError(
+                f"{platform}: expected a pinned official release asset or full commit"
+            )
+        deliveries.add(match[1])
+    if len(deliveries) != 1:
+        raise sdk.BundleError("all SDKs must come from one release or immutable upload commit")
     with tempfile.TemporaryDirectory() as tmp:
         for platform in PLATFORMS:
             name = f"obc-sponsored-runtime-{platform}.tar.gz"
             entry = releases[platform]
             url = entry["url"]
-            if not re.fullmatch(
-                r"https://github\.com/whiteguo233/OpenBiliClaw/releases/download/sponsored-runtime-[\w.-]+/"
-                + re.escape(name),
-                url,
-            ):
-                raise sdk.BundleError(f"{platform}: expected a pinned official release asset")
             path = (archives or Path(tmp)) / name
             if archives is None:
                 subprocess.run(
