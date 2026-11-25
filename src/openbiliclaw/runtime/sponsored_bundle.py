@@ -82,31 +82,29 @@ def _version(value: object) -> tuple[int, int, int]:
 def _compatible_manifest(
     manifest: dict[str, Any], catalog: dict[str, Any], target: str, raw: bytes
 ) -> bool:
-    current = _version(__version__)
     if "core_compatibility" not in manifest:
+        # Old signatures explicitly bind their assets to this version range.
+        current = _version(__version__)
         return _version(manifest.get("core_min")) <= current <= _version(manifest.get("core_max"))
     claim = manifest["core_compatibility"]
     if (
         not isinstance(claim, dict)
         or set(claim)
-        != {"format", "since", "abi", "rust_inputs_sha256", "client_sha256", "cargo_lock_sha256"}
+        != {"format", "abi", "rust_inputs_sha256", "client_sha256", "cargo_lock_sha256"}
         or "core_min" in manifest
         or "core_max" in manifest
     ):
         return False
     lock = json.loads(Path(__file__).with_name("sponsored_sdk_lock.json").read_bytes())
-    since = _version(claim["since"])
     return (
         type(claim["format"]) is int
-        and claim["format"] == 1
+        and claim["format"] == 2
         and type(claim["abi"]) is int
         and claim["abi"] == lock["abi"]
         and bool(re.fullmatch(r"[0-9a-f]{64}", claim["rust_inputs_sha256"]))
         and claim["rust_inputs_sha256"] == lock["rust_inputs_sha256"]
         and claim["cargo_lock_sha256"] == lock["cargo_lock_sha256"]
         and bool(re.fullmatch(r"[0-9a-f]{64}", claim["client_sha256"]))
-        and since[:2] == current[:2]
-        and since <= current
         and catalog["releases"].get(target, {}).get("manifest_sha256")
         == hashlib.sha256(raw).hexdigest()
     )
@@ -148,11 +146,17 @@ def verify_bundle(
             manifest.get("protocol") != 2
             or manifest.get("profile") != PROFILE
             or manifest.get("platform") != target_platform
-            or not _compatible_manifest(manifest, catalog, target_platform, raw)
             or set(manifest.get("files", {})) != names
             or {p.name for p in directory.iterdir()} != names | {"manifest.json", "manifest.sig"}
         ):
-            raise BundleError("免费模型组件与当前版本或平台不兼容")
+            raise BundleError("免费模型组件的平台、协议或文件清单不匹配")
+        if not _compatible_manifest(manifest, catalog, target_platform, raw):
+            if "core_compatibility" not in manifest:
+                raise BundleError(
+                    f"旧组件签名仅适用 Core {manifest['core_min']} 至 {manifest['core_max']}，"
+                    "请更新免费模型组件"
+                )
+            raise BundleError("免费模型组件 SDK 契约或目录指纹不匹配")
         for name in names | {"manifest.json", "manifest.sig"}:
             path = directory / name
             if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_UNPACKED_BYTES:
@@ -183,13 +187,9 @@ def verify_bundle(
                 for k in policy["keys"]
             ):
                 raise BundleError("免费模型组件没有生效的赞助凭据")
-            for bound, value in policy["core"].items():
-                if value and (
-                    bound not in {"min", "max"}
-                    or (bound == "min" and _version(__version__) < _version(value))
-                    or (bound == "max" and _version(__version__) > _version(value))
-                ):
-                    raise BundleError("免费模型组件策略不支持当前版本")
+            if policy["core"] != {"min": "", "max": ""}:
+                # Do not reinterpret an issuer's bounded policy as version-independent.
+                raise BundleError("免费模型组件策略限定了应用版本，不能作为跨版本组件")
         if set(policy["tasks"]) != set(expected):
             raise BundleError("免费模型组件缺少所需任务")
         for name, contract in expected.items():

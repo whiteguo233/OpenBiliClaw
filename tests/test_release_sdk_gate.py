@@ -34,7 +34,10 @@ def test_signed_archive_matches_releasing_core(tmp_path: Path, scenario: str) ->
         with pytest.raises(bundle.BundleError, match="legacy"):
             gate.check_archive(artifact, entry, catalog, platform, require_reusable=True)
     else:
-        with pytest.raises(bundle.BundleError):
+        expected = (
+            r"旧组件签名仅适用 Core 0\.0\.1" if scenario == "previous-core" else "digest mismatch"
+        )
+        with pytest.raises(bundle.BundleError, match=expected):
             gate.check_archive(artifact, entry, catalog, platform)
 
 
@@ -46,9 +49,10 @@ def test_release_gate_rejects_partial_catalog() -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        "patch-only",
-        "next-minor",
-        "downgrade",
+        "version-only",
+        "retired-patch-claim",
+        "bounded-policy",
+        "wrong-abi",
         "limits",
         "expired-grant",
         "retired-pin",
@@ -78,6 +82,8 @@ def test_reuse_of_exact_archive_across_app_releases(
     ]
     if change == "limits":
         next(iter(policy["tasks"].values()))["limits"] = {"daily_requests": 1}
+    if change == "bounded-policy":
+        policy["core"]["max"] = "0.3.241"
     policy_path.write_text(json.dumps(policy))
     (folder / "sponsored-policy.sig").write_bytes(signer.sign(policy_path.read_bytes()))
     path = folder / "manifest.json"
@@ -91,12 +97,15 @@ def test_reuse_of_exact_archive_across_app_releases(
     del manifest["core_min"], manifest["core_max"]
     manifest["core_compatibility"] = {
         **lock,
-        "format": 1,
-        "since": "0.3.241",
+        "format": 2,
         "client_sha256": gate.client_digest(),
     }
     if change == "private-inputs":
         manifest["core_compatibility"]["rust_inputs_sha256"] = "0" * 64
+    if change == "wrong-abi":
+        manifest["core_compatibility"]["abi"] += 1
+    if change == "retired-patch-claim":
+        manifest["core_compatibility"].update(format=1, since="0.3.241")
     if change == "core-ipc":
         manifest["core_compatibility"]["client_sha256"] = "0" * 64
     if change == "audit-lock":
@@ -120,14 +129,13 @@ def test_reuse_of_exact_archive_across_app_releases(
     catalog["releases"][platform] = {**entry}
     if change == "retired-pin":
         catalog["releases"][platform]["manifest_sha256"] = "0" * 64
-    if change == "patch-only":
-        for version in ("0.3.241", "0.3.242"):
+    if change == "version-only":
+        for version in ("0.3.241", "0.3.242", "0.4.0", "1.0.0", "0.3.240", "2.0.0rc1"):
             monkeypatch.setattr(bundle, "__version__", version)
             gate.check_archive(artifact, entry, catalog, platform, require_reusable=True)
         assert hashlib.sha256(artifact.read_bytes()).hexdigest() == archive_digest
     else:
-        target = {"next-minor": "0.4.0", "downgrade": "0.3.240"}.get(change, "0.3.242")
-        monkeypatch.setattr(bundle, "__version__", target)
+        monkeypatch.setattr(bundle, "__version__", "1.0.0")
         with pytest.raises(bundle.BundleError):
             gate.check_archive(artifact, entry, catalog, platform)
         if change not in {"core-ipc", "audit-lock"}:
@@ -137,8 +145,9 @@ def test_reuse_of_exact_archive_across_app_releases(
             reason = {
                 "expired-grant": "没有生效的赞助凭据",
                 "limits": "任务或配额已变化",
+                "bounded-policy": "策略限定了应用版本",
                 "tampered-binary": "组件校验失败",
-            }.get(change, "与当前版本或平台不兼容")
+            }.get(change, "SDK 契约或目录指纹不匹配")
             # Require the verifier's rejection, not an accidental execution/OS failure.
             with pytest.raises(bundle.BundleError, match=reason):
                 bundle.install_archive(artifact, catalog=catalog)

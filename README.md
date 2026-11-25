@@ -390,7 +390,7 @@ docker restart openbiliclaw-backend
 
 ## 🏛️ 架构概览
 
-免费模型发行：私库封装并签名 Rust SDK → Core 核验 → 兼容的补丁版本可打包同一份 SDK。[复用条件](docs/modules/runtime.md#免费-sdk-补丁版复用候选)
+免费模型发行：私库封装并签名 Rust SDK → Core 核验 → 仅变更应用版本时复用同一份 SDK。[复用条件](docs/modules/runtime.md#免费-sdk-按契约复用候选)
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────────┐

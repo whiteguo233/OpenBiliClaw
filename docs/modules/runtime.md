@@ -1,13 +1,13 @@
 # Runtime Module
 
-## 免费 SDK 补丁版复用（候选）
+## 免费 SDK 按契约复用（候选）
 
 | 公开入口 | 规则 |
 | --- | --- |
 | `scripts/verify_release_sdk.py [--archives DIR]` | 直接核验本 Core 固定的五个已签归档；新格式额外对比赞助 IPC 客户端源码摘要。全过可直接发应用，无需编 Rust、重签或重新上传 SDK。 |
-| `sponsored_bundle.verify_bundle() / install_archive()` | 新签名声明只允许同 major/minor、不早于签发版本的 Core。校验本平台清单指纹、SDK 构建输入锁、ABI、任务（含 limits）与有效赞助授权；原有验签、文件哈希及安装时的原生自检保持不变。旧清单只认原来签署的版本范围。 |
+| `sponsored_bundle.verify_bundle() / install_archive()` | 新签名格式 2 不含 Core 版本字段，安装时不比较应用版本号。若策略另有限定版本，则拒作跨版本包。校验本平台清单指纹、SDK 构建输入锁、ABI、任务（含 limits）与有效赞助授权；原有验签、文件哈希及安装时的原生自检保持不变。旧清单只认原来签署的版本范围。 |
 
-更新 Rust 依赖、工具链或生产构建脚本时，审查私库 `tools/release_bundle.py --print-runtime-inputs` 输出并更新 `sponsored_sdk_lock.json`，走原有五平台正式发行流程。更新 IPC、升级到下一条 minor 线、变更模型策略或轮换凭据也须重新签发匹配包并更新目录；不能修改旧标签或跳过检查。当前历史 SDK 是 exact-version；要享受此机制，需先签出第一批新包。
+更新 Rust 依赖、工具链或生产构建脚本时，审查私库 `tools/release_bundle.py --print-runtime-inputs` 输出并更新 `sponsored_sdk_lock.json`，走原有五平台正式发行流程。更新 IPC、变更模型策略或轮换凭据也须重新签发匹配包并更新目录；不能修改旧标签或跳过检查。当前历史 SDK 是 exact-version；要享受此机制，需先签出第一批新包。
 
 公开 Action 复用前核验 `packaging/sponsored-sdk/Cargo.lock` 与 SDK 签名中的摘要一致，再执行 `cargo audit --file packaging/sponsored-sdk/Cargo.lock --deny warnings`。这份锁文件只列第三方依赖及包名，不包含 Rust 源码或凭据。即使未改过源码，新增的安全公告也能阻止发版。
 
