@@ -194,9 +194,9 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 
 ## Recent Updates
 
-📌 Latest: **v0.3.241 (2026-11-25, release candidate)**
+📌 **v0.3.241 (2026-11-25)**
 
-- Installers cannot ship with a SiliconFlow free-model component signed for a different app version. This candidate is not published.
+- Select the built-in SiliconFlow provider to use Qwen without your own API key. Compatible app updates can reuse the same signed component.
 - When a model service rejects an invalid request, the app reports the error without resending the same request.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
@@ -388,7 +388,7 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 
 ## 🏛️ Architecture Overview
 
-Free-model releases: the local private build seals the SDK → the public repo receives five signed archives → Core verifies them → app-only releases can ship the identical archive, regardless of version number. [Reuse requirements](docs/modules/runtime.md#免费-sdk-按契约复用候选)
+Free-model releases: the local private build seals the SDK → the public repo receives five signed archives → Core verifies them → app-only releases can ship the identical archive, regardless of version number. [Reuse requirements](docs/modules/runtime.md#免费-sdk-按契约复用)
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────────┐
