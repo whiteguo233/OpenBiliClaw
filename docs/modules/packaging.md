@@ -143,3 +143,7 @@ Mac构建依赖必须使用静态链接的cryptography。2026-11-04的Intel runn
 3. 发布已批准的组件资产，提交 `src/openbiliclaw/runtime/sponsored_release.json`。从最终 Core checkout 运行 `PYTHONPATH=src python scripts/verify_release_sdk.py`：五个官方归档的文件和 manifest 摘要、签名、平台、Core 兼容范围、策略有效期、任务合同和 macOS 公证声明全部通过，再发产品标签。使用 `--archives DIR` 可先对同一批包离线验收；原生安装与离线自检仍由 native smoke 覆盖，不发模型请求。
 
 后端聚合、Docker 推镜像、桌面分发及同版本插件更新聚合页均必须过此门禁。单独发不同版本的插件不要求重新签后端 SDK。已发布源标签携带不可变清单；补建组件不会让指向老摘要的 checkout 自动恢复，应通过新修订交付正确的清单，不覆盖旧标签。
+
+## 本地 SDK 输入分支
+
+五个 Rust 归档由私库在本机编译、封装后交付。公共仓的 `sdk-input/<commit>` 是纯数据分支，不运行其中的脚本。发布分支更新目录即可触发 `sponsored-runtime-smoke.yml`：先独立验签全部输入并审计锁文件，再在五个原生系统和两个 Linux 镜像验收。正常应用打包继续从同一组 SHA 固定的归档取件，不读取私库，不接收赞助 Key 或签名私钥。见 [交付命令](runtime.md#免费-sdk-按契约复用候选)。

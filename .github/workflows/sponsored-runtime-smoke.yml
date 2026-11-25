@@ -7,7 +7,10 @@ on:
       - src/openbiliclaw/llm/sponsored*py
       - src/openbiliclaw/llm/prompt_contracts.py
       - src/openbiliclaw/runtime/sponsored_release.json
+      - src/openbiliclaw/runtime/sponsored_sdk_lock.json
       - src/openbiliclaw/runtime/sponsored_bundle.py
+      - scripts/handoff_local_sdk.py
+      - scripts/verify_release_sdk.py
       - scripts/sponsored_install_smoke.py
       - .github/workflows/sponsored-runtime-smoke.yml
       - Dockerfile
@@ -17,7 +20,17 @@ permissions:
   contents: read
 
 jobs:
+  catalog:
+    name: Verify the complete pinned SDK input
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/verify-free-runtime
+
   native:
+    needs: catalog
     name: Native SDK (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -27,6 +40,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -36,6 +51,7 @@ jobs:
         run: python scripts/sponsored_install_smoke.py
 
   docker:
+    needs: catalog
     name: Docker SDK (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -45,6 +61,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build the actual backend image with its verified SDK
         run: docker build -t obc-sponsored-smoke .
       - name: Verify the bundled runtime inside the container

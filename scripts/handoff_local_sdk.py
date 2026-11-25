@@ -20,7 +20,15 @@ else:
     import verify_release_sdk as gate
 
 
-def handoff(archives: Path, issued: dict, core_sha: str, runtime_sha: str, *, push: bool) -> dict:
+def handoff(
+    archives: Path,
+    issued: dict,
+    core_sha: str,
+    runtime_sha: str,
+    *,
+    push: bool,
+    remote: str = "git@github.com:whiteguo233/OpenBiliClaw.git",
+) -> dict:
     """Create an orphan data commit. Never trust a key or executable supplied by the branch."""
     import re
 
@@ -92,7 +100,6 @@ def handoff(archives: Path, issued: dict, core_sha: str, runtime_sha: str, *, pu
             }
         gate.verify_catalog(cat, directory, require_reusable=True)
         if push:
-            remote = "git@github.com:whiteguo233/OpenBiliClaw.git"
             git("push", remote, f"{commit}:{branch}")  # never force / overwrite
             if git("ls-remote", remote, branch).split()[0] != commit:
                 raise ValueError("uploaded branch did not resolve to the verified commit")

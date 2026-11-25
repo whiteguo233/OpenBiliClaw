@@ -388,7 +388,7 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 
 ## 🏛️ Architecture Overview
 
-Free-model releases: the private build seals and signs the Rust SDK → Core verifies it → app-only releases can ship the identical archive, regardless of version number. [Reuse requirements](docs/modules/runtime.md#免费-sdk-按契约复用候选)
+Free-model releases: the local private build seals the SDK → the public repo receives five signed archives → Core verifies them → app-only releases can ship the identical archive, regardless of version number. [Reuse requirements](docs/modules/runtime.md#免费-sdk-按契约复用候选)
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────────────┐

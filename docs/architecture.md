@@ -3,7 +3,7 @@
 ## 系统概览
 
 ```text
-SDK release: sealed Rust archive → Core release checks (ABI, pins, policy, Cargo audit) → same archive in every app release with the same SDK contract
+SDK release: local private build → signed public SDK input commit → Core release checks (ABI, pins, policy, Cargo audit) → same archive in every app release with the same SDK contract
 
 admitted copy-ready content → unread / current dislikes / temporal / history filters
                            → exact Top 10% identities (ceil; nonempty min 1) → delight queue
