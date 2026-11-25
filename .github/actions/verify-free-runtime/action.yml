@@ -26,3 +26,5 @@ runs:
         fi
         python -m pip install .
         PYTHONPATH=src python scripts/verify_release_sdk.py
+        cargo install cargo-audit --version 0.22.2 --locked
+        cargo audit --file packaging/sponsored-sdk/Cargo.lock --deny warnings
