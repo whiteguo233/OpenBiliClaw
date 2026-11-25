@@ -388,6 +388,8 @@ See [Docker Deployment Guide](docs/docker-deployment.md) and [HTTPS Deployment G
 
 ## 🏛️ Architecture Overview
 
+Free-model releases: the private build seals and signs the Rust SDK → Core verifies it → compatible patch releases can ship the identical archive. [Reuse requirements](docs/modules/runtime.md#免费-sdk-补丁版复用候选)
+
 ```text
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │                                 User Surfaces                                 │

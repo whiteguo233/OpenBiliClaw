@@ -127,6 +127,7 @@ a = Analysis(
         (str(project_root / "config.example.toml"), "."),
         (str(project_root / "LICENSE"), "."),
         (str(project_root / "src/openbiliclaw/runtime/sponsored_release.json"), "openbiliclaw/runtime"),
+        (str(project_root / "src/openbiliclaw/runtime/sponsored_sdk_lock.json"), "openbiliclaw/runtime"),
         # Provider/model price catalog + peak windows (issue #353). Without it
         # the frozen app silently falls back to the static table and loses
         # catalog-based peak detection.
