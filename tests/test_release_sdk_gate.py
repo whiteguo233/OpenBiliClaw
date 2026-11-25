@@ -56,6 +56,7 @@ def test_release_gate_rejects_partial_catalog() -> None:
         "core-ipc",
         "audit-lock",
         "mixed-claims",
+        "tampered-binary",
     ],
 )
 @pytest.mark.parametrize("platform", gate.PLATFORMS)
@@ -108,6 +109,8 @@ def test_reuse_of_exact_archive_across_app_releases(
         manifest["files"][name] = hashlib.sha256((folder / name).read_bytes()).hexdigest()
     path.write_text(json.dumps(manifest))
     (folder / "manifest.sig").write_bytes(signer.sign(path.read_bytes()))
+    if change == "tampered-binary":
+        next(folder.glob("obc-sponsored-runtime*")).write_bytes(b"modified after signing")
     artifact = archive(folder, tmp_path / "original-release.tar.gz")
     archive_digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     entry = {
@@ -127,6 +130,19 @@ def test_reuse_of_exact_archive_across_app_releases(
         monkeypatch.setattr(bundle, "__version__", target)
         with pytest.raises(bundle.BundleError):
             gate.check_archive(artifact, entry, catalog, platform)
+        if change not in {"core-ipc", "audit-lock"}:
+            install_root = tmp_path / "install"
+            monkeypatch.setattr(bundle, "platform_id", lambda: platform)
+            monkeypatch.setattr(bundle, "_root", lambda: install_root)
+            reason = {
+                "expired-grant": "没有生效的赞助凭据",
+                "limits": "任务或配额已变化",
+                "tampered-binary": "组件校验失败",
+            }.get(change, "与当前版本或平台不兼容")
+            # Require the verifier's rejection, not an accidental execution/OS failure.
+            with pytest.raises(bundle.BundleError, match=reason):
+                bundle.install_archive(artifact, catalog=catalog)
+            assert not (install_root / "active").exists()
 
 
 @pytest.mark.parametrize("stale_windows", [False, True])
