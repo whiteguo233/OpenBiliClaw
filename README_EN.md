@@ -194,7 +194,7 @@ One local backend, five coordinated surfaces: the **browser extension** handles 
 
 ## Recent Updates
 
-📌 **v0.3.241 (2026-11-25)**
+📌 Latest: **v0.3.241 (2026-11-25)**
 
 - Select the built-in SiliconFlow provider to use Qwen without your own API key. Compatible app updates can reuse the same signed component.
 - When a model service rejects an invalid request, the app reports the error without resending the same request.
