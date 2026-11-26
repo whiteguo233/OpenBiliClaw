@@ -2,6 +2,10 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 未发布
+
+- query inspiration 新增可选 `specstream` grounding 后端：`[discovery]` 新增 `specstream_api_key`，`inspiration_search_backends` 显式加入 `specstream` 且填写 Key 后，`SpecStreamInspirationProvider` 直连 `GET https://api.specstream.ai/v1/web-search`（`speed=fast`、`passages=true`），每条结果以页面里最贴近查询的段落作为 highlights。默认后端顺序不变，Key 留空即跳过；插件 / 桌面 Web / 移动 Web / CLI 复用同一后端配置，不新增设置控件。见 [Discovery](modules/discovery.md#可选-specstream-grounding)。
+
 ## v0.3.241：恢复内置硅基流动免费模型（2026-11-25）
 
 - 支持本机私库五平台编译、主项目独立输入分支交付；五个签名 SDK 由同一个不可变提交提供，应用 Action 不需要私有 Actions 额度或上游 Key。
