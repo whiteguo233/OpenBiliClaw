@@ -47,13 +47,15 @@ INSPIRATION_SEARCH_BACKEND_ALIASES: Mapping[str, str] = {
     "serply": "serply",
     "serply.io": "serply",
     "keenable": "keenable",
+    "specstream": "specstream",
+    "specstream.ai": "specstream",
 }
 
 # Backends that call an external search API and can therefore serve the
 # ``site:v2ex.com/t`` recall path. ``local_cache`` and ``platform_sources`` stay
 # on local / Bilibili data and are excluded.
 EXTERNAL_INSPIRATION_SEARCH_BACKENDS: frozenset[str] = frozenset(
-    {"bing_rss", "exa", "you", "serply", "parallel", "keenable"}
+    {"bing_rss", "exa", "you", "serply", "parallel", "keenable", "specstream"}
 )
 
 

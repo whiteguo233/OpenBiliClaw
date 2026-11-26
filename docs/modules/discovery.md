@@ -1828,6 +1828,18 @@ TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；
 
 该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
 
+### 可选 SpecStream grounding
+
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply", "specstream"]`，并填写 `specstream_api_key`，可启用 [SpecStream](https://specstream.ai) 搜索 API（文档见 [specstream.ai/agents.md](https://specstream.ai/agents.md)）。默认配置不变；Key 留空时该后端直接跳过。每次搜索是一次 `GET https://api.specstream.ai/v1/web-search`，带 `Authorization: Bearer`、`speed=fast` 与 `passages=true`，只发送 grounding query 与结果数，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略，无新增依赖。
+
+| 已实现功能 | 状态 |
+|---|---|
+| 可选 SpecStream 标题 / URL / 页面段落 grounding（需 API Key），既有 fallback 与 cooldown | ✅ |
+
+公开 API：`SpecStreamInspirationProvider(api_key, timeout_seconds=8.0, base_url=..., transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `specstream` 名称装配，`InspirationGroundingKeys.specstream` 携带 Key。`parse_specstream_search_payload()` 读取 `data.sources[].title / url / highlights`，`highlights` 是页面里最贴近查询的段落，为空时回退 `snippet`。HTTP 错误（401 Key 无效、402 余额不足、429 限流）或空结果进入已有后备链。段落只作为关键词灵感证据，不直接写推荐池。
+
+该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
+
 ### 后端词表与 grounding key 打包（2026-10-24）
 
 | 已实现功能 | 状态 |

@@ -22,12 +22,14 @@ from openbiliclaw.discovery.inspiration_provider import (
     ExaInspirationProvider,
     FallbackInspirationSearchProvider,
     GitHubPlatformSearchBackend,
+    InspirationGroundingKeys,
     LocalInspirationProvider,
     McporterExaInspirationProvider,
     McporterYouInspirationProvider,
     PlatformSourceInspirationProvider,
     RedditPlatformSearchBackend,
     SerplyInspirationProvider,
+    SpecStreamInspirationProvider,
     TiktokPlatformSearchBackend,
     V2EXPlatformSearchBackend,
     WeiboPlatformSearchBackend,
@@ -40,6 +42,7 @@ from openbiliclaw.discovery.inspiration_provider import (
     build_platform_source_backends,
     parse_exa_search_payload,
     parse_serply_search_payload,
+    parse_specstream_search_payload,
     parse_you_search_payload,
 )
 from openbiliclaw.sources.github_client import GitHubAPIError
@@ -344,6 +347,117 @@ async def test_serply_direct_provider_calls_api_and_parses_results() -> None:
             url="https://example.test/serply",
             highlights=("a snippet",),
         )
+    ]
+
+
+def test_build_provider_skips_specstream_backend_when_key_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    assert build_inspiration_search_provider(["specstream"]) is None
+
+
+def test_build_provider_wires_specstream_backend_with_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+
+    provider = build_inspiration_search_provider(
+        ["specstream"], grounding_keys=InspirationGroundingKeys(specstream="ss-key")
+    )
+
+    assert isinstance(provider, FallbackInspirationSearchProvider)
+    assert [type(p) for p in provider.providers] == [SpecStreamInspirationProvider]
+
+
+async def test_specstream_direct_provider_calls_api_and_parses_passages() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer test-specstream-key"
+        assert request.url.host == "api.specstream.ai"
+        assert request.url.path == "/v1/web-search"
+        assert dict(request.url.params) == {
+            "q": "test query",
+            "num": "3",
+            "speed": "fast",
+            "passages": "true",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "sources": [
+                        {
+                            "title": "Direct SpecStream result",
+                            "url": "https://example.test/specstream",
+                            "snippet": "page summary",
+                            "highlights": ["first passage", "  ", "second passage"],
+                        },
+                        {
+                            "title": "No passages",
+                            "url": "https://example.test/summary",
+                            "snippet": "summary only",
+                        },
+                    ]
+                },
+                "error": None,
+            },
+        )
+
+    provider = SpecStreamInspirationProvider(
+        api_key="test-specstream-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    items = await provider.search("test query", limit=3)
+
+    assert items == [
+        ExaPreviewItem(
+            title="Direct SpecStream result",
+            url="https://example.test/specstream",
+            highlights=("first passage", "second passage"),
+        ),
+        ExaPreviewItem(
+            title="No passages",
+            url="https://example.test/summary",
+            highlights=("summary only",),
+        ),
+    ]
+
+
+async def test_specstream_provider_raises_on_http_error_and_skips_without_key() -> None:
+    calls: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(402, json={"error": {"code": "insufficient_credit"}})
+
+    provider = SpecStreamInspirationProvider(api_key="k", transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.search("query", limit=5)
+
+    keyless = SpecStreamInspirationProvider(api_key="", transport=httpx.MockTransport(handler))
+    assert await keyless.search("query", limit=5) == []
+    assert len(calls) == 1
+
+
+def test_parse_specstream_search_payload_tolerates_bad_shapes() -> None:
+    assert parse_specstream_search_payload("not json") == []
+    assert parse_specstream_search_payload({"data": None}) == []
+    assert parse_specstream_search_payload({"data": {"sources": "x"}}) == []
+    text = json.dumps(
+        {
+            "data": {
+                "sources": [
+                    "not a source",
+                    {"title": "", "url": "https://example.test/untitled"},
+                    {"title": "Kept", "url": "https://example.test/kept", "highlights": None},
+                ]
+            }
+        }
+    )
+    assert parse_specstream_search_payload(text) == [
+        ExaPreviewItem(title="Kept", url="https://example.test/kept")
     ]
 
 
@@ -1794,6 +1908,9 @@ def _capture_client_kwargs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, ob
         pytest.param("exa", lambda: ExaInspirationProvider(api_key="k"), id="exa"),
         pytest.param("you", lambda: YouInspirationProvider(api_key="k"), id="you"),
         pytest.param("serply", lambda: SerplyInspirationProvider(api_key="k"), id="serply"),
+        pytest.param(
+            "specstream", lambda: SpecStreamInspirationProvider(api_key="k"), id="specstream"
+        ),
     ],
 )
 @pytest.mark.parametrize(

@@ -5,7 +5,7 @@
 ## v0.3.241：恢复内置硅基流动免费模型（2026-11-25）
 
 - 待发布修复：直连 DeepSeek V4 Pro 在官方高峰按双倍美元费率估算（含缓存命中、未命中、输出），避免低估每日预算。内置目录及刷新均覆盖，北京时间周末及已公布的 2026–2027 年中国假期仍用谷价；不把直连价套到中转或用户覆盖。
-
+- query inspiration 新增可选 `specstream` grounding 后端：`[discovery]` 新增 `specstream_api_key`，`inspiration_search_backends` 显式加入 `specstream` 且填写 Key 后，`SpecStreamInspirationProvider` 直连 `GET https://api.specstream.ai/v1/web-search`（`speed=fast`、`passages=true`），每条结果以页面里最贴近查询的段落作为 highlights。默认后端顺序不变，Key 留空即跳过；插件 / 桌面 Web / 移动 Web / CLI 复用同一后端配置，不新增设置控件。见 [Discovery](modules/discovery.md#可选-specstream-grounding)。
 - 支持本机私库五平台编译、主项目独立输入分支交付；五个签名 SDK 由同一个不可变提交提供，应用 Action 不需要私有 Actions 额度或上游 Key。
 - 主仓先验全套输入再启动原生及镜像验收；本地 Git 集成测试覆盖重复交付、拒绝篡改、无父提交且只含五个归档。[本地交付验收](verification/2026-11-25-local-sdk-handoff.md)
 - 修复发版 CI 随运行时间偶发失败：内置 DeepSeek 费率分别按固定的峰时、谷时验证，不改实际计费。

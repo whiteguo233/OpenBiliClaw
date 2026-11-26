@@ -28,7 +28,7 @@ from openbiliclaw.proc import no_window_kwargs
 def _overseas_routing_kwargs(transport: httpx.AsyncBaseTransport | None) -> dict[str, Any]:
     """Routing kwargs for an overseas search-API ``httpx.AsyncClient``.
 
-    Exa / You.com / Serply / Keenable are overseas SaaS endpoints, so they follow the
+    Exa / You.com / Serply / Keenable / SpecStream are overseas SaaS endpoints, so they follow the
     process-wide ``[network]`` routing policy (``custom`` passes the explicit
     proxy, ``system`` inherits environment proxies, ``direct`` forces off).
     Hardwiring ``trust_env=False`` here left them direct-connected even when
@@ -563,6 +563,54 @@ class KeenableInspirationProvider:
         )
         response.raise_for_status()
         return parse_keenable_search_payload(response.json())[:count]
+
+
+class SpecStreamInspirationProvider:
+    """SpecStream provider implemented through SpecStream's direct HTTP search API.
+
+    Each search runs the fast tier with ``passages=true``: every source carries the
+    passages of its page closest to the query, which become the preview highlights,
+    so keyword grounding sees page text and not only a result summary.
+    """
+
+    backend_alias = "specstream"
+    _SEARCH_URL = "https://api.specstream.ai/v1/web-search"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float = 8.0,
+        base_url: str = _SEARCH_URL,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_key = str(api_key or "").strip()
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._base_url = str(base_url or "").strip() or self._SEARCH_URL
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            **_overseas_routing_kwargs(transport),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+                "User-Agent": "OpenBiliClaw",
+            },
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query or not self._api_key:
+            return []
+        response = await self._client.get(
+            self._base_url,
+            params={"q": clean_query, "num": count, "speed": "fast", "passages": "true"},
+        )
+        response.raise_for_status()
+        return parse_specstream_search_payload(response.json())[:count]
 
 
 def _rss_element_text(element: ElementTree.Element | None) -> str:
@@ -2010,6 +2058,7 @@ class InspirationGroundingKeys:
     exa: str = ""
     you: str = ""
     serply: str = ""
+    specstream: str = ""
 
     @classmethod
     def from_discovery_config(cls, discovery: object) -> InspirationGroundingKeys:
@@ -2026,6 +2075,7 @@ class InspirationGroundingKeys:
             exa=_key("exa_api_key"),
             you=_key("you_api_key"),
             serply=_key("serply_api_key"),
+            specstream=_key("specstream_api_key"),
         )
 
 
@@ -2110,6 +2160,13 @@ def build_inspiration_search_provider(
             )
         elif backend == "keenable":
             providers.append(KeenableInspirationProvider(timeout_seconds=timeout_seconds))
+        elif backend == "specstream" and str(keys.specstream or "").strip():
+            providers.append(
+                SpecStreamInspirationProvider(
+                    api_key=keys.specstream,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
     if not providers:
         return None
     if len(providers) == 1:
@@ -2251,6 +2308,49 @@ def parse_serply_search_payload(payload: object) -> list[ExaPreviewItem]:
         previews.append(
             ExaPreviewItem(title=title, url=url, highlights=(description,) if description else ())
         )
+    return previews
+
+
+def parse_specstream_search_payload(payload: object) -> list[ExaPreviewItem]:
+    """Parse SpecStream ``/v1/web-search`` JSON output into preview items.
+
+    The reply is ``{"data": {"sources": [...]}}``; each source has ``title``,
+    ``url``, ``snippet`` and, with ``passages=true``, ``highlights[]``. The
+    highlights are kept as they are; the snippet stands in when there are none.
+    """
+
+    if isinstance(payload, str):
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError):
+            return []
+    else:
+        data = payload
+    body: object = data.get("data") if isinstance(data, dict) else None
+    raw_sources: object = body.get("sources", []) if isinstance(body, dict) else []
+    if not isinstance(raw_sources, list):
+        return []
+
+    previews: list[ExaPreviewItem] = []
+    for item in raw_sources:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        raw_highlights = item.get("highlights")
+        highlights = tuple(
+            text
+            for text in (
+                str(h).strip() for h in (raw_highlights if isinstance(raw_highlights, list) else [])
+            )
+            if text
+        )
+        if not highlights:
+            snippet = str(item.get("snippet") or "").strip()
+            highlights = (snippet,) if snippet else ()
+        previews.append(ExaPreviewItem(title=title, url=url, highlights=highlights))
     return previews
 
 

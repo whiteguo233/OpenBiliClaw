@@ -909,6 +909,8 @@ inspiration_search_enabled = true
 # serply_api_key 后则直连 HTTP API。
 # 可选加入 "parallel"：匿名 Parallel Search MCP grounding，无需 API Key；默认链不变。
 # 可选加入 "keenable"：Keenable 搜索 API 匿名免费 grounding，无需 API Key；默认链不变。
+# 可选加入 "specstream"：SpecStream 搜索 API，每条结果带页面里最贴近查询的段落；
+#   需要填写下方 specstream_api_key，默认链不变。
 inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply"]
 # Exa / You.com / Serply 直连 API Key（可选）。填写后走 Python 直连 HTTP API，
 # 不再依赖本机 mcporter CLI；留空时回退到 mcporter（若已安装，Serply 无 mcporter
@@ -916,11 +918,14 @@ inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "e
 # Exa: https://exa.ai  →  x-api-key
 # You.com: https://you.com  →  x-api-key
 # Serply: https://serply.io（文档 https://serply.io/docs）→ X-Api-Key
+# SpecStream: https://specstream.ai（文档 https://specstream.ai/agents.md）→ Authorization: Bearer
+#   Key 在 https://specstream.ai/workspace 的 Agents & API 创建；留空即跳过该后端。
 # Keenable 只使用免费匿名端点（https://api.keenable.ai/v1/search/public，
 #   带 X-Keenable-Title 标识调用方），没有 API Key 配置项。
 exa_api_key = ""
 you_api_key = ""
 serply_api_key = ""
+specstream_api_key = ""
 # 实验开关：开启且 inspiration provider 可用时，跳过旧 merged keyword planner，
 # 每轮 due 平台只用 inspiration flow 产词。
 inspiration_replace_merged_keywords = false
