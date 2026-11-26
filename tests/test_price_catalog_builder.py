@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import Any
 
 from openbiliclaw.llm import price_catalog as builder
+from openbiliclaw.llm.rate_card import RateCatalog
 
 
 def _models_dev() -> dict[str, Any]:
@@ -131,8 +134,6 @@ def test_catalog_records_sources_and_aliases() -> None:
 
 
 def test_sync_price_catalog_writes_an_atomic_snapshot(tmp_path) -> None:
-    import json
-
     payloads = {
         builder.DEFAULT_MODELS_DEV_URL: _models_dev(),
         builder.DEFAULT_OPENROUTER_URL: _openrouter(),
@@ -501,3 +502,64 @@ def test_null_override_record_is_skipped_without_aborting() -> None:
     }
     tariffs = builder.build_tariffs(payload)
     assert len(tariffs["deepseek-v4-flash"]) == 1
+
+
+def test_sync_keeps_direct_pro_tariffs_without_router_overrides(tmp_path) -> None:
+    model = "deepseek-v4-pro"
+    models_dev = _models_dev()
+    models_dev["deepseek"]["models"][model] = {
+        "cost": {"input": 0.66, "output": 1.98, "cache_read": 0.022}
+    }
+    payloads = {
+        builder.DEFAULT_MODELS_DEV_URL: models_dev,
+        builder.DEFAULT_OPENROUTER_URL: {"data": []},
+    }
+    path = tmp_path / "pricing_catalog.json"
+    summary = builder.sync_price_catalog(path, fetcher=payloads.__getitem__)
+    assert summary["tariffs"] == 1
+    catalog = RateCatalog.load(path)
+    assert len(json.loads(path.read_text(encoding="utf-8"))["tariffs"][model]) == 2
+    assert catalog.sources["deepseek_official"]["url"].startswith("https://api-docs.deepseek.com/")
+    peak = catalog.resolve("deepseek", model, now=datetime(2026, 11, 25, 2, tzinfo=UTC))
+    assert peak is not None
+    assert peak.rates.cache_read_per_mtok == 0.044
+    assert peak.rates.input_per_mtok == 1.32
+    assert peak.rates.output_per_mtok == 3.96
+    relay = catalog.resolve("openai_compatible", model, now=datetime(2026, 11, 25, 2, tzinfo=UTC))
+    assert relay is not None and relay.tariff_label == "base"
+
+
+def test_router_pro_tariff_does_not_override_official_direct_price() -> None:
+    model = "deepseek-v4-pro"
+    models_dev = _models_dev()
+    models_dev["deepseek"]["models"][model] = {
+        "cost": {"input": 0.66, "output": 1.98, "cache_read": 0.022}
+    }
+    models_dev["openrouter"] = {"models": {model: {"cost": {"input": 1.0, "output": 2.0}}}}
+    router = {
+        "data": [
+            {
+                "id": "deepseek/deepseek-v4-pro",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.000002",
+                    "overrides": [
+                        {
+                            "utc_start": 60,
+                            "utc_end": 240,
+                            "prompt": "0.000003",
+                            "completion": "0.000006",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+    catalog = RateCatalog.from_dict(builder.build_catalog(models_dev, router))
+    peak = datetime(2026, 11, 25, 2, tzinfo=UTC)
+    direct = catalog.resolve("deepseek", model, now=peak)
+    relay = catalog.resolve("openrouter", model, now=peak)
+    assert direct is not None and direct.rates.input_per_mtok == 1.32
+    assert relay is not None and relay.rates.input_per_mtok == 3.0
+    holiday = datetime(2026, 10, 5, 2, tzinfo=UTC)
+    assert not catalog.is_peak("deepseek", model, now=holiday)

@@ -367,6 +367,67 @@ def test_bundled_catalog_loads_and_covers_deepseek(
     assert effective.rates.output_per_mtok == pytest.approx(output_rate)
 
 
+@pytest.mark.parametrize(
+    ("moment", "tariff", "rates", "cost"),
+    [
+        (_utc(2026, 11, 25, 0, 59), "base", (0.022, 0.66, 1.98), 1.331),
+        (_utc(2026, 11, 25, 1, 0), "peak", (0.044, 1.32, 3.96), 2.662),
+        (_utc(2026, 11, 25, 4, 0), "base", (0.022, 0.66, 1.98), 1.331),
+        (_utc(2026, 11, 25, 6, 0), "peak", (0.044, 1.32, 3.96), 2.662),
+        (_utc(2026, 11, 25, 10, 0), "base", (0.022, 0.66, 1.98), 1.331),
+        (_utc(2026, 11, 28, 2, 0), "base", (0.022, 0.66, 1.98), 1.331),
+        (_utc(2026, 10, 5, 2, 0), "base", (0.022, 0.66, 1.98), 1.331),
+        (_utc(2027, 2, 8, 7, 0), "base", (0.022, 0.66, 1.98), 1.331),
+    ],
+)
+def test_bundled_direct_deepseek_pro_tariffs(
+    moment: datetime, tariff: str, rates: tuple[float, float, float], cost: float
+) -> None:
+    catalog = RateCatalog.load()
+    effective = catalog.resolve("deepseek", "deepseek-v4-pro", now=moment)
+    assert effective is not None
+    assert effective.tariff_label == tariff
+    assert (
+        effective.rates.cache_read_per_mtok,
+        effective.rates.input_per_mtok,
+        effective.rates.output_per_mtok,
+    ) == rates
+    assert effective.cost(
+        prompt_tokens=1_000_000, cached_tokens=500_000, completion_tokens=500_000, usd_cny=1
+    ) == pytest.approx(cost)
+
+
+def test_legacy_direct_deepseek_pro_card_and_overrides(tmp_path) -> None:
+    import json
+
+    from openbiliclaw.llm.rate_card import DEEPSEEK_PRO_MODEL
+
+    rate = {"input": 0.66, "output": 1.98, "cache_read": 0.022, "currency": "USD"}
+    model = DEEPSEEK_PRO_MODEL
+    data = {
+        "providers": {
+            provider: {"models": {model: rate}} for provider in ("deepseek", "openrouter")
+        }
+    }
+    data_path = tmp_path / "pricing_catalog.json"
+    data_path.write_text(json.dumps(data), encoding="utf-8")
+    config = types.SimpleNamespace(data_path=tmp_path)
+    catalog = catalog_for_runtime(config)
+    peak = _utc(2026, 11, 25, 2, 0)
+    assert catalog.source_path == data_path
+    assert catalog.next_off_peak("deepseek", model, now=peak) == _utc(2026, 11, 25, 4, 0)
+    assert not catalog.is_peak("openrouter", model, now=peak)
+    override = RateCatalog.load(
+        data_path,
+        overrides=[{"provider": "deepseek", "model": model, "input": 5, "output": 10}],
+    )
+    effective = override.resolve("deepseek", model, now=peak)
+    assert effective is not None
+    assert effective.confidence == "user"
+    assert effective.tariff_label == "base"
+    assert effective.rates.input_per_mtok == 5
+
+
 def test_primary_route_reads_v2_chain_and_legacy_provider() -> None:
     from openbiliclaw.llm.rate_card import primary_route
 

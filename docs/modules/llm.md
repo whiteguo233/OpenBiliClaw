@@ -97,7 +97,7 @@ SDK 允许的 system/user/assistant 角色与末尾 user 约束。结果内容�
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 价格目录 / 每日预算 / 峰谷 / 同模型选价（issue #353） | ✅ | 16 providers / 2,007 models 的 bundled catalog（provider + model 作用域、峰谷窗口、长上下文档位、置信度、USD/CNY）；`openbiliclaw price --sync` 原子刷新 data 目录快照；`scheduler.daily_budget_cny` 用本地日历日 + 共享 SQLite 预留做 per-call 准入，`llm.cost_multiplier` 校准；`peak_policy off/defer/prefer` 只暂停后台维护；`llm.cost_aware_routing` 仅重排相同 model 的实例。恶意/损坏 catalog 降级为空目录 + 静态价目表，不阻断启动。 |
+| 价格目录 / 每日预算 / 峰谷 / 同模型选价（issue #353） | ✅ | 16 providers / 2,007 models 的 bundled catalog（provider + model 作用域、峰谷窗口、长上下文档位、置信度、USD/CNY）；直连 DeepSeek V4 Pro 使用官方峰谷价；`openbiliclaw price --sync` 原子刷新 data 目录快照；`scheduler.daily_budget_cny` 用本地日历日 + 共享 SQLite 预留做 per-call 准入，`llm.cost_multiplier` 校准；`peak_policy off/defer/prefer` 只暂停后台维护；`llm.cost_aware_routing` 仅重排相同 model 的实例。恶意/损坏 catalog 降级为空目录 + 静态价目表，不阻断启动。 |
 | 免费凭据与独立向量 | 已实现 | IPC授权失败写入无凭据状态供设置/消息中心读取；本地Ollama向量不经过Rust免费凭据，云端仍默认BGE-M3。 |
 | 免费输出证据边界 | 已实现 | 被动画像限定来源支持的信息偏好；日期只纠错一次且继续严格验证；觉察拒绝批次外引用并从源事件确定日期，详见[补测](../testing/2026-11-05-sponsored-followup.md) |
 | 免费请求并发隔离 | 已实现 | SponsoredProviderPool：1个交互与2个后台子进程，共用签名策略/额度账本；关闭流释放工作进程 |
@@ -757,10 +757,10 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 
 `llm/rate_card.py` 把“当前价格是多少”从静态表拆成可解析的 `RateCatalog`：
 
-- 随包 `pricing_catalog.json` 由 `scripts/build_llm_price_catalog.py` 从 models.dev（324 providers / 10,018 models 的 input/output/cache 价）与 OpenRouter（476 models 的 UTC 峰谷窗口、长上下文档位）生成；当前快照 16 providers / 2,007 models / 4 个峰谷模型 / 54 个档位模型。
+- 随包 `pricing_catalog.json` 由 `scripts/build_llm_price_catalog.py` 从 models.dev（324 providers / 10,018 models 的 input/output/cache 价）与 OpenRouter（476 models 的 UTC 峰谷窗口、长上下文档位）生成；当前快照 16 providers / 2,007 models / 5 个峰谷模型 / 54 个档位模型（其中直连 DeepSeek V4 Pro 来自官方价表）。
 - 解析优先级：用户 `[llm.pricing.overrides]` > provider+model 精确卡 > 同模型跨 provider 的**最高价**（未知中转站的保守上界）> 静态 `pricing.py` 回退。`0` / 缺失价不会当免费；`ollama` / `sponsored` 这类显式免费 provider 单独处理。
-- `RateCard.effective(now, prompt_tokens)` 同时应用长上下文档位与 UTC 峰谷窗口；DeepSeek 的窗口来自 OpenRouter 路由（工作日 UTC 01–04、06–10 为 2x，= 北京时间 09–12、14–18），无窗口的 provider 不会被假装有谷时。
-- tariff 与长上下文档位都按 **provider + model** 绑定：同模型的其他 provider / 中转不会继承 DeepSeek 的峰谷价，用户 `[llm.pricing.overrides]` 也不会被 catalog 的窗口或档位改写。未知中转报价用同模型跨 provider 的最高价，`0`/缺失价视为 unknown。
+- `RateCard.effective(now, prompt_tokens)` 同时应用长上下文档位与 UTC 峰谷窗口；无窗口的 provider 不会被假装有谷时。直连 `deepseek-v4-pro` 用 [DeepSeek 官方美元价表](https://api-docs.deepseek.com/quick_start/pricing/)：北京时间周一至周五 09:00–12:00、14:00–18:00（左含右不含），缓存命中、未命中及输出均为谷价的 2 倍；周末及内置的 2026–2027 年中国放假日期不进入峰时（之后的假期数据需随版本更新）。生成器保留这条直连规则，带相同谷价但缺该窗口的旧目录也可读出峰价。Flash 仍使用原有路由窗口。
+- tariff 与长上下文档位都按 **provider + model** 绑定：同模型的其他 provider / 中转不会继承直连 Pro 官方峰谷价（OpenRouter 仍可使用其自己发布的路由窗口），用户 `[llm.pricing.overrides]` 也不会被 catalog 的窗口或档位改写。未知中转报价用同模型跨 provider 的最高价，`0`/缺失价视为 unknown。
 - `UsageRecorder.catalog` 暴露本次结算使用的 `RateCatalog`（只读）；有 catalog 时走 catalog 计费，并把 `exact` / `derived_relay` / `user` / `fallback` 写入 `llm_usage.cost_confidence`；`openbiliclaw cost` 会提示低置信花费占比。`openbiliclaw price --provider … --model …` 可查看当前档位、下一次切换与 CNY 换算。
 - 静态表仍保留为兜底，DeepSeek 现价（`$0.15/$0.60` 每百万）已同步。
 - 目录可用 `openbiliclaw price --sync` 刷新到 `data/pricing_catalog.json`（原子写，失败保留旧文件）；`catalog_for_runtime` 在 `catalog_path` 为空时优先读该文件，否则用随包快照。
