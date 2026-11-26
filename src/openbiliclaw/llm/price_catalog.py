@@ -6,6 +6,7 @@ snapshot of:
 
 - models.dev provider/model prices (USD per 1M tokens);
 - OpenRouter ``pricing.overrides`` time-of-day tariffs and long-context tiers;
+- verified direct DeepSeek Pro tariff windows;
 - cross-provider offer statistics used as a conservative relay bound.
 
 Zero or missing prices are never emitted as free. Explicitly free providers
@@ -23,7 +24,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from openbiliclaw.llm.rate_card import normalize_model_id
+from openbiliclaw.llm.rate_card import (
+    DEEPSEEK_PRICING_URL,
+    DEEPSEEK_PRO_MODEL,
+    deepseek_pro_tariff_rows,
+    normalize_model_id,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -424,7 +430,14 @@ def build_catalog(
     providers = build_provider_cards(models_dev)
     offers = build_offers(models_dev)
     tariffs = build_tariffs(openrouter)
+    router_tariff_count = len(tariffs)
     tiers = build_tiers(openrouter)
+    pro_base = providers.get("deepseek", {}).get("models", {}).get(DEEPSEEK_PRO_MODEL, {})
+    direct_pro_windows = deepseek_pro_tariff_rows(pro_base)
+    if direct_pro_windows:
+        # Retain router-reported tariffs for relay lookups; the resolver
+        # gives the official rows precedence only for direct DeepSeek.
+        tariffs.setdefault(DEEPSEEK_PRO_MODEL, []).extend(direct_pro_windows)
     return {
         "version": 1,
         "generated_at": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -443,9 +456,14 @@ def build_catalog(
             "openrouter": {
                 "url": "https://openrouter.ai/api/v1/models",
                 "models": len(openrouter.get("data") or []),
-                "with_tariffs": len(tariffs),
+                "with_tariffs": router_tariff_count,
                 "with_tiers": len(tiers),
             },
+            **(
+                {"deepseek_official": {"url": DEEPSEEK_PRICING_URL, "with_tariffs": 1}}
+                if direct_pro_windows
+                else {}
+            ),
         },
         "providers": providers,
         "aliases": dict(TARIFF_ALIASES),

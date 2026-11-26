@@ -8,10 +8,13 @@ Covers:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 
+from openbiliclaw.llm import rate_card
+from openbiliclaw.llm.budget import DailySpendLedger
 from openbiliclaw.llm.pricing import PRICING, estimate_cost
 from openbiliclaw.llm.usage_recorder import UsageRecorder
 from openbiliclaw.storage.database import Database
@@ -446,6 +449,26 @@ def test_usage_recorder_uses_rate_catalog_and_records_confidence(tmp_path: Path)
     # 1k × $0.15/M + 1k × $0.60/M = $0.00075 → ×7.2 = ¥0.0054
     assert float(row["estimated_cost_cny"]) == pytest.approx(0.0054, rel=1e-6)
     assert row["cost_confidence"] == "exact"
+
+
+def test_deepseek_pro_peak_estimate_reaches_daily_budget(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "usage.db"
+    db = Database(db_path)
+    db.initialize()
+    catalog = rate_card.RateCatalog.load()
+    recorder = UsageRecorder(sink=db, catalog=catalog)
+    now = datetime(2026, 11, 25, 2, tzinfo=UTC)
+    monkeypatch.setattr(rate_card, "_as_utc", lambda moment: moment or now)
+    response = _FakeResponse(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        prompt_tokens=1_000_000,
+        completion_tokens=500_000,
+    )
+    response.usage["cached_input_tokens"] = 500_000
+    recorder.record(response, caller="soul.preference")
+
+    assert DailySpendLedger(db_path).spend_cny() == pytest.approx(2.662 * catalog.usd_cny)
 
 
 def test_today_query_sums_low_confidence_spend(tmp_path: Path) -> None:
