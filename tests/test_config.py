@@ -3842,6 +3842,20 @@ eval_prefilter_mode = "  Shadow  "
         assert loaded.discovery.multimodal_image_quality == 80
         assert loaded.discovery.multimodal_image_timeout_seconds == 10
 
+    def test_discovery_specstream_key_and_backend_round_trip(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config = Config()
+        config.discovery.inspiration_search_backends = ("local_cache", "specstream")
+        config.discovery.specstream_api_key = "ss-key"
+
+        save_config(config, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded.discovery.specstream_api_key == "ss-key"
+        assert loaded.discovery.inspiration_search_backends == ("local_cache", "specstream")
+        assert Config().discovery.specstream_api_key == ""
+        assert "specstream" not in Config().discovery.inspiration_search_backends
+
     def test_discovery_section_appears_in_rendered_toml(self) -> None:
         from openbiliclaw.config import _render_config_toml
 
